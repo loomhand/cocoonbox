@@ -55,15 +55,6 @@ final class SyntheticTransport: ScreenTransport {
     }
 }
 
-func eventually(_ timeout: Duration = .seconds(5), isolation: isolated (any Actor)? = #isolation, _ condition: () -> Bool) async -> Bool {
-    let deadline = ContinuousClock.now + timeout
-    while ContinuousClock.now < deadline {
-        if condition() { return true }
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    return condition()
-}
-
 final class Recorder: Sendable {
     let resized = Atomic(0)
     let updates = Atomic(0)
@@ -99,7 +90,7 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
         let session = ScreenSession(transport: transport, configuration: headless())
         let recorder = Recorder()
         let run = Task { try await session.run(recorder.handler) }
-        let decoded = await eventually { recorder.count > 0 }
+        let decoded = await until { recorder.count > 0 }
         #expect(decoded)
         #expect(recorder.resized.load(ordering: .relaxed) == 1)
         let server = try #require(transport.servers.withLock { $0.first })
@@ -110,18 +101,18 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
 
         let before = recorder.count
         session.client.type("hi!")
-        let typed = await eventually { server.editorText == "hi!" }
+        let typed = await until { server.editorText == "hi!" }
         #expect(typed, "keys=\(server.keyEvents) text=\(server.editorText.debugDescription)")
-        let redrawn = await eventually { recorder.count > before }
+        let redrawn = await until { recorder.count > before }
         #expect(redrawn)
         let afterKeys = recorder.count
         server.type("Hello from the agent")
-        let typedRedraw = await eventually { recorder.count > afterKeys }
+        let typedRedraw = await until { recorder.count > afterKeys }
         #expect(typedRedraw)
         let afterType = recorder.count
         session.client.pointer(x: 1000, y: 160, buttons: .left)
         session.client.pointer(x: 1000, y: 160, buttons: [])
-        let clickRedraw = await eventually { recorder.count > afterType }
+        let clickRedraw = await until { recorder.count > afterType }
         #expect(clickRedraw, "updates stalled at \(afterType)")
         #expect(server.pointerEvents == 2)
         #expect(session.stats.bytesFromServer > 1280 * 800 * 4)
@@ -143,7 +134,7 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
         })
         let recorder = Recorder()
         let run = Task { try await session.run(recorder.handler) }
-        let started = await eventually { recorder.count > 0 }
+        let started = await until { recorder.count > 0 }
         #expect(started)
         try await Task.sleep(for: .seconds(1))
         let before = recorder.count

@@ -13,7 +13,7 @@ import Testing
             windowNumber: fixture.window.windowNumber, context: nil, characters: "v", charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9
         ))
         #expect(fixture.terminal.view.performKeyEquivalent(with: event))
-        let pasted = await eventually { fixture.stdin.text.contains("code#state-1") }
+        let pasted = await until { fixture.stdin.text.contains("code#state-1") }
         #expect(pasted)
     }
 
@@ -21,7 +21,7 @@ import Testing
         let fixture = try await PasteFixture()
         defer { fixture.pasteboard.releaseGlobally() }
         #expect(fixture.terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil))
-        let pasted = await eventually { fixture.stdin.text.contains("code#state-1") }
+        let pasted = await until { fixture.stdin.text.contains("code#state-1") }
         #expect(pasted)
     }
 
@@ -29,7 +29,7 @@ import Testing
         let fixture = try await PasteFixture()
         defer { fixture.pasteboard.releaseGlobally() }
         fixture.terminal.feed.receive(Data("\u{1B}[?2004h".utf8))
-        let framed = await eventually {
+        let framed = await until {
             _ = fixture.terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil)
             return fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~")
         }
@@ -73,7 +73,7 @@ final class PasteFixture {
         try #require(window.firstResponder === terminal.view)
         pasteboard.clearContents()
         pasteboard.setString("probe", forType: .string)
-        let probed = await eventually {
+        let probed = await until {
             _ = terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil)
             return stdin.text.contains("probe")
         }

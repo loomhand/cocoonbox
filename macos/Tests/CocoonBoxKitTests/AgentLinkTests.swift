@@ -88,12 +88,4 @@ import Testing
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appendingPathComponent("a.sock").path
     }
-
-    private func until(_ condition: () -> Bool) async -> Bool {
-        let deadline = Date().addingTimeInterval(5)
-        while !condition(), Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
-        return condition()
-    }
 }

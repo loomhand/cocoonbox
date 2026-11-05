@@ -49,23 +49,23 @@ import Testing
                 if case .clipboard(let text) = event { received.withLock { $0.append(text) } }
             }
         }
-        let negotiated = await eventually { transport.servers.withLock { $0.first?.clipboardCaps ?? 0 } != 0 }
+        let negotiated = await until { transport.servers.withLock { $0.first?.clipboardCaps ?? 0 } != 0 }
         #expect(negotiated)
         let server = try #require(transport.servers.withLock { $0.first })
         #expect(server.clipboardCaps & 0x1000_0001 == 0x1000_0001)
 
         let pasted = "héllo\n世界 ✓"
         LiveScreen.paste(pasted, on: session.client)
-        let landed = await eventually { server.editorText == pasted }
+        let landed = await until { server.editorText == pasted }
         #expect(landed, "editor \(server.editorText.utf8.count) bytes")
 
         server.type(" guést")
         LiveScreen.copy(cut: false, on: session.client)
-        let copied = await eventually { received.withLock { $0 } == [pasted + " guést"] }
+        let copied = await until { received.withLock { $0 } == [pasted + " guést"] }
         #expect(copied)
 
         LiveScreen.copy(cut: true, on: session.client)
-        let cut = await eventually { received.withLock { $0.count } == 2 }
+        let cut = await until { received.withLock { $0.count } == 2 }
         #expect(cut && received.withLock { $0.last } == pasted + " guést")
         #expect(server.editorText.isEmpty)
         run.cancel()

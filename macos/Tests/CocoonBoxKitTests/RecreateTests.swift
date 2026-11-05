@@ -15,11 +15,11 @@ import Testing
         screen.onStatus = { statuses.append($0) }
         screen.start(holder)
         defer { screen.stop() }
-        #expect(await Self.until { statuses.contains(where: \.isConnected) })
+        #expect(await until { statuses.contains(where: \.isConnected) })
 
         let recreated = try await Self.recreate(mock.connection, old)
         statuses = []
-        #expect(await Self.until(seconds: 10) { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
+        #expect(await until(seconds: 10) { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
         #expect(holder.boxID == recreated)
     }
 
@@ -39,14 +39,14 @@ import Testing
         screen.onBoxChange = { changes.append($0) }
         screen.start(holder)
         defer { screen.stop() }
-        #expect(await Self.until { statuses.contains(where: \.isConnected) })
+        #expect(await until { statuses.contains(where: \.isConnected) })
 
         try await Self.delete(mock.connection, old)
-        #expect(await Self.until(seconds: 10) { statuses.last == .failed("the box simtest was deleted") }, "statuses \(statuses)")
-        #expect(await Self.until(seconds: 10) { changes == [nil] }, "changes \(changes)")
+        #expect(await until(seconds: 10) { statuses.last == .failed("the box simtest was deleted") }, "statuses \(statuses)")
+        #expect(await until(seconds: 10) { changes == [nil] }, "changes \(changes)")
         statuses = []
         let recreated = try await Self.running(mock.connection, try await mock.connection.createBox(name: "simtest").box.id)
-        #expect(await Self.until(seconds: 15) { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
+        #expect(await until(seconds: 15) { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
         #expect(changes == [nil, recreated])
         #expect(holder.boxID == recreated)
     }
@@ -115,15 +115,6 @@ import Testing
         let created = try await connection.createBox(name: name).box.id
         #expect(created != id)
         return try await running(connection, created)
-    }
-
-    static func until(seconds: Double = 5, isolation: isolated (any Actor)? = #isolation, _ condition: () async -> Bool) async -> Bool {
-        let deadline = ContinuousClock.now + .seconds(seconds)
-        while ContinuousClock.now < deadline {
-            if await condition() { return true }
-            try? await Task.sleep(for: .milliseconds(50))
-        }
-        return await condition()
     }
 }
 

@@ -35,13 +35,13 @@ import Testing
         screen.inputEnabled = true
         screen.start(holder)
         defer { screen.stop() }
-        #expect(await RecreateTests.until { statuses.contains(where: \.isConnected) })
+        #expect(await until { statuses.contains(where: \.isConnected) })
 
         screen.windowVisible(false)
         #expect(statuses.last == .idle)
         statuses = []
         screen.windowVisible(true)
-        #expect(await RecreateTests.until { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
+        #expect(await until { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
         #expect(screen.inputEnabled)
     }
 
@@ -61,7 +61,7 @@ import Testing
         #expect(statuses.isEmpty)
 
         screen.windowVisible(true)
-        #expect(await RecreateTests.until { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
+        #expect(await until { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
         screen.windowVisible(false)
         screen.stop()
         screen.start(holder)

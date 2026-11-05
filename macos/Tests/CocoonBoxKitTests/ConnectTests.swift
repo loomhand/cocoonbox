@@ -397,14 +397,6 @@ import Testing
     }
 }
 
-private func until(seconds: Double = 5, _ condition: () async -> Bool) async -> Bool {
-    let deadline = Date().addingTimeInterval(seconds)
-    while await !condition(), Date() < deadline {
-        try? await Task.sleep(for: .milliseconds(20))
-    }
-    return await condition()
-}
-
 final class MockBoxProcess: @unchecked Sendable {
     let endpoint: Endpoint
     let connection: BoxConnection

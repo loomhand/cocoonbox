@@ -48,7 +48,7 @@ import Testing
             await watcher.watchBoxes(onBoxes: { _, images in offered.withLock { $0 = images } }, onDisconnect: { _ in })
         }
         defer { watch.cancel() }
-        #expect(await RecreateTests.until(seconds: 10) { offered.withLock { $0 } != nil })
+        #expect(await until(seconds: 10) { offered.withLock { $0 } != nil })
         let choices = ImageChoice.choices(offered.withLock { $0 } ?? [])
         #expect(choices.map(\.label) == ["Desktop", "cbcore", "Android"])
         #expect(choices.map(\.image) == ["cbdesk", "cbcore", "cbdroid"])
@@ -99,7 +99,7 @@ import Testing
                 onDisconnect: { _ in }
             )
         }
-        #expect(await RecreateTests.until { calls.withLock { $0 } >= 3 })
+        #expect(await until { calls.withLock { $0 } >= 3 })
         task.cancel()
         await task.value
         #expect(seen.withLock { $0 } == ["running", "running", "hibernated"])
@@ -118,6 +118,6 @@ final class Lists: Sendable {
     }
 
     func seen(after from: Int, _ match: ([Cocoonbox_Control_V1_Box]) -> Bool) async -> Bool {
-        await RecreateTests.until(seconds: 10) { state.withLock { $0.dropFirst(from).contains(where: match) } }
+        await until(seconds: 10) { state.withLock { $0.dropFirst(from).contains(where: match) } }
     }
 }

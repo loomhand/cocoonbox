@@ -65,7 +65,7 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [0, 3])
         #expect(seen.withLock { $0 } == [1, 2, 3, 4, 5])
-        let resynced = await eventually { resyncs.withLock { $0 } == 1 }
+        let resynced = await until { resyncs.withLock { $0 } == 1 }
         #expect(resynced)
     }
 
@@ -117,7 +117,7 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [42, 0])
         #expect(seen.withLock { $0 } == [1])
-        let resynced = await eventually { resyncs.withLock { $0 } == 1 }
+        let resynced = await until { resyncs.withLock { $0 } == 1 }
         #expect(resynced)
     }
 }
