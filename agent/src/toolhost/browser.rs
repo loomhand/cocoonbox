@@ -602,8 +602,7 @@ impl Browser {
         Ok(out)
     }
 
-    /// The user's tab `tab`: an id from `browser_tabs`, or "active" for the one tab in front, else the one
-    /// of those titled as the X active window; Chrome is not started for it.
+    /// The user's tab `tab`: a `browser_tabs` id, or "active" for the one in front, ties broken by the X active window's title.
     async fn tab(&self, tab: &str) -> Result<Cdp, String> {
         let tabs = self.user_tabs().await?;
         if tab != "active" {
@@ -696,8 +695,7 @@ impl Browser {
         Ok(text_of(cdp.eval("location.origin").await?))
     }
 
-    /// Succeeds when the keyboard focus is in a text field of an http or https page, or in a frame of one that CDP
-    /// cannot read; Chrome is not started for it.
+    /// Succeeds when the keyboard focus is in a web page's text field, or in a frame CDP cannot read; Chrome is not started for it.
     pub async fn page_field(&self) -> Result<(), String> {
         let _life = self.life.read().await;
         let targets = self.targets().await.map_err(|_| NO_PAGE_FOCUS.to_owned())?;
@@ -772,8 +770,7 @@ impl Browser {
         Ok(json!({"filled": r["filled"].take(), "submitted": submitted}).to_string())
     }
 
-    /// The tab the user sees in the X active window, else the window the browser tools
-    /// last acted on, else the first tab Chrome lists.
+    /// The tab in the X active window, else the window last acted on, else Chrome's first tab.
     async fn attach(&self) -> Result<Cdp, String> {
         let targets = self
             .targets()
@@ -939,9 +936,7 @@ impl Browser {
         Cdp::open(version["webSocketDebuggerUrl"].as_str().unwrap_or_default()).await
     }
 
-    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running
-    /// and records it in the profile for `browser_start` with `if_was_running`.
-    /// Agent windows close first, so the restored session holds only the user's.
+    /// Closes the agent windows, then Chrome through CDP so it flushes its profile, and records whether it ran for `if_was_running`.
     async fn close(&self) -> Result<String, String> {
         let marker = self.profile.join(RUNNING_MARKER);
         let windows: Vec<_> = self
@@ -1348,8 +1343,7 @@ impl Cdp {
         Err(err)
     }
 
-    /// Waits for the page an input opened: at most [`NAV_START`] for a frame to start loading, then up to [`LOAD_WAIT`]
-    /// for the loads to stop and the document to be complete.
+    /// Waits [`NAV_START`] for an input to start a load, then for that load to finish.
     async fn opened_page(&mut self) {
         let start = tokio::time::Instant::now();
         while self.dialog.is_none() && (!self.load.started || !self.load.stopped) {
@@ -1373,8 +1367,7 @@ impl Cdp {
         }
     }
 
-    /// Clicks the element of `element` and waits for the page the click opens; reports the label and the page, and
-    /// whether the click loaded a page or changed the address.
+    /// Clicks `element`, waits for a page it opens, and returns the report and whether the page changed.
     async fn click_ref(&mut self, element: &str) -> Result<(String, bool), String> {
         let p = self
             .eval(&format!("{POINT_JS}({})", js_str(element)))
@@ -1462,8 +1455,7 @@ impl Cdp {
         Ok(out)
     }
 
-    /// Navigates main frame `frame` to `url` and waits for the new document's DOMContentLoaded and a nearly idle network,
-    /// at most `wait` and [`SETTLE`] past the DOMContentLoaded; true once that came. Documents that are no page fail, so nothing downloads.
+    /// Navigates `frame` to `url` until DOMContentLoaded and a nearly idle network, at most `wait`; a document that is no page fails.
     async fn load(&mut self, url: &str, frame: &Value, wait: Duration) -> Result<bool, String> {
         let id = self.send("Page.navigate", json!({"url": url})).await?;
         let end = tokio::time::Instant::now() + wait;
@@ -1550,8 +1542,7 @@ impl Cdp {
         Ok(kind)
     }
 
-    /// Waits until the page text kept its length over one [`SPA_POLL`] with no XHR or fetch ended meanwhile or in
-    /// flight for less than [`XHR_STALE`], at most until `deadline`, so content that scripts load after the page is in.
+    /// Waits until the text length holds over one [`SPA_POLL`] with no recent XHR or fetch, at most until `deadline`.
     async fn settle(&mut self, deadline: tokio::time::Instant) {
         let mut last = None;
         self.xhr.moved = false;
@@ -1569,8 +1560,7 @@ impl Cdp {
         }
     }
 
-    /// Reads the page text again every [`SPA_POLL`] while `text`, the last read, is a [`loading`] shell, until it is none
-    /// and kept its length over one poll, at most [`SPA_WAIT`]; returns the last text read.
+    /// Re-reads a [`loading`] shell every [`SPA_POLL`] until its text is in and stops changing, at most [`SPA_WAIT`].
     async fn filled(&mut self, mut text: Value) -> Value {
         let deadline = tokio::time::Instant::now() + SPA_WAIT;
         let read = format!("{READ_JS}(null)");

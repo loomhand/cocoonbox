@@ -85,8 +85,7 @@ struct Started {
     tty: Option<Terminal>,
 }
 
-/// Runs `args.command` with a login bash in `cwd` until it exits; the agent closing the
-/// connection first kills its process tree.
+/// Runs `args.command` in a login bash in `cwd` until it exits; the agent hanging up first kills its process tree.
 pub async fn run(cwd: &Path, home: &Path, args: &Value, rd: AgentRead, mut wr: AgentWrite) {
     let tty = &args["tty"];
     let (term, notice) = if tty.is_null() {
@@ -235,8 +234,7 @@ fn exit_of(mut child: Child) -> Exit {
     Box::pin(async move { child.wait().await.map(exit_code) })
 }
 
-/// The TERM of a terminal command: `term` when the box has its terminfo or `source` compiles
-/// it into `~/.terminfo` as this user, else the default and a notice for the command's stderr.
+/// `term` when the box has its terminfo or `source` compiles it into `~/.terminfo`, else the default and a notice for stderr.
 #[cfg(unix)]
 async fn terminal_type<'a>(home: &Path, term: &'a str, source: &str) -> (&'a str, Option<String>) {
     if term.is_empty() {
@@ -320,8 +318,7 @@ async fn compile(home: &Path, source: &str) -> Result<(), String> {
     Err(format!("tic: {}", last.unwrap_or("failed").trim()))
 }
 
-/// Applies the agent's frames to the command and returns only when the agent hangs up;
-/// stdin after the command closed it is dropped, and so is a terminal's end of stdin.
+/// Applies the agent's frames until it hangs up; stdin after the command closed it, and a terminal's EOF, are dropped.
 async fn feed(mut rd: AgentRead, stdin: Writer, tty: Option<&Terminal>, tree: &sys::Tree) {
     let mut stdin = Some(stdin);
     loop {
@@ -448,8 +445,7 @@ fn exit_code(status: ExitStatus) -> i32 {
     msys_code(status.code().unwrap_or(-1))
 }
 
-/// The exit code of a Git Bash process as bash reports it: the MSYS runtime ends a process a signal killed
-/// with `signal << 8`, which becomes `128 + signal`.
+/// A Git Bash exit code as bash reports it: the MSYS `signal << 8` of a killed process becomes `128 + signal`.
 #[cfg(windows)]
 fn msys_code(code: i32) -> i32 {
     match (code >> 8, code & 0xff) {

@@ -1,6 +1,4 @@
-//! File tools. Relative paths resolve under the workspace; absolute paths are
-//! used as given, so the toolhost's uid (`user`) is the access boundary.
-//! A call with `workspace_only` (a read-only share) reads only beneath the workspace, and never in its hidden folder.
+//! File tools: relative paths resolve under the workspace, absolute ones as given (uid `user` is the boundary); `workspace_only` reads only beneath the workspace, outside its hidden folder.
 
 use std::fmt::Write as _;
 use std::fs::File;
@@ -247,8 +245,7 @@ pub async fn write_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-/// A note for a call that changes, as `changes` tells from a file name, a file an app window shows in its title
-/// among `titles`: the app keeps its own copy, and its next save overwrites a change made outside it.
+/// A note per window in `titles` showing a file that `changes` matches: the app's next save overwrites the change.
 pub fn held_note(titles: &[String], changes: impl Fn(&str) -> bool) -> String {
     let mut note = String::new();
     for (title, name) in titles
@@ -264,8 +261,7 @@ pub fn held_note(titles: &[String], changes: impl Fn(&str) -> bool) -> String {
     note
 }
 
-/// Whether shell `command` can write the file `name`: a part of it names the file as a redirection target, or runs `tee`,
-/// `sed -i`, `cp` or `mv` onto it, or a program outside [`READERS`] that names it.
+/// Whether shell `command` can write `name`: a redirect, `tee`, `sed -i`, `cp`/`mv` onto it, or a program outside [`READERS`] naming it.
 pub fn writes(command: &str, name: &str) -> bool {
     command
         .split(['|', ';', '&', '\n'])
@@ -294,8 +290,7 @@ pub fn names(text: &str, name: &str) -> bool {
     spans(text, name).next().is_some()
 }
 
-/// The file name in the title of a document window outside a browser, such as `answers.xlsx` of
-/// `answers.xlsx - LibreOffice Calc` or `*~/notes.txt - Mousepad`.
+/// The file name in a non-browser document window title, e.g. `answers.xlsx` of `answers.xlsx - LibreOffice Calc`.
 fn document(title: &str) -> Option<&str> {
     let (doc, app) = title.rsplit_once(" - ")?;
     if BROWSERS.iter().any(|b| app.contains(b)) {

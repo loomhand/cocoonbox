@@ -1,6 +1,4 @@
-//! `computer_act` on a described target: the plan executor's AT-SPI resolve, pressed by action, then a
-//! unique OCR match of the target's visible text, or of the label its description names, outside window
-//! titles; neither finding it, or either failing, leaves the grounding to the caller.
+//! `computer_act` on a described target: AT-SPI first, then a unique OCR match, else the caller grounds it.
 
 use std::time::{Duration, Instant};
 
@@ -77,8 +75,7 @@ struct Word {
     rect: [f64; 4],
 }
 
-/// Runs `computer_act` with `target`: `locate` only finds it, `click` also presses it; returns the
-/// tier that found it, the point in the caller's screenshot pixels and a crop around it.
+/// Runs `computer_act` on `target` (`locate` finds, `click` also presses) and returns the tier, the point and a crop.
 pub async fn act(
     shuttle: &Client,
     owner: &str,
@@ -351,8 +348,7 @@ fn parse_tsv(tsv: &str, scale: f64) -> Vec<Word> {
         .collect()
 }
 
-/// The labels a description names, most likely first: quoted text, the text after "that shows" or "labelled",
-/// the words before the first place phrase without articles and role words, and their capitalised run.
+/// The labels `description` names, most likely first.
 fn texts_from(description: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut add = |t: &str| {
@@ -423,8 +419,7 @@ fn first_read<'a>(
         .find(|(_, hits)| !hits.is_empty())
 }
 
-/// The matches of `texts` that show a window title, not content: in a desktop panel, a title bar, or a
-/// tab such as a browser's.
+/// The matches of `texts` that sit on a window title: a panel, a title bar or a tab.
 async fn titled(
     shuttle: &Client,
     owner: &str,
@@ -452,8 +447,7 @@ async fn titled(
     out
 }
 
-/// Whether the `at` answer is a tab or the label of one, whose name starts the tab's, as Chrome adds the
-/// tab's memory use; not content of the page the tab holds.
+/// Whether `at` is a tab, or a label whose name starts its tab's, as Chrome appends memory use.
 fn in_tab(at: &Value) -> bool {
     let found = &at["found"];
     let label = found["name"].as_str().unwrap_or_default();
@@ -513,8 +507,7 @@ fn matches(words: &[Word], label: &str) -> Vec<[f64; 4]> {
         .collect()
 }
 
-/// Why a match of `text` at `(x, y)` is a field's label rather than the field the description names, if it
-/// is: the description names a field in words outside the text, and the point holds plain text.
+/// Why the match of `text` at (x, y) is a field's label, not the field the description names, if it is.
 async fn label_of_field(
     desk: &Desk,
     description: &str,

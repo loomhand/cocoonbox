@@ -172,8 +172,7 @@ pub async fn walk(args: Value) -> Result<String, String> {
     serde_json::to_string(&entries).map_err(|e| format!("encode walk: {e}"))
 }
 
-/// `state_read`: a stamp frame, the file as data frames, then a stamp taken after the read.
-/// With `sqlite_backup`, an SQLite database is streamed from an online backup instead.
+/// `state_read`: a stamp frame, the file (with `sqlite_backup`, an online backup of it) as data frames, then a later stamp.
 pub async fn read<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), String> {
     let a: ReadArgs = rpc::parse(args)?;
     if a.sqlite_backup
@@ -246,8 +245,7 @@ pub async fn apply(args: Value) -> Result<String, String> {
     .map_err(|e| format!("apply task: {e}"))?
 }
 
-/// `state_swap`: replaces each top-level entry of `root` by its staged copy with one rename,
-/// removes entries absent from the snapshot except `keep`, then deletes the staging dir.
+/// `state_swap`: renames each staged top-level entry into `root`, trashes entries absent from the snapshot except `keep`, removes staging.
 pub async fn swap(args: Value) -> Result<String, String> {
     let a: SwapArgs = rpc::parse(args)?;
     tokio::task::spawn_blocking(move || swap_blocking(&a))
@@ -255,8 +253,7 @@ pub async fn swap(args: Value) -> Result<String, String> {
         .map_err(|e| format!("swap task: {e}"))?
 }
 
-/// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
-/// and returns the name it took; it never replaces an existing entry.
+/// `state_place`: renames `staging` to the first free name of `name`, `name-2`, ... in `dir`, and returns it.
 pub async fn place(args: Value) -> Result<String, String> {
     let a: PlaceArgs = rpc::parse(args)?;
     tokio::task::spawn_blocking(move || {
@@ -316,8 +313,7 @@ async fn send_blocks<W: AsyncWrite + Unpin>(
     rpc::write_data(w, &[]).await
 }
 
-/// Copies an SQLite database through the online backup API; `None` when `path` is not
-/// SQLite or the database is locked, so the caller falls back to a plain read.
+/// An online-backup copy of the SQLite database at `path`; `None` when it is no SQLite database or is locked.
 async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
     let mut head = [0u8; 16];
     let mut f = tokio::fs::File::open(path).await.ok()?;
@@ -417,8 +413,7 @@ fn roll_back(trash: &Path, moved: &[(PathBuf, PathBuf)]) -> Option<String> {
     ))
 }
 
-/// The renames of a swap, each recorded in `moved` as it happens so a failure can undo them; returns how many entries
-/// absent from the snapshot went to `trash`. An entry a walk never keeps, excluded or a link to a directory, stays.
+/// A swap's renames, logged in `moved` for undo; returns how many absent entries went to `trash` (excluded and dir-link ones stay).
 fn swap_moves(
     a: &SwapArgs,
     trash: &Path,

@@ -224,7 +224,7 @@ impl Host {
         })
     }
 
-    /// A screenshot of `screen` for a run on shuttle that serve shapes: the image, and with `keep` the path of its kept file as the text.
+    /// A screenshot for a shuttle run: the image, and with `keep` the kept file's path as the text.
     async fn run_screenshot(&self, args: &Value) -> Result<Output, String> {
         let max_edge = args["max_edge"]
             .as_u64()

@@ -1,6 +1,4 @@
-//! Toolhost wire format: one length-prefixed JSON request and response per connection;
-//! state transfers add raw data frames between them, and `exec` streams tagged frames
-//! both ways.
+//! Toolhost wire: one length-prefixed JSON request and response per connection, with data frames (state) or tagged frames (`exec`) between.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -121,8 +119,7 @@ impl Client {
         })
     }
 
-    /// Starts `command` as `user`, on a terminal when `tty` is `{term, rows, cols}`; the
-    /// connection then carries [`write_tagged`] frames both ways. Closing it kills the command.
+    /// Starts `command` as `user`, on a terminal when `tty` is `{term, rows, cols}`; the stream carries [`write_tagged`] frames, and closing it kills the command.
     pub async fn exec(&self, command: &str, tty: Option<Value>) -> Result<Stream, String> {
         let mut args = json!({"command": command});
         args["tty"] = tty.unwrap_or(Value::Null);

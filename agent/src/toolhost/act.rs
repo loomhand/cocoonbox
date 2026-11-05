@@ -1,5 +1,4 @@
-//! `computer_act` on a desk box: the toolhost runs a card field typed from a file and Chrome brought up
-//! as the agent's window itself, and sends every other action to shuttle's `desk_computer_act`.
+//! `computer_act` on a desk box: the toolhost runs `type_from_file` and Chrome's `launch_app`, shuttle the rest.
 
 use std::path::PathBuf;
 
@@ -183,8 +182,7 @@ async fn one(
     }
 }
 
-/// Clicks the target of `args`, types a card field into it while the focus is in a web page field (see
-/// [`Browser::page_field`]), returns only its length and hands the field to the agent as a secret.
+/// Clicks the target, types a card field only into a focused web page field, and returns its length with the value as a secret.
 async fn type_from_file(
     shuttle: &Client,
     browser: &Browser,
