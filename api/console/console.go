@@ -85,7 +85,7 @@ type share struct {
 	Box       string   `json:"box_id"`
 	Users     []string `json:"users"`
 	Write     bool     `json:"write"`
-	Secret    string   `json:"secret,omitempty"`
+	Secret    string   `json:"secret"`
 	ExpiresAt int64    `json:"expires_at_ms"`
 }
 
@@ -555,7 +555,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"share": toShare(created.GetShare()), "secret": created.GetSecret()})
+	writeJSON(w, toShare(created.GetShare()))
 }
 
 func (s *Server) setShareWrite(w http.ResponseWriter, r *http.Request) {
@@ -579,7 +579,7 @@ func (s *Server) regenerateShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"share": toShare(regenerated.GetShare()), "secret": regenerated.GetSecret()})
+	writeJSON(w, toShare(regenerated.GetShare()))
 }
 
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {

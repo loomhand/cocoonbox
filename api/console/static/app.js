@@ -306,7 +306,7 @@ async function loadShares(boxes) {
     cell(row, new Date(sh.expires_at_ms).toLocaleString());
     const actions = cell(row, "");
     actions.className = "actions";
-    if (sh.secret) actions.appendChild(button("Show link", async () => showLink({ share: sh, secret: sh.secret })));
+    actions.appendChild(button("Show link", async () => showLink(sh)));
     actions.appendChild(button("Regenerate link", async () => {
       if (!confirm("Replace the link and end the old link's sessions? The old link stops at once.")) return;
       showLink(await api("POST", "shares/" + encodeURIComponent(sh.id) + "/regenerate"));
@@ -339,11 +339,11 @@ async function saved(call) {
   await load().catch((e) => notice(e.message, true));
 }
 
-function showLink(created) {
+function showLink(sh) {
   const base = location.origin;
-  $("share-url").textContent = base + "/cb/s/#" + created.secret;
-  let mcp = "URL: " + base + "/cocoonbox.mcp/" + created.share.box_id + "\nAuthorization: Bearer " + created.secret;
-  if (created.share.users.length) mcp += "\nX-Cocoonbox-Guest-Token: <the guest's own cocoonbox token>";
+  $("share-url").textContent = base + "/cb/s/#" + sh.secret;
+  let mcp = "URL: " + base + "/cocoonbox.mcp/" + sh.box_id + "\nAuthorization: Bearer " + sh.secret;
+  if (sh.users.length) mcp += "\nX-Cocoonbox-Guest-Token: <the guest's own cocoonbox token>";
   $("share-mcp").textContent = mcp;
   $("share-link").hidden = false;
 }

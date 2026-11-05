@@ -28,17 +28,17 @@ func TestOwnerManagesTheShareOfTheirBox(t *testing.T) {
 		t.Errorf("sharing another user's box = %d, want 404", code)
 	}
 	created := env.createShare(t, qa1, `{"box_id":"`+box+`","user_names":["qa2"],"ttl_seconds":3600}`)
-	if created.Share.Box != box || len(created.Share.Users) != 1 || created.Share.Users[0] != "qa2" || created.Share.Write {
-		t.Errorf("created %+v", created.Share)
+	if created.Box != box || len(created.Users) != 1 || created.Users[0] != "qa2" || created.Write {
+		t.Errorf("created %+v", created)
 	}
 	if code := env.do(t, http.MethodPost, "api/shares", qa1, `{"box_id":"`+box+`"}`).Code; code != http.StatusConflict {
 		t.Errorf("a second share = %d, want 409", code)
 	}
-	resp := env.do(t, http.MethodPatch, "api/shares/"+created.Share.ID, qa1, `{"write":true}`)
+	resp := env.do(t, http.MethodPatch, "api/shares/"+created.ID, qa1, `{"write":true}`)
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"write":true`) {
 		t.Errorf("allow write = %d %s", resp.Code, resp.Body)
 	}
-	if code := env.do(t, http.MethodPatch, "api/shares/"+created.Share.ID, env.login(t, "qa2"), `{"write":false}`).Code; code != http.StatusNotFound {
+	if code := env.do(t, http.MethodPatch, "api/shares/"+created.ID, env.login(t, "qa2"), `{"write":false}`).Code; code != http.StatusNotFound {
 		t.Errorf("a guest switching write = %d, want 404", code)
 	}
 	if list := env.listShares(t, qa1); len(list) != 1 || list[0].Secret != created.Secret {
@@ -47,7 +47,7 @@ func TestOwnerManagesTheShareOfTheirBox(t *testing.T) {
 	if list := env.do(t, http.MethodGet, "api/shares", env.login(t, "qa2"), "").Body.String(); strings.Contains(list, created.Secret) || strings.TrimSpace(list) != "[]" {
 		t.Error("a guest's list holds the share or its secret")
 	}
-	resp = env.do(t, http.MethodPost, "api/shares/"+created.Share.ID+"/regenerate", qa1, "{}")
+	resp = env.do(t, http.MethodPost, "api/shares/"+created.ID+"/regenerate", qa1, "{}")
 	if resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), created.Secret) {
 		t.Errorf("regenerate = %d", resp.Code)
 	}
@@ -62,7 +62,7 @@ func TestOwnerManagesTheShareOfTheirBox(t *testing.T) {
 	if _, err := authn.Admit(list[0].Secret, box, env.qa2.ID); err != nil {
 		t.Errorf("the listed link after regenerate: %v", err)
 	}
-	if code := env.do(t, http.MethodDelete, "api/shares/"+created.Share.ID, qa1, "{}").Code; code != http.StatusNoContent {
+	if code := env.do(t, http.MethodDelete, "api/shares/"+created.ID, qa1, "{}").Code; code != http.StatusNoContent {
 		t.Errorf("revoke = %d", code)
 	}
 	if list := env.do(t, http.MethodGet, "api/shares", qa1, "").Body.String(); strings.TrimSpace(list) != "[]" {
@@ -127,7 +127,7 @@ func TestSharePageAdmitsTheSecretAndNamedViewers(t *testing.T) {
 			if _, err := ws.Write([]byte("viewer bytes")); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			if got := <-env.screens.got; got.principal != "share:"+named.Share.ID+":read:"+env.qa2.ID || got.data != "viewer bytes" {
+			if got := <-env.screens.got; got.principal != "share:"+named.ID+":read:"+env.qa2.ID || got.data != "viewer bytes" {
 				t.Errorf("bridge got %+v", got)
 			}
 		})
@@ -162,11 +162,6 @@ func TestANamedViewersScreenEndsWhenTheViewerSignsOutEverywhere(t *testing.T) {
 	}
 }
 
-type shareResponse struct {
-	Share  share  `json:"share"`
-	Secret string `json:"secret"`
-}
-
 type shareEnv struct {
 	*env
 	owner   users.User
@@ -193,13 +188,13 @@ func newShareEnv(t *testing.T) *shareEnv {
 	return e
 }
 
-func (e *shareEnv) createShare(t *testing.T, session, body string) shareResponse {
+func (e *shareEnv) createShare(t *testing.T, session, body string) share {
 	t.Helper()
 	resp := e.do(t, http.MethodPost, "api/shares", session, body)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create share = %d %s", resp.Code, resp.Body)
 	}
-	var out shareResponse
+	var out share
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Secret, auth.SecretPrefix) {
 		t.Fatalf("create share: %v", err)
 	}
