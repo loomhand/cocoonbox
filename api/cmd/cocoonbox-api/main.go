@@ -542,8 +542,6 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 	}
 	if cfg.Cluster.Shared {
 		opts.Shared = ledger
-	} else {
-		opts.Ledger = ledger
 	}
 	return opts, nil
 }

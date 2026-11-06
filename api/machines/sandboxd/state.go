@@ -74,7 +74,6 @@ type entry struct {
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
 	ready         bool
 	readyRestarts int
-	mirrored      *cluster.Machine
 	// version is the shared row version the entry was loaded from.
 	version int64
 }
@@ -182,7 +181,7 @@ func (e *entry) record() cluster.Machine {
 	return m
 }
 
-// load takes rec's fields; the watchers and the ledger copy of e stay.
+// load takes rec's fields; the watchers of e stay.
 func (e *entry) load(rec cluster.Machine) {
 	e.owner, e.image, e.created, e.ownerAddr = rec.Owner, rec.Image, rec.CreatedAt, rec.OwnerAddr
 	e.op, e.opErr, e.opUntil, e.revision = rec.Op, rec.OpErr, rec.OpUntil, rec.Revision

@@ -67,7 +67,6 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
-	Ledger            *cluster.Store
 	// Shared, when set, holds the machine records: every change lands on a row's version and the backend caches the table.
 	Shared *cluster.Store
 }
@@ -100,7 +99,6 @@ type Backend struct {
 	api                  *client
 	entryAddr            string
 	ctx                  context.Context
-	mirror               *cluster.Mirror
 	leaseFor, renewEvery time.Duration
 
 	nodeMu sync.Mutex
@@ -142,8 +140,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
-	switch {
-	case opts.Shared != nil:
+	if opts.Shared != nil {
 		if err := b.reload(ctx, ""); err != nil {
 			return nil, fmt.Errorf("read the shared machines: %w", err)
 		}
@@ -152,9 +149,6 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 				log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
 			}
 		}, func(payload string) { b.changed(ctx, payload) })
-	case opts.Ledger != nil:
-		b.mirror = cluster.NewMirror()
-		go b.mirror.Run(ctx)
 	}
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
@@ -534,30 +528,16 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	return nil
 }
 
-// Verify returns the machines whose record differs from the table once queued writes landed, repairing the row or, shared, the cache.
+// Verify returns the machines whose cached record differs from the shared table and reloads them; without a shared table it has none.
 func (b *Backend) Verify(ctx context.Context) ([]string, error) {
-	if b.opts.Shared != nil {
-		differ, err := b.differences(ctx)
-		for _, id := range differ {
-			b.notified(ctx, id)
-		}
-		return differ, err
+	if b.opts.Shared == nil {
+		return nil, nil
 	}
-	differ, err := b.mirror.Verify(ctx, b.differences)
-	if err != nil {
-		return nil, err
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	differ, err := b.differences(ctx)
 	for _, id := range differ {
-		if e := b.entries[id]; e != nil {
-			e.mirrored = nil
-			b.touchLocked(e)
-		} else {
-			b.dropLocked(id)
-		}
+		b.notified(ctx, id)
 	}
-	return differ, nil
+	return differ, err
 }
 
 // SyncOwner reads owner's machines from the shared table into the cache, for a start that must not act on a stale one.
@@ -579,7 +559,6 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 				next.rowAt, next.token = time.Now(), ""
 			}
 			b.entries[id] = next
-			b.touchLocked(next)
 		}
 		return next.machine(b.opts.DiskGiB), nil
 	}
@@ -624,7 +603,7 @@ func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool)
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if e := b.entries[id]; e != nil && cond(e) {
-			b.dropLocked(id)
+			delete(b.entries, id)
 			return true, nil
 		}
 		return false, nil
@@ -1476,42 +1455,15 @@ func (b *Backend) loadLocked(rec cluster.Machine) *entry {
 	return e
 }
 
-// touchLocked queues e's record for the ledger when it changed since the last one queued.
-func (b *Backend) touchLocked(e *entry) {
-	if b.mirror == nil || b.entries[e.id] != e {
-		return
-	}
-	rec := e.record()
-	if e.mirrored != nil && e.mirrored.Equal(rec) {
-		return
-	}
-	e.mirrored = &rec
-	b.mirror.Put(e.id, func(ctx context.Context) error { return b.opts.Ledger.PutMachine(ctx, rec) })
-}
-
-// dropLocked forgets machine id and queues its removal from the ledger.
-func (b *Backend) dropLocked(id string) {
-	delete(b.entries, id)
-	if b.mirror != nil {
-		b.mirror.Put(id, func(ctx context.Context) error { return b.opts.Ledger.DeleteMachine(ctx, id) })
-	}
-}
-
 // differences returns the ids whose table row differs from the entry.
 func (b *Backend) differences(ctx context.Context) ([]string, error) {
-	var table func(context.Context) ([]cluster.Machine, error)
-	if b.mirror != nil {
-		table = b.opts.Ledger.Machines
-	} else {
-		table = b.opts.Shared.Machines
-	}
 	b.mu.Lock()
 	want := make(map[string]cluster.Machine, len(b.entries))
 	for _, e := range b.entries {
 		want[e.id] = e.record()
 	}
 	b.mu.Unlock()
-	rows, err := table(ctx)
+	rows, err := b.opts.Shared.Machines(ctx)
 	if err != nil {
 		return nil, err
 	}
