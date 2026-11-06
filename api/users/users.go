@@ -192,6 +192,7 @@ type Service struct {
 	mu           sync.RWMutex
 	byID         map[string]record
 	byToken      map[string]tokenOwner
+	indexGen     int
 	deviceUse    sync.Map
 	boxes        map[string][]Box
 	boxGen       int
@@ -254,43 +255,48 @@ func (s *Service) Close() {
 	s.store.close()
 }
 
-// Load replaces the in-memory index with the tables; the boxes stay when a box changed meanwhile.
+// Load replaces the in-memory index with a current snapshot of the tables.
 func (s *Service) Load(ctx context.Context) error {
-	s.mu.RLock()
-	gen := s.boxGen
-	s.mu.RUnlock()
-	records, err := s.store.all(ctx)
-	if err != nil {
-		return err
-	}
-	devices, err := s.store.allDevices(ctx)
-	if err != nil {
-		return err
-	}
-	boxes, err := s.store.allBoxes(ctx)
-	if err != nil {
-		return err
-	}
-	byOwner := map[string][]Box{}
-	for _, b := range boxes {
-		byOwner[b.Owner] = append(byOwner[b.Owner], b)
-	}
-	byID := make(map[string]record, len(records))
-	byToken := make(map[string]tokenOwner, len(records))
-	for _, r := range records {
-		r.devices = devices[r.ID]
-		byID[r.ID] = r
-		addTokens(byToken, r)
-	}
-	var changed []string
-	s.mu.Lock()
-	for id, r := range byID {
-		if r.Disabled && !s.byID[id].Disabled {
-			s.cutOwner(id, false)
+	for {
+		s.mu.RLock()
+		gen, indexGen := s.boxGen, s.indexGen
+		s.mu.RUnlock()
+		records, err := s.store.all(ctx)
+		if err != nil {
+			return err
 		}
-	}
-	s.byID, s.byToken = byID, byToken
-	if s.boxGen == gen {
+		devices, err := s.store.allDevices(ctx)
+		if err != nil {
+			return err
+		}
+		boxes, err := s.store.allBoxes(ctx)
+		if err != nil {
+			return err
+		}
+		byOwner := map[string][]Box{}
+		for _, b := range boxes {
+			byOwner[b.Owner] = append(byOwner[b.Owner], b)
+		}
+		byID := make(map[string]record, len(records))
+		byToken := make(map[string]tokenOwner, len(records))
+		for _, r := range records {
+			r.devices = devices[r.ID]
+			byID[r.ID] = r
+			addTokens(byToken, r)
+		}
+		var changed []string
+		s.mu.Lock()
+		if s.indexGen != indexGen || s.boxGen != gen {
+			s.mu.Unlock()
+			continue
+		}
+		s.indexGen++
+		for id, r := range byID {
+			if r.Disabled && !s.byID[id].Disabled {
+				s.cutOwner(id, false)
+			}
+		}
+		s.byID, s.byToken = byID, byToken
 		for owner := range byOwner {
 			if !slices.Equal(s.boxes[owner], byOwner[owner]) {
 				changed = append(changed, owner)
@@ -302,25 +308,25 @@ func (s *Service) Load(ctx context.Context) error {
 			}
 		}
 		s.boxes = byOwner
-	}
-	for id := range s.lives {
-		if r, ok := byID[id]; !ok || r.Disabled {
-			s.end(id)
+		for id := range s.lives {
+			if r, ok := byID[id]; !ok || r.Disabled {
+				s.end(id)
+			}
 		}
-	}
-	for credential := range s.creds {
-		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
-			s.endCredential(credential)
+		for credential := range s.creds {
+			if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
+				s.endCredential(credential)
+			}
 		}
-	}
-	hooks := slices.Clone(s.onBoxes)
-	s.mu.Unlock()
-	for _, owner := range changed {
-		for _, fn := range hooks {
-			fn(owner)
+		hooks := slices.Clone(s.onBoxes)
+		s.mu.Unlock()
+		for _, owner := range changed {
+			for _, fn := range hooks {
+				fn(owner)
+			}
 		}
+		return nil
 	}
-	return nil
 }
 
 // Listen reloads the index and shares on each users notify and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
@@ -459,6 +465,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		dropTokens(s.byToken, r)
 		delete(s.byID, id)
 	}
+	s.indexGen++
 	s.boxGen++
 	delete(s.boxes, id)
 	s.cutOwner(id, true)
@@ -523,18 +530,14 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	if err := s.store.update(ctx, r, set); err != nil {
 		return User{}, err
 	}
+	defer s.published(ctx, "updated user "+id)
 	if r.Disabled && !old.Disabled {
 		if err := s.store.removeSessions(ctx, id); err != nil {
 			return User{}, err
 		}
 	}
-	s.published(ctx, "updated user "+id)
-	s.put(r)
-	if r.Disabled && !old.Disabled {
-		s.mu.Lock()
-		s.cutOwner(id, false)
-		s.end(id)
-		s.mu.Unlock()
+	if err := s.Load(ctx); err != nil {
+		return User{}, err
 	}
 	if r.Residential != old.Residential {
 		s.mu.RLock()
@@ -544,7 +547,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			fn(ctx, id, r.Residential)
 		}
 	}
-	return r.User, nil
+	return s.Get(id)
 }
 
 // SetPassword replaces user id's password and ends its console sessions.
@@ -574,14 +577,11 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	if err := s.store.setToken(ctx, id, sum); err != nil {
 		return err
 	}
-	old := r.tokenSHA256
-	r.tokenSHA256, r.HasToken = sum, true
-	s.put(r)
-	if old != sum {
-		s.EndCredential(ctx, old)
+	if r.tokenSHA256 != sum {
+		s.EndCredential(ctx, r.tokenSHA256)
 	}
 	s.published(ctx, "set the token of "+id)
-	return nil
+	return s.Load(ctx)
 }
 
 // RegenerateToken gives user id a new API token, returned once; the old one stops working at once.
@@ -602,12 +602,9 @@ func (s *Service) RevokeToken(ctx context.Context, id string) error {
 	if err := s.store.clearToken(ctx, id); err != nil {
 		return err
 	}
-	old := r.tokenSHA256
-	r.tokenSHA256, r.HasToken = "", false
-	s.put(r)
-	s.EndCredential(ctx, old)
+	s.EndCredential(ctx, r.tokenSHA256)
 	s.published(ctx, "revoked the token of "+id)
-	return nil
+	return s.Load(ctx)
 }
 
 // SignOut ends every sign-in of user id at once: its console sessions, personal token and device tokens, and every call open on them.
@@ -619,6 +616,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 		return err
 	}
 	s.mu.Lock()
+	s.indexGen++
 	if r, ok := s.byID[id]; ok {
 		dropTokens(s.byToken, r)
 		for _, d := range r.devices {
@@ -783,8 +781,7 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 		return err
 	}
 	s.published(ctx, "set the state key of "+id)
-	s.put(r)
-	return nil
+	return s.Load(ctx)
 }
 
 // Policy returns user id's policy; an unknown user has the zero one.
@@ -924,11 +921,10 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
 	}
 	s.published(ctx, "created user "+r.Name)
-	s.put(r)
-	s.mu.Lock()
-	s.putBox(first)
-	s.mu.Unlock()
-	return r.User, nil
+	if err := s.Load(ctx); err != nil {
+		return User{}, err
+	}
+	return s.Get(id)
 }
 
 // admissible checks nu's id and caps, that neither its name nor its id is taken, and hashes its password.
@@ -981,6 +977,10 @@ func (s *Service) endLocally(credential string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)
+	if hexSHA256.MatchString(credential) {
+		delete(s.byToken, credential)
+		s.indexGen++
+	}
 	if credential == "" || hexSHA256.MatchString(credential) {
 		return
 	}
@@ -1121,18 +1121,6 @@ func (s *Service) records() []record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return slices.SortedFunc(maps.Values(s.byID), func(a, b record) int { return strings.Compare(a.Name, b.Name) })
-}
-
-// put stores r in the index in place of its previous version; the device tokens stay those of the index.
-func (s *Service) put(r record) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if old, ok := s.byID[r.ID]; ok {
-		r.devices = old.devices
-		dropTokens(s.byToken, old)
-	}
-	s.byID[r.ID] = r
-	addTokens(s.byToken, r)
 }
 
 // outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
