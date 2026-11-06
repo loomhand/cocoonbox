@@ -216,17 +216,6 @@ func connection(_ endpoint: Endpoint = endpoint()) -> BoxConnection {
     }
 }
 
-func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
-    switch state {
-    case .starting: "starting"
-    case .running: "running"
-    case .hibernating: "hibernating"
-    case .hibernated: "hibernated"
-    case .failed: "failed"
-    default: "absent"
-    }
-}
-
 func selectedBox(_ connection: BoxConnection) async throws -> Cocoonbox_Control_V1_Box? {
     let boxes = try await connection.listBoxes()
     guard let ref = value(of: "--box") else { return boxes.first }
@@ -240,13 +229,13 @@ func box(_ ref: String, in boxes: [Cocoonbox_Control_V1_Box]) -> Cocoonbox_Contr
 
 func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
     let object: [String: Any] = [
-        "box_id": box?.id ?? "", "name": box?.name ?? "", "state": stateName(box?.state ?? .unspecified), "image": box?.image ?? "",
+        "box_id": box?.id ?? "", "name": box?.name ?? "", "state": (box?.state ?? .unspecified).name, "image": box?.image ?? "",
         "latest_image": box?.latestImage ?? "", "last_saved_at_ms": box?.lastSavedAtMs ?? 0,
         "upgrade_available": box.map { !$0.latestImage.isEmpty && $0.latestImage != $0.image } ?? false,
     ]
     if json { return printJSON(object) }
     guard let box else { return print("no box yet; run cocoonbox ensure") }
-    var line = "\(box.name) \(box.id) \(stateName(box.state)) \(box.image)"
+    var line = "\(box.name) \(box.id) \(box.state.name) \(box.image)"
     if !box.latestImage.isEmpty, box.latestImage != box.image { line += " (upgrade available: \(box.latestImage))" }
     if box.lastSavedAtMs > 0 {
         line += ", saved \(Int(Date().timeIntervalSince1970 - Double(box.lastSavedAtMs) / 1000) / 60) min ago"

@@ -511,6 +511,19 @@ extension Cocoonbox_Control_V1_Box {
     }
 }
 
+extension Cocoonbox_Control_V1_BoxState {
+    public var name: String {
+        switch self {
+        case .starting: "starting"
+        case .running: "running"
+        case .hibernating: "hibernating"
+        case .hibernated: "hibernated"
+        case .failed: "failed"
+        default: "absent"
+        }
+    }
+}
+
 public enum ConnectionError: Error, CustomStringConvertible {
     case plaintext(String)
 

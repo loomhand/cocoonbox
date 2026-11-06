@@ -582,14 +582,7 @@ struct StateBadge: View {
     }
 
     static func label(_ state: BoxState?) -> String {
-        switch state {
-        case .starting: "STARTING"
-        case .running: "RUNNING"
-        case .hibernating: "HIBERNATING"
-        case .hibernated: "HIBERNATED"
-        case .failed: "FAILED"
-        default: "ABSENT"
-        }
+        (state ?? .unspecified).name.uppercased()
     }
 
     private var color: Color {
