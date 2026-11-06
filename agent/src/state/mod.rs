@@ -169,30 +169,14 @@ impl StateEngine {
     }
 
     /// Walks and chunks the state, spools new chunks and pins the snapshot for Upload.
-    pub async fn plan(&self, req: pb::PlanRequest) -> Result<pb::PlanResponse, StateError> {
-        let mut pinned = self.pinned.lock().await;
-        let key = req
-            .key
-            .ok_or_else(|| StateError::Invalid("missing key".to_owned()))?;
-        let keys = Arc::new(Keys::derive(&key.key).map_err(StateError::Invalid)?);
-        if let Some(old) = pinned.take() {
-            let _ = tokio::fs::remove_dir_all(&old.spool).await;
-        }
-        let quiesced = req.consistency == i32::from(pb::Consistency::Quiesced);
-        let quiet = if quiesced {
-            Some(self.quiesce().await?)
-        } else {
-            None
-        };
-        let result = self
-            .snapshot(&keys, &key.key_id, &req.parent, quiesced)
-            .await;
-        if let Some(q) = quiet {
-            self.resume(q, false);
-        }
-        let (snapshot, response) = result?;
-        *pinned = Some(snapshot);
-        Ok(response)
+    pub async fn plan(
+        self: &Arc<Self>,
+        req: pb::PlanRequest,
+    ) -> Result<pb::PlanResponse, StateError> {
+        let engine = Arc::clone(self);
+        tokio::spawn(async move { engine.plan_inner(req).await })
+            .await
+            .map_err(|e| StateError::Failed(format!("plan task: {e}")))?
     }
 
     /// Uploads the listed chunks of the pinned snapshot; the call that carries the manifest
@@ -327,6 +311,34 @@ impl StateEngine {
         Ok(())
     }
 
+    async fn plan_inner(&self, req: pb::PlanRequest) -> Result<pb::PlanResponse, StateError> {
+        let mut pinned = self.pinned.lock().await;
+        let key = req
+            .key
+            .ok_or_else(|| StateError::Invalid("missing key".to_owned()))?;
+        let keys = Arc::new(Keys::derive(&key.key).map_err(StateError::Invalid)?);
+        if let Some(old) = pinned.take() {
+            let _ = tokio::fs::remove_dir_all(&old.spool).await;
+        }
+        let quiesced = req.consistency == i32::from(pb::Consistency::Quiesced);
+        let quiet = if quiesced {
+            Some(self.quiesce().await?)
+        } else {
+            None
+        };
+        let result = self
+            .snapshot(&keys, &key.key_id, &req.parent, quiesced)
+            .await;
+        if let Some(resume) = quiet.and_then(|q| self.resume(q, false)) {
+            resume
+                .await
+                .map_err(|e| StateError::Failed(format!("resume task: {e}")))?;
+        }
+        let (snapshot, response) = result?;
+        *pinned = Some(snapshot);
+        Ok(response)
+    }
+
     /// Reads the first message of a restore stream and opens the manifest it names.
     async fn open<S>(&self, reqs: &mut S) -> Result<Opened, StateError>
     where
@@ -443,7 +455,7 @@ impl StateEngine {
         }
         let quiet = self.quiesce().await?;
         let result = self.swap_in(&manifest, cache, swaps).await;
-        self.resume(quiet, result.is_ok());
+        let _ = self.resume(quiet, result.is_ok());
         result?;
         if let Err(e) = self.seed_known(&manifest, &filled).await {
             eprintln!("state: seed the reuse cache: {e}");
@@ -955,13 +967,10 @@ impl StateEngine {
     }
 
     /// Ends the pause; Chrome starts in the background, and a browser tool waits on its lock meanwhile.
-    fn resume(&self, quiet: Quiet, restored: bool) {
-        let Some(args) = chrome_start(quiet.chrome, restored) else {
-            return;
-        };
+    fn resume(&self, quiet: Quiet, restored: bool) -> Option<tokio::task::JoinHandle<()>> {
+        let args = chrome_start(quiet.chrome, restored)?;
         let toolhost = self.toolhost.clone();
-        // detached: the start reports only to the log
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let call = Call {
                 agent_id: "state".to_owned(),
                 tool: "browser_start".to_owned(),
@@ -972,7 +981,7 @@ impl StateEngine {
                 Ok(_) => {}
                 Err(e) => eprintln!("state: restart chrome: {e}"),
             }
-        });
+        }))
     }
 
     async fn tool(&self, name: &str, args: Value) -> Result<String, String> {
@@ -1617,6 +1626,108 @@ fn causes(e: &dyn std::error::Error) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn a_cancelled_plan_resumes_chrome_before_the_next_plan_even_after_failure() {
+        for phase in ["browser_close", "state_walk"] {
+            for failed in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
+                let mut listener = crate::toolhost::bind(&socket, "").unwrap();
+                let (seen, mut calls) = mpsc::channel(8);
+                let release = Arc::new(tokio::sync::Notify::new());
+                let proceed = Arc::clone(&release);
+                let ready = Arc::new(tokio::sync::Notify::new());
+                let chrome_ready = Arc::clone(&ready);
+                let server = tokio::spawn(async move {
+                    let mut jobs = tokio::task::JoinSet::new();
+                    for i in 0..5 {
+                        let mut s = crate::toolhost::accept(&mut listener).await.unwrap();
+                        let seen = seen.clone();
+                        let proceed = Arc::clone(&proceed);
+                        let chrome_ready = Arc::clone(&chrome_ready);
+                        jobs.spawn(async move {
+                            let call: Call = rpc::read_frame(&mut s).await.unwrap();
+                            seen.send(call.tool.clone()).await.unwrap();
+                            if call.tool == phase && i < 3 {
+                                proceed.notified().await;
+                            }
+                            if call.tool == "browser_start" {
+                                assert_eq!(call.args, json!({}));
+                                chrome_ready.notified().await;
+                            }
+                            if call.tool == "state_walk" {
+                                rpc::write_data(&mut s, if failed { b"{" } else { b"[]" })
+                                    .await
+                                    .unwrap();
+                                rpc::write_data(&mut s, b"").await.unwrap();
+                            } else {
+                                rpc::write_frame(&mut s, &rpc::Output::text("closed"))
+                                    .await
+                                    .unwrap();
+                            }
+                        });
+                    }
+                    while let Some(done) = jobs.join_next().await {
+                        done.unwrap();
+                    }
+                });
+                let engine = Arc::new(test_engine(dir.path(), socket).await);
+                let request = pb::PlanRequest {
+                    key: Some(pb::StateKey {
+                        key_id: "key".to_owned(),
+                        key: vec![7; 32].into(),
+                    }),
+                    consistency: pb::Consistency::Quiesced.into(),
+                    ..Default::default()
+                };
+                let next_request = pb::PlanRequest {
+                    consistency: pb::Consistency::Live.into(),
+                    ..request.clone()
+                };
+                let caller = {
+                    let engine = Arc::clone(&engine);
+                    tokio::spawn(async move { engine.plan(request).await })
+                };
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while calls.recv().await.as_deref() != Some(phase) {}
+                })
+                .await
+                .unwrap();
+                caller.abort();
+                assert!(caller.await.unwrap_err().is_cancelled());
+                assert!(engine.pause.turns.try_read().is_err());
+                release.notify_one();
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    while calls.recv().await.as_deref() != Some("browser_start") {}
+                })
+                .await
+                .unwrap();
+                assert!(engine.pause.turns.try_write().is_ok());
+                let next = {
+                    let engine = Arc::clone(&engine);
+                    tokio::spawn(async move { engine.plan(next_request).await })
+                };
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(50), calls.recv())
+                        .await
+                        .is_err()
+                );
+                ready.notify_one();
+                let planned = tokio::time::timeout(Duration::from_secs(5), next)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(planned.is_ok(), !failed);
+                tokio::time::timeout(Duration::from_secs(5), server)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert!(engine.pause.turns.try_write().is_ok());
+                assert_eq!(engine.pinned.lock().await.is_some(), !failed);
+            }
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_windows_scope_path_names_its_root_by_name_or_by_path() {
@@ -1692,7 +1803,7 @@ mod tests {
         .unwrap();
         let gate = Arc::clone(&turns).write_owned().await;
         let started = tokio::time::Instant::now();
-        engine.resume(
+        let _resume = engine.resume(
             Quiet {
                 _gate: gate,
                 chrome: true,
@@ -1883,6 +1994,24 @@ mod tests {
         );
         assert_eq!(chrome_start(true, false), Some(json!({})));
         assert_eq!(chrome_start(false, false), None);
+    }
+
+    async fn test_engine(dir: &Path, socket: PathBuf) -> StateEngine {
+        StateEngine::new(
+            rpc::Client::new(socket),
+            Store::open(&dir.join("agent.db")).unwrap(),
+            default_roots(Path::new("/home/user"), Path::new("/workspace")),
+            dir.join("work"),
+            Pause {
+                turns: Arc::default(),
+                guests: Arc::default(),
+                wait: Duration::from_secs(1),
+            },
+            None,
+            false,
+        )
+        .await
+        .unwrap()
     }
 
     async fn cutting_store(cuts: u32) -> String {
