@@ -155,6 +155,64 @@ impl Args {
     }
 }
 
+struct Frame {
+    w: usize,
+    h: usize,
+    rgba: Vec<u8>,
+    seen: Vec<bool>,
+    covered: usize,
+}
+
+impl Frame {
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            w,
+            h,
+            rgba: vec![0; w * h * 4],
+            seen: vec![false; w * h],
+            covered: 0,
+        }
+    }
+
+    async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
+        let io = |e: std::io::Error| format!("rfb: {e}");
+        let kind = rd.read_u8().await.map_err(io)?;
+        if kind != 0 {
+            return Err(format!("unexpected server message {kind} before the frame"));
+        }
+        rd.read_u8().await.map_err(io)?;
+        let rects = rd.read_u16().await.map_err(io)?;
+        for _ in 0..rects {
+            let x = usize::from(rd.read_u16().await.map_err(io)?);
+            let y = usize::from(rd.read_u16().await.map_err(io)?);
+            let rw = usize::from(rd.read_u16().await.map_err(io)?);
+            let rh = usize::from(rd.read_u16().await.map_err(io)?);
+            let enc = rd.read_i32().await.map_err(io)?;
+            if enc != RFB_RAW {
+                return Err(format!("server sent encoding {enc}; asked for Raw only"));
+            }
+            let mut px = vec![0; rw * rh * 4];
+            rd.read_exact(&mut px).await.map_err(io)?;
+            for row in (0..rh).filter(|r| y + r < self.h) {
+                for col in (0..rw).filter(|c| x + c < self.w) {
+                    let (sx, at) = ((row * rw + col) * 4, (y + row) * self.w + x + col);
+                    self.rgba[at * 4..at * 4 + 4].copy_from_slice(&[
+                        px[sx + 2],
+                        px[sx + 1],
+                        px[sx],
+                        255,
+                    ]);
+                    if !self.seen[at] {
+                        self.seen[at] = true;
+                        self.covered += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn main() {
     let mut argv = std::env::args().skip(1);
@@ -419,64 +477,6 @@ fn window(s: &str) -> Result<pb::ExecWindow, String> {
         rows: rows.parse().map_err(|e| format!("rows {rows}: {e}"))?,
         cols: cols.parse().map_err(|e| format!("cols {cols}: {e}"))?,
     })
-}
-
-struct Frame {
-    w: usize,
-    h: usize,
-    rgba: Vec<u8>,
-    seen: Vec<bool>,
-    covered: usize,
-}
-
-impl Frame {
-    fn new(w: usize, h: usize) -> Self {
-        Self {
-            w,
-            h,
-            rgba: vec![0; w * h * 4],
-            seen: vec![false; w * h],
-            covered: 0,
-        }
-    }
-
-    async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
-        let io = |e: std::io::Error| format!("rfb: {e}");
-        let kind = rd.read_u8().await.map_err(io)?;
-        if kind != 0 {
-            return Err(format!("unexpected server message {kind} before the frame"));
-        }
-        rd.read_u8().await.map_err(io)?;
-        let rects = rd.read_u16().await.map_err(io)?;
-        for _ in 0..rects {
-            let x = usize::from(rd.read_u16().await.map_err(io)?);
-            let y = usize::from(rd.read_u16().await.map_err(io)?);
-            let rw = usize::from(rd.read_u16().await.map_err(io)?);
-            let rh = usize::from(rd.read_u16().await.map_err(io)?);
-            let enc = rd.read_i32().await.map_err(io)?;
-            if enc != RFB_RAW {
-                return Err(format!("server sent encoding {enc}; asked for Raw only"));
-            }
-            let mut px = vec![0; rw * rh * 4];
-            rd.read_exact(&mut px).await.map_err(io)?;
-            for row in (0..rh).filter(|r| y + r < self.h) {
-                for col in (0..rw).filter(|c| x + c < self.w) {
-                    let (sx, at) = ((row * rw + col) * 4, (y + row) * self.w + x + col);
-                    self.rgba[at * 4..at * 4 + 4].copy_from_slice(&[
-                        px[sx + 2],
-                        px[sx + 1],
-                        px[sx],
-                        255,
-                    ]);
-                    if !self.seen[at] {
-                        self.seen[at] = true;
-                        self.covered += 1;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 async fn snap<R, W>(
