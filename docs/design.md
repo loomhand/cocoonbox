@@ -328,7 +328,7 @@ The cost is one local stdio hop per message, next to a 230 ms WAN round trip; th
 
 **Direct fallback.** The Connect sheet recipes stay for users who don't install the CLI. The `claude` recipe may use `"headersHelper": "cocoonbox mcp-headers"`, which prints `{"Authorization":"Bearer …"}` to the CLI's pipe, instead of `${COCOONBOX_TOKEN}`. There is no `cocoonbox env` command: an exported token lives in every child of that shell.
 
-**One URL without the CLI (2026-10-28).** The api serves what the bridge does for the hibernated box at `https://<endpoint>/cocoonbox.mcp` (contracts "Unified MCP"), so a client on any computer adds one URL and signs in through the browser (OAuth for agents), with no token in its config. It answers `initialize` and `tools/list` without the box, from the tool list it recorded for the box's image, and a box-tool call wakes the default box with `box_ensure` and waits for it, at most 25 s, as the bridge does. The console's Connect your agent page (`/cb/setup`) gives each client's commands. The bridge keeps what this URL leaves out: the `box` argument on box tools, the box's resources and Connect's connector tools.
+**One URL without the CLI (2026-10-28).** The api serves what the bridge does for the hibernated box at `https://<endpoint>/cocoonbox.mcp` (contracts "Unified MCP"), so a client on any computer adds one URL and signs in through the browser (OAuth for agents), with no token in its config. It answers `initialize` and `tools/list` without the box, from the tool list it recorded for the box's image, and a box-tool call wakes the default box with `box_ensure` and waits for it, at most 25 s, as the bridge does. The console's Connect your agent page (`/cb/setup`) gives each client's commands. The bridge keeps what this URL leaves out: the `box` argument on box tools, the box's resources and, for a user token, Connect's connector tools. An agent that signs in asks for the `connect` scope too, and its grant gets the tools of only the accounts the user ticks on the consent page, so a grant can get the computer without the user's accounts: the boundary is a per-grant permission, not a second URL.
 
 ### 13.3 Control MCP (api)
 
@@ -1323,6 +1323,7 @@ Doors:
 |---|---|---|---|
 | `Connectors` gRPC (`proto/cocoonbox/control/v1/connectors.proto`) | the app | user token | catalog, connect, policy, approvals, activity, disconnect |
 | `https://<endpoint>/cocoonbox.mcp/connect` | the bridge (mode B) | user token | the user's connector tools |
+| `https://<endpoint>/cocoonbox.mcp` (unified MCP) | an agent signed in with OAuth | the grant's access token | the tools of the accounts the user ticked for the grant, as mode B serves them |
 | `http://10.203.0.1:18091/mcp`, host-internal | the box (mode A) | a per-machine key that the box never holds | the box owner's connector tools |
 
 The box door follows §12.2 (the proof comes from the channel) and the gw pattern of §14.5:
@@ -1484,7 +1485,7 @@ Split:
 - **api:**
   - `api/connect`: the PostgreSQL store with its migrations and envelope encryption (16.1.1), the OAuth and MCP-authorization client, the upstream clients, refresh, policy, approvals and audit;
   - the callback and client-metadata routes;
-  - the `Connectors` service and `/cocoonbox.mcp/connect`;
+  - the `Connectors` service and `/cocoonbox.mcp/connect`, and on the unified MCP the tools of the accounts a grant holds;
   - the listener for the box door;
   - `CB_CONNECT` in the sandboxd `Deliver`;
   - M5.2: `machines.SetCredentials`, and the token push on refresh and before wake.

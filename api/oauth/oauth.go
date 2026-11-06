@@ -32,8 +32,10 @@ const (
 	RegisterPath = "/cocoonbox.oauth/register"
 	// RevokePath takes RFC 7009 revocations.
 	RevokePath = "/cocoonbox.oauth/revoke"
-	// Scope is the one scope of an agent: manage the boxes the grant creates.
+	// Scope is the scope every agent gets: manage the boxes the grant creates.
 	Scope = "boxes"
+	// ConnectScope lets an agent ask for the user's connected accounts; the grant holds only those the user ticks at consent.
+	ConnectScope = "connect"
 	// AccountScope is the scope of a first-party client: the whole account, through a device token.
 	AccountScope = "account"
 	// CLIClient is the first-party client id of the cocoonbox CLI.
@@ -47,6 +49,7 @@ const (
 	defaultMaxRunning = 1
 	defaultDays       = 30
 
+	agentScopes            = Scope + " " + ConnectScope
 	resourceMetadataPrefix = "/.well-known/oauth-protected-resource"
 	codeParam              = "code"
 	errorParam             = "error"
@@ -116,7 +119,7 @@ func (c Caps) check() error {
 	return nil
 }
 
-// Grant is one client's access for one user; Boxes are the boxes it created that still exist, and Chosen the user's own boxes the user chose for it.
+// Grant is one client's access for one user; Boxes are the boxes it created that still exist, Chosen the user's own boxes the user chose for it, Connectors the Connect grants of the accounts the user ticked for it.
 type Grant struct {
 	ID         string `json:"id"`
 	User       string `json:"-"`
@@ -128,6 +131,7 @@ type Grant struct {
 	MaxRunning int        `json:"max_running"`
 	Boxes      []string   `json:"boxes"`
 	Chosen     []string   `json:"chosen"`
+	Connectors []string   `json:"-"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	UsedAt     *time.Time `json:"used_at"`
@@ -188,7 +192,7 @@ func (s *Service) ResourceMetadataPath() string {
 
 // Challenge is the WWW-Authenticate value of a 401 from the protected resource; invalid adds invalid_token for a token it refused.
 func (s *Service) Challenge(invalid bool) string {
-	value := `Bearer resource_metadata="` + s.issuer + s.ResourceMetadataPath() + `", scope="` + Scope + `"`
+	value := `Bearer resource_metadata="` + s.issuer + s.ResourceMetadataPath() + `", scope="` + agentScopes + `"`
 	if invalid {
 		value += `, error="invalid_token"`
 	}
@@ -200,7 +204,7 @@ func (s *Service) ServeResourceMetadata(w http.ResponseWriter, _ *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"resource":                 s.resource,
 		"authorization_servers":    []string{s.issuer},
-		"scopes_supported":         []string{Scope},
+		"scopes_supported":         []string{Scope, ConnectScope},
 		"bearer_methods_supported": []string{"header"},
 		"resource_name":            "CocoonBox",
 	})
@@ -215,7 +219,7 @@ func (s *Service) ServeServerMetadata(w http.ResponseWriter, _ *http.Request) {
 		"registration_endpoint":                          s.issuer + RegisterPath,
 		"revocation_endpoint":                            s.issuer + RevokePath,
 		"protected_resources":                            []string{s.resource},
-		"scopes_supported":                               []string{Scope},
+		"scopes_supported":                               []string{Scope, ConnectScope},
 		"response_types_supported":                       []string{codeParam},
 		"grant_types_supported":                          grantTypes,
 		"code_challenge_methods_supported":               []string{"S256"},

@@ -39,7 +39,10 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	clientID := cmp.Or(f.Get("client_id"), basicUser(r))
 	access, refresh := randomToken(AccessPrefix), randomToken(refreshPrefix)
 	tokens := issued{access: utils.HashHex(access), refresh: utils.HashHex(refresh)}
-	var err error
+	var (
+		err        error
+		connectors bool
+	)
 	switch f.Get("grant_type") {
 	case authorizationCode:
 		var redeemed code
@@ -53,9 +56,10 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 			s.serveDevice(w, r, redeemed)
 			return
 		}
+		connectors = len(redeemed.connectors) != 0
 	case refreshToken:
 		var replayed string
-		replayed, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
+		replayed, connectors, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
 		if replayed != "" {
 			s.accounts.EndCredential(r.Context(), replayed)
 		}
@@ -77,7 +81,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		"token_type":   "Bearer",
 		"expires_in":   int(accessTTL.Seconds()),
 		refreshToken:   refresh,
-		scopeParam:     Scope,
+		scopeParam:     grantedScope(connectors),
 	})
 }
 
@@ -109,7 +113,7 @@ func (s *Service) ServeRegister(w http.ResponseWriter, r *http.Request) {
 		"grant_types":                grantTypes,
 		"response_types":             []string{codeParam},
 		"token_endpoint_auth_method": authNone,
-		scopeParam:                   Scope,
+		scopeParam:                   agentScopes,
 	})
 }
 

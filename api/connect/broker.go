@@ -53,10 +53,16 @@ func (t tool) effective(choice string) string {
 	}
 }
 
+// caller is who calls a door; grants, when set, are the only grants whose tools it reaches.
 type caller struct {
-	user string
-	door string
-	name string
+	user   string
+	door   string
+	name   string
+	grants []string
+}
+
+func (c caller) reaches(grant string) bool {
+	return c.grants == nil || slices.Contains(c.grants, grant)
 }
 
 type callResult struct {
@@ -84,7 +90,7 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(listFanout)
 	for i, g := range grants {
-		if g.status != statusActive || g.mcpURL == "" {
+		if g.status != statusActive || g.mcpURL == "" || !c.reaches(g.id) {
 			continue
 		}
 		eg.Go(func() error {
@@ -127,6 +133,9 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 		}
 	}()
 	g, err := s.store.grant(ctx, c.user, connector)
+	if err == nil && !c.reaches(g.id) {
+		err = errNoGrant
+	}
 	if errors.Is(err, errNoGrant) {
 		rec.decision, rec.outcome = policyOff, outcomeError
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}

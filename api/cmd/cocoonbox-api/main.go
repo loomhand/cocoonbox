@@ -209,6 +209,7 @@ func main() {
 	if broker != nil {
 		controlv1.RegisterConnectorsServer(server, broker)
 		web.EnableConnect(broker)
+		control.EnableConnectors(broker)
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)

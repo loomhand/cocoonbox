@@ -2,8 +2,10 @@ package oauth
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +45,7 @@ func ParseRequest(q url.Values) Request {
 	}
 }
 
-// Consent is what the consent page shows of a request: Existing marks a live grant the approval renews, Chosen its boxes, Account a whole-account first-party client.
+// Consent is what the consent page shows of a request: Existing marks a live grant the approval renews, Chosen its boxes, Connectors its Connect grants, Connect a request for ConnectScope, Account a whole-account first-party client.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
@@ -53,6 +55,8 @@ type Consent struct {
 	Loopback     bool     `json:"loopback"`
 	Existing     bool     `json:"existing"`
 	Chosen       []string `json:"chosen"`
+	Connectors   []string `json:"-"`
+	Connect      bool     `json:"connect"`
 	Account      bool     `json:"account"`
 	DeviceName   string   `json:"device_name"`
 	Defaults     Caps     `json:"defaults"`
@@ -74,7 +78,7 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 		return Consent{}, err
 	}
 	var existing string
-	var chosen []string
+	var chosen, connectors []string
 	if !c.firstParty {
 		if existing, err = s.store.liveGrant(ctx, user, c.id); err != nil {
 			return Consent{}, err
@@ -84,29 +88,37 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 		if chosen, err = s.store.chosen(ctx, existing); err != nil {
 			return Consent{}, err
 		}
+		if connectors, err = s.store.chosenConnectors(ctx, existing); err != nil {
+			return Consent{}, err
+		}
 	}
 	host, loopback := redirectHost(req.RedirectURI)
+	connect, _ := agentScope(req.Scope)
 	return Consent{
 		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
-		Account: c.firstParty, DeviceName: req.DeviceName, Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
+		Connectors: connectors, Connect: connect && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
+		Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil
 }
 
-// Approve records user's consent to req within caps and the user's own boxes of chosen (none for a first-party client), and returns where the browser takes the code.
-func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string) (string, error) {
+// Approve records user's consent to req within caps, the user's own boxes of chosen and the Connect grants connectors (none for a first-party client), and returns where the browser takes the code.
+func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen, connectors []string) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	if c.firstParty {
-		caps, chosen = Caps{}, nil
+		caps, chosen, connectors = Caps{}, nil, nil
 	} else if err := caps.check(); err != nil {
 		return "", err
+	}
+	if connect, _ := agentScope(req.Scope); len(connectors) != 0 && !connect {
+		return "", fmt.Errorf("%w: connected accounts need the %s scope", ErrInvalid, ConnectScope)
 	}
 	value := utils.RandomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
-		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, label: req.DeviceName,
+		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, connectors: connectors, label: req.DeviceName,
 		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: utils.HashHex(value),
 	}); err != nil {
 		return "", err
@@ -131,6 +143,7 @@ func (s *Service) check(ctx context.Context, req Request) (client, error) {
 	if req.RedirectURI == "" || !c.allows(req.RedirectURI) {
 		return client{}, &AuthorizeError{Code: invalidRequest, Description: "redirect_uri is not one the client registered"}
 	}
+	_, scopeOK := agentScope(req.Scope)
 	var refusal *AuthorizeError
 	switch {
 	case req.ResponseType != codeParam:
@@ -139,8 +152,8 @@ func (s *Service) check(ctx context.Context, req Request) (client, error) {
 		refusal = &AuthorizeError{Code: invalidRequest, Description: "PKCE with code_challenge_method S256 is required"}
 	case c.firstParty && req.Scope != AccountScope:
 		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the scope of " + c.id + " is " + AccountScope}
-	case !c.firstParty && !scopeAllowed(req.Scope):
-		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the only scope is " + Scope}
+	case !c.firstParty && !scopeOK:
+		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the scope is " + Scope + ", or " + agentScopes}
 	case len(req.DeviceName) > maxDeviceName || !utf8.ValidString(req.DeviceName):
 		refusal = &AuthorizeError{Code: invalidRequest, Description: "device_name is at most " + strconv.Itoa(maxDeviceName) + " bytes of UTF-8"}
 	case req.Resource != "" && !s.covers(req.Resource):
@@ -176,11 +189,21 @@ func (s *Service) covers(uri string) bool {
 	return path == base.Path || strings.HasPrefix(path, base.Path+"/")
 }
 
-func scopeAllowed(scope string) bool {
-	for s := range strings.FieldsSeq(scope) {
-		if s != Scope {
-			return false
+// agentScope reports whether an agent's scope asks for ConnectScope, and whether it is Scope with ConnectScope or without; an absent scope is Scope.
+func agentScope(scope string) (connect, ok bool) {
+	fields := strings.Fields(scope)
+	for _, f := range fields {
+		if f != Scope && f != ConnectScope {
+			return false, false
 		}
 	}
-	return true
+	return slices.Contains(fields, ConnectScope), len(fields) == 0 || slices.Contains(fields, Scope)
+}
+
+// grantedScope is the scope a token of a grant reports: ConnectScope too once the user ticked an account for it.
+func grantedScope(connectors bool) string {
+	if connectors {
+		return agentScopes
+	}
+	return Scope
 }
