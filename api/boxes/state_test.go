@@ -1238,6 +1238,7 @@ func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("save ended with %v", last)
 	}
+	time.Sleep(time.Millisecond)
 	return events
 }
 
