@@ -26,8 +26,6 @@ install_runtime() {
 
 install_rootfs() {
 	log "rootfs files"
-	systemctl disable cocoonbox-toolhost.service >/dev/null 2>&1 || true
-	rm -rf /etc/systemd/system/cocoonbox-toolhost.service /etc/systemd/system/cocoonbox-toolhost.service.d
 	(cd "$SRC/rootfs" && find . -type f) | while read -r f; do
 		case "$f" in
 		./usr/local/bin/* | ./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
@@ -81,13 +79,7 @@ switch_driver() {
 		/opt/cua-driver /usr/local/bin/cua-driver "$WANTS/cua-driver.service"
 	systemctl --global mask cua-driver.service
 	install -d -o user -g user "$WANTS"
-	sed -i 's#^d /run/cocoonbox 2770 user cbagent -$#d /run/cocoonbox 2750 user cbagent -#' /etc/tmpfiles.d/cocoonbox.conf
 	chmod 2750 /run/cocoonbox
-	if [ -f /etc/systemd/user/cocoon-shuttle.service ]; then
-		systemctl --user -M user@ stop cocoon-shuttle.service
-	fi
-	rm -rf /etc/systemd/user/cocoon-shuttle.service /etc/systemd/user/cocoon-shuttle.service.d "$WANTS/cocoon-shuttle.service" \
-		/home/user/.config/cocoon-shuttle
 	systemctl --global enable shuttle.service
 	systemctl --user -M user@ daemon-reload
 	systemctl --user -M user@ restart shuttle.service
@@ -113,9 +105,6 @@ check() {
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	[ "$(readlink -f /usr/local/bin/shuttle)" = "/opt/loomhand/shuttle/$SHUTTLE_VERSION/shuttle" ]
-	[ ! -e /opt/cocoon-shuttle ]
-	[ ! -e /usr/local/bin/cocoon-shuttle ]
-	[ ! -e /etc/systemd/user/cocoon-shuttle.service ]
 	systemctl --user -M user@ -q is-enabled shuttle.service
 	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" = masked ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
@@ -130,7 +119,6 @@ check() {
 	systemctl show -p Environment cocoonbox-agent | grep 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl show -p Environment cocoonbox-session | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl --user -M user@ show-environment | grep -qx 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
-	systemctl cat cocoonbox-toolhost >/dev/null 2>&1 && exit 1
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	grep -q '^base_url = "http' "$SHUTTLE_CONFIG"

@@ -17,7 +17,6 @@ install_shuttle() {
 	tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
 	ln -sfn "$dir/shuttle" /usr/local/bin/shuttle
 	find /opt/loomhand/shuttle -mindepth 1 -maxdepth 1 ! -name "$SHUTTLE_VERSION" -exec rm -rf {} +
-	rm -rf /opt/cocoon-shuttle /usr/local/bin/cocoon-shuttle
 }
 
 install_shuttle_runtime() {
