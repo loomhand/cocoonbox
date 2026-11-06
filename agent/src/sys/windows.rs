@@ -20,8 +20,8 @@ use windows::Wdk::Storage::FileSystem::{
     NtQueryInformationFile,
 };
 use windows::Win32::Foundation::{
-    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_NO_MORE_FILES, HANDLE, HLOCAL,
-    INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_NO_MORE_FILES, GENERIC_ALL,
+    GENERIC_WRITE, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -33,11 +33,12 @@ use windows::Win32::Security::{
     SECURITY_ATTRIBUTES, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FULL_DIR_INFO,
-    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FileBasicInfo, FileFullDirectoryInfo,
+    DELETE, FILE_APPEND_DATA, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_BASIC_INFO, FILE_DELETE_CHILD, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_FULL_DIR_INFO, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
+    FILE_WRITE_DATA, FILE_WRITE_EA, FileBasicInfo, FileFullDirectoryInfo,
     FileFullDirectoryRestartInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
-    MOVE_FILE_FLAGS, MoveFileExW,
+    MOVE_FILE_FLAGS, MoveFileExW, WRITE_DAC, WRITE_OWNER,
 };
 use windows::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole, STD_ERROR_HANDLE,
@@ -52,17 +53,16 @@ use windows::Win32::System::JobObjects::{
 use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
 use windows::Win32::System::Threading::{
-    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
-    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+    CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    OpenProcessToken, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+    WaitForSingleObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
-const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SIGKILL: i32 = 9;
 /// The longest path a wide Windows call returns, in UTF-16 units.
 const PATH_UNITS: usize = 32 << 10;
@@ -77,18 +77,16 @@ const UNIX_EPOCH_FILETIME: i64 = 116_444_736_000_000_000;
 const GROUP_RIGHTS: &str = "0x12019b";
 /// SYSTEM and Administrators, the accounts that may own and change a file serve trusts.
 const ADMIN_SIDS: [&str; 2] = ["S-1-5-18", "S-1-5-32-544"];
-/// Any right to change a file or directory: write and append data, write extended attributes and attributes,
-/// delete a child, delete, write the DACL or owner, generic all and generic write.
-const WRITE_RIGHTS: u32 = 0x0000_0002
-    | 0x0000_0004
-    | 0x0000_0010
-    | 0x0000_0040
-    | 0x0000_0100
-    | 0x0001_0000
-    | 0x0004_0000
-    | 0x0008_0000
-    | 0x1000_0000
-    | 0x4000_0000;
+const WRITE_RIGHTS: u32 = FILE_WRITE_DATA.0
+    | FILE_APPEND_DATA.0
+    | FILE_WRITE_EA.0
+    | FILE_DELETE_CHILD.0
+    | FILE_WRITE_ATTRIBUTES.0
+    | DELETE.0
+    | WRITE_DAC.0
+    | WRITE_OWNER.0
+    | GENERIC_ALL.0
+    | GENERIC_WRITE.0;
 const ACCESS_ALLOWED: u8 = 0;
 const ACCESS_ALLOWED_OBJECT: u8 = 5;
 const ACCESS_ALLOWED_CALLBACK: u8 = 9;
@@ -450,7 +448,7 @@ pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 
 /// Starts the child of `cmd` in a console process group of its own, without a console window.
 pub fn new_group(cmd: &mut Command) -> &mut Command {
-    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
+    cmd.creation_flags((CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW).0)
 }
 
 /// Starts the program, arguments, environment changes and directory of `cmd` on a new pseudo console of `rows` by `cols`.
