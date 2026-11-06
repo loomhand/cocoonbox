@@ -126,7 +126,6 @@ func (e *entry) busy(now time.Time) bool {
 	return e.op != "" && now.Before(e.opUntil)
 }
 
-// begin marks e as running op from now on, as a new revision, held for lease.
 func (e *entry) begin(op string, now time.Time, lease time.Duration) {
 	e.op, e.opErr, e.opUntil = op, "", now.Add(lease)
 	e.revision++

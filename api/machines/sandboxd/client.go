@@ -26,7 +26,6 @@ const (
 	diskLowReason = "disk below reserve"
 )
 
-// apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound, 409 machines.ErrConflict and 429 machines.ErrCapacity.
 type apiError struct {
 	status  int
 	message string
@@ -137,7 +136,6 @@ func newClient(rawURL, token string) (*client, error) {
 	return &client{base: base, token: token, http: &http.Client{}}, nil
 }
 
-// claim claims with token, a tenant's or the root one.
 func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {
 	var resp claimResponse
 	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
@@ -205,7 +203,6 @@ func (c *client) get(ctx context.Context, id string) (row, error) {
 	return r, err
 }
 
-// verb posts one lifecycle verb with the root token.
 func (c *client) verb(ctx context.Context, id, verb string, body any) error {
 	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, nil, body, nil)
 }
@@ -318,7 +315,6 @@ func (c *bufferedConn) CloseWrite() error {
 	return c.Close()
 }
 
-// nodeURL gives the http scheme to a node address the mesh names without one.
 func nodeURL(addr string) string {
 	if strings.Contains(addr, "://") {
 		return addr
