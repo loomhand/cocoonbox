@@ -238,7 +238,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newResponse(req.ID, result, rpcErr))
 }
 
-// answer runs a control tool and writes its response, as events when the call carries a progress token.
 func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id jsontext.Value, call *callParams) *mcpwire.Error {
 	if call.Meta.ProgressToken == nil {
 		result, rpcErr := s.call(ctx, call, func(string) {})
@@ -266,7 +265,6 @@ func (s *Server) authenticate(r *http.Request) (string, string, *oauth.Grant, er
 	return g.User, g.ID, &g, nil
 }
 
-// refuse answers a failed authentication: 403 when refused, 503 when the identity provider or the grant store failed, else 401, with the OAuth challenge when grants are on.
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	switch status.Code(err) {
 	case codes.Unavailable:
@@ -391,7 +389,6 @@ func buildVersion(settings []debug.BuildSetting) string {
 	return revision
 }
 
-// handle answers the methods other than initialize and tools/call.
 func handle(method string) (any, *mcpwire.Error) {
 	switch method {
 	case "ping":

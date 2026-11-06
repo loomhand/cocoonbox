@@ -89,7 +89,6 @@ func (s *session) reset(box, upstream string) {
 	}
 }
 
-// openSession records a new client session of caller, dropping sessions idle for sessionIdle and caller's least recently used past maxSessions.
 func (s *Server) openSession(ctx context.Context, caller, id string, params jsontext.Value) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -107,6 +106,7 @@ func (s *Server) session(ctx context.Context, caller, id string) *session {
 	return s.keepSession(ctx, caller, id, &session{})
 }
 
+// keepSession records sess, dropping sessions idle for sessionIdle and caller's least recently used past maxSessions.
 func (s *Server) keepSession(ctx context.Context, caller, id string, sess *session) *session {
 	now := time.Now()
 	maps.DeleteFunc(s.sessions, func(_ string, old *session) bool { return now.Sub(old.used) > sessionIdle })
