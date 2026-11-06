@@ -312,10 +312,10 @@ impl Stream {
         }
     }
 
-    fn feed(&mut self, event: &sse::Event) -> Result<(), String> {
+    fn feed(&mut self, data: &str) -> Result<(), String> {
         match &mut self.parser {
-            Parser::Chat(p) => p.feed(event, &mut self.pending),
-            Parser::Messages(p) => p.feed(event, &mut self.pending),
+            Parser::Chat(p) => p.feed(data, &mut self.pending),
+            Parser::Messages(p) => p.feed(data, &mut self.pending),
         }
     }
 }

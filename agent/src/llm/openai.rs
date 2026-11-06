@@ -4,9 +4,7 @@ use std::collections::{HashSet, VecDeque};
 
 use serde_json::{Value, json};
 
-use super::{
-    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse, stream_error,
-};
+use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, stream_error};
 
 /// Tracks which tool-call indexes already started.
 #[derive(Default)]
@@ -16,13 +14,13 @@ pub struct Parser {
 
 impl Parser {
     /// Converts one SSE event into deltas.
-    pub fn feed(&mut self, event: &sse::Event, out: &mut VecDeque<Delta>) -> Result<(), String> {
-        if event.data == "[DONE]" {
+    pub fn feed(&mut self, data: &str, out: &mut VecDeque<Delta>) -> Result<(), String> {
+        if data == "[DONE]" {
             out.push_back(Delta::Done);
             return Ok(());
         }
-        let v: Value = serde_json::from_str(&event.data)
-            .map_err(|e| format!("decode chat chunk: {e}: {}", event.data))?;
+        let v: Value =
+            serde_json::from_str(data).map_err(|e| format!("decode chat chunk: {e}: {data}"))?;
         if let Some(err) = v.get("error") {
             return Err(stream_error(err));
         }
@@ -218,11 +216,7 @@ mod tests {
         let mut p = Parser::default();
         let mut out = VecDeque::new();
         for d in data {
-            let event = sse::Event {
-                event: String::new(),
-                data: (*d).to_owned(),
-            };
-            p.feed(&event, &mut out).unwrap();
+            p.feed(d, &mut out).unwrap();
         }
         out.into_iter().collect()
     }
@@ -282,13 +276,7 @@ mod tests {
     #[test]
     fn an_error_chunk_fails_and_gw_quota_says_the_model_credits_are_used_up() {
         let mut p = Parser::default();
-        let mut feed = |data: &str| {
-            let event = sse::Event {
-                event: String::new(),
-                data: data.into(),
-            };
-            p.feed(&event, &mut VecDeque::new()).unwrap_err()
-        };
+        let mut feed = |data: &str| p.feed(data, &mut VecDeque::new()).unwrap_err();
         assert_eq!(
             feed(r#"{"error":{"message":"quota"}}"#),
             r#"model error: {"message":"quota"}"#
