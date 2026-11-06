@@ -49,6 +49,9 @@ const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 const PLAN_PAGE: usize = 2048;
 
+type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
+type PlanStream = tokio_stream::Iter<std::vec::IntoIter<Result<pb::PlanResponse, Status>>>;
+
 /// Admits only the owner's calls: a share reaches the box through MCP alone.
 #[derive(Clone)]
 pub struct EdgeAuth {
@@ -337,17 +340,6 @@ impl Session for SessionSvc {
     }
 }
 
-#[derive(Deserialize)]
-struct Filled {
-    #[serde(default)]
-    filled: Vec<String>,
-    #[serde(default)]
-    submitted: bool,
-}
-
-type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
-type PlanStream = tokio_stream::Iter<std::vec::IntoIter<Result<pb::PlanResponse, Status>>>;
-
 /// `cocoonbox.agent.v1.State`, called by the api to move user state to and from object storage.
 pub struct StateSvc {
     rt: Arc<Runtime>,
@@ -430,6 +422,14 @@ impl State for StateSvc {
             engine.restore_paths(reqs, tx).await
         })))
     }
+}
+
+#[derive(Deserialize)]
+struct Filled {
+    #[serde(default)]
+    filled: Vec<String>,
+    #[serde(default)]
+    submitted: bool,
 }
 
 /// Binds `AGENT_LISTEN` and serves until SIGTERM or SIGINT.

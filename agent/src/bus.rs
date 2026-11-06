@@ -19,12 +19,6 @@ pub struct Subscription {
     pub live: broadcast::Receiver<Arc<Event>>,
 }
 
-struct Ring {
-    next: u64,
-    events: VecDeque<Arc<Event>>,
-    bytes: usize,
-}
-
 /// Fan-out of agent events; offsets start at boot time in microseconds so stale offsets fall out of range.
 pub struct Bus {
     ring: Mutex<Ring>,
@@ -37,17 +31,6 @@ impl Bus {
             .duration_since(UNIX_EPOCH)
             .map_or(1, |d| u64::try_from(d.as_micros()).unwrap_or(1));
         Self::with_base(base)
-    }
-
-    fn with_base(base: u64) -> Self {
-        Self {
-            ring: Mutex::new(Ring {
-                next: base.max(1),
-                events: VecDeque::new(),
-                bytes: 0,
-            }),
-            live: broadcast::channel(LIVE_CAPACITY).0,
-        }
     }
 
     /// Assigns the next offset to `body` and delivers it to every subscriber.
@@ -110,12 +93,29 @@ impl Bus {
             .collect();
         Ok(Subscription { replay, live })
     }
+
+    fn with_base(base: u64) -> Self {
+        Self {
+            ring: Mutex::new(Ring {
+                next: base.max(1),
+                events: VecDeque::new(),
+                bytes: 0,
+            }),
+            live: broadcast::channel(LIVE_CAPACITY).0,
+        }
+    }
 }
 
 impl Default for Bus {
     fn default() -> Self {
         Self::new()
     }
+}
+
+struct Ring {
+    next: u64,
+    events: VecDeque<Arc<Event>>,
+    bytes: usize,
 }
 
 #[cfg(test)]

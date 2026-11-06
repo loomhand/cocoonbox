@@ -216,6 +216,12 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
     }
 }
 
+/// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
+#[cfg(not(target_os = "linux"))]
+pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
+    Err("no inotify on this system".to_owned())
+}
+
 /// Drops from `dir/INDEX` each flow whose `.json` file is gone, swapping in the rewritten file so that a reader never sees half of it and a folder being removed gains no entry.
 pub(super) async fn prune(dir: &Path) -> Result<(), String> {
     let _index = INDEX_LOCK.lock().await;
@@ -253,12 +259,6 @@ pub(super) async fn prune(dir: &Path) -> Result<(), String> {
         }
         _ => Ok(()),
     }
-}
-
-/// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
-#[cfg(not(target_os = "linux"))]
-pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
-    Err("no inotify on this system".to_owned())
 }
 
 fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {

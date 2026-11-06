@@ -38,291 +38,6 @@ const SNAPSHOT_IDENTITY: [&str; 4] = [
 ];
 const CLAUDE_MANAGED: &str = "/etc/claude-code";
 
-/// The box half of the preflight; on no `block`, takes the copy for the offload id and makes its directory.
-pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
-    let repo = a.repo()?;
-    let kind = a.kind()?;
-    let id = offload_id(a)?;
-    let wanted = a.required("name")?;
-    valid_name(&wanted)?;
-    let mut status = call(layout, &json!({"op": "status"})).await?;
-    let sessions = match status["sessions"].take() {
-        Value::Array(s) => s,
-        _ => Vec::new(),
-    };
-    let mine_running = sessions
-        .iter()
-        .any(|s| s["repo"] == repo.as_str() && s["status"] != "stopped");
-    let running = sessions.iter().filter(|s| s["status"] != "stopped").count();
-    let index = read_index(layout).await?;
-    let mut findings = Vec::new();
-    let mut block = |check: &str, detail: String| {
-        findings.push(json!({"check": check, "outcome": "block", "detail": detail}));
-    };
-    let missing = home_shell(
-        &layout.home,
-        "for t in git rsync tmux mise; do command -v \"$t\" >/dev/null || echo \"missing:$t\"; done",
-    )
-    .await
-    .unwrap_or_else(|e| e);
-    let missing: Vec<&str> = missing
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("missing:"))
-        .collect();
-    if !missing.is_empty() {
-        block(
-            "box_tools",
-            format!(
-                "the box lacks {}; upgrade the box first",
-                missing.join(", ")
-            ),
-        );
-    }
-    let cli = probe_cli(&layout.home, &kind).await;
-    if cli["version"].as_str().is_none_or(str::is_empty) {
-        block(
-            "box_cli",
-            format!("{kind} is not installed in the box; Install in box"),
-        );
-    } else if cli["signed_in"] != true {
-        block(
-            "box_cli",
-            format!("{kind} is signed out in the box; Sign in in the box"),
-        );
-    }
-    match super::copy_state(index.get(&repo), mine_running) {
-        "unreturned" | "busy" => block(
-            "copy",
-            "the box holds unreturned work for this repo; bring the last offload back first"
-                .to_owned(),
-        ),
-        _ if running >= super::inbox::MAX_SESSIONS => block(
-            "sessions",
-            format!(
-                "{running} box CLI sessions run in this box; at most {}",
-                super::inbox::MAX_SESSIONS
-            ),
-        ),
-        _ => {}
-    }
-    if !findings.is_empty() {
-        let mut detail = json!({});
-        detail["findings"] = findings.into();
-        detail["cli"] = cli;
-        return Err(Fail::Refused(
-            "the box preflight blocks this offload".to_owned(),
-            detail,
-        ));
-    }
-    let workspace = layout.workspace.clone();
-    let key = repo.clone();
-    let (copy, was) = with_index(layout, move |index| {
-        let was = match index.get(&key) {
-            Some(c) if c.unreturned => {
-                return Err(Fail::refused("the box holds unreturned work for this repo"));
-            }
-            Some(c) if c.dir.exists() => "mirror",
-            _ => "absent",
-        };
-        if !index.contains_key(&key) {
-            let name = free_name(index, &key, &wanted, &workspace);
-            let dir = workspace.join(&name);
-            index.insert(
-                key.clone(),
-                Copy {
-                    name,
-                    dir,
-                    ..Copy::default()
-                },
-            );
-        }
-        let copy = index
-            .get_mut(&key)
-            .ok_or_else(|| Fail::Failed("index entry vanished".to_owned()))?;
-        copy.offload_id = id;
-        Ok((copy.clone(), was))
-    })
-    .await?;
-    wipe_secrets(layout, &repo).await?;
-    let _ = tokio::fs::remove_dir_all(layout.repo_dir(&repo).join(STAGE_DIR)).await;
-    tokio::fs::create_dir_all(&copy.dir)
-        .await
-        .map_err(|e| format!("create {}: {e}", copy.dir.display()))?;
-    let refs = copy_refs(&copy.dir).await;
-    let ignored = if copy.dir.join(".git").exists() {
-        ignored_dirs(&copy.dir).await.unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    let mut out = json!({
-        "ok": true, "dir": copy.dir, "name": copy.name, "copy": was, "findings": [],
-    });
-    out["refs"] = refs;
-    out["ignored"] = ignored.into();
-    out["cli"] = cli;
-    Ok(out)
-}
-
-/// The offload stream: history, environment, secrets, the check against S, and the first prompt.
-pub async fn send<R: Read + Send + 'static>(
-    layout: &Layout,
-    a: &Args,
-    input: R,
-) -> Result<Value, Fail> {
-    let repo = a.repo()?;
-    let kind = a.kind()?;
-    let id = offload_id(a)?;
-    let copy = read_index(layout)
-        .await?
-        .remove(&repo)
-        .filter(|c| c.offload_id == id)
-        .ok_or_else(|| Fail::refused(format!("the copy is not held by offload {id}; run begin")))?;
-    if copy.unreturned {
-        return Err(Fail::refused(
-            "the box holds unreturned work for this repo; bring the last offload back first",
-        ));
-    }
-    let job = Offload {
-        layout,
-        repo: &repo,
-        kind: &kind,
-        id: &id,
-        copy: &copy,
-    };
-    let mut timings = serde_json::Map::new();
-    let stage = layout.repo_dir(&repo).join(STAGE_DIR);
-    let result = job.run(input, &stage, &mut timings).await;
-    let _ = tokio::fs::remove_dir_all(&stage).await;
-    let mut out = match result {
-        Ok(out) => out,
-        Err(e) => {
-            job.roll_back().await;
-            return Err(e);
-        }
-    };
-    out["timings_ms"] = Value::Object(timings);
-    Ok(out)
-}
-
-/// A message or BACK for the repo's running session.
-pub async fn message(layout: &Layout, a: &Args, text: String) -> Result<Value, Fail> {
-    let repo = a.repo()?;
-    if text.len() > MAX_BODY {
-        return Err(Fail::Usage(format!(
-            "a message is at most {MAX_BODY} bytes"
-        )));
-    }
-    let mut req = json!({
-        "op": "send",
-        "repo": repo,
-        "back": a.flag("back"),
-        "interrupt": a.flag("interrupt"),
-    });
-    req["body"] = text.into();
-    call(layout, &req).await
-}
-
-/// An outbox entry from the box agent; `--back` also records S'.
-pub async fn post(layout: &Layout, a: &Args, body: String) -> Result<Value, Fail> {
-    let repo = a.repo_or_env()?;
-    let kinds: Vec<&str> = ["progress", "question", "back"]
-        .into_iter()
-        .filter(|k| a.flag(k))
-        .collect();
-    let &[kind] = kinds.as_slice() else {
-        return Err(Fail::Usage(
-            "post takes one of --progress, --question, --back".to_owned(),
-        ));
-    };
-    if kind == "question" {
-        if body.len() > MAX_BODY {
-            return Err(Fail::Usage(format!(
-                "a question is at most {MAX_BODY} bytes"
-            )));
-        }
-    } else {
-        handover::check(&body).map_err(Fail::refused)?;
-    }
-    let copy = read_index(layout)
-        .await?
-        .remove(&repo)
-        .filter(|c| c.dir.join(".git").exists());
-    if let Some(copy) = &copy {
-        write_excludes(layout, &copy.dir).await?;
-    }
-    if kind == "back"
-        && let Some(copy) = &copy
-    {
-        let tree = snapshot_tree(&copy.dir).await?;
-        let mut args: Vec<&str> = SNAPSHOT_IDENTITY.to_vec();
-        args.extend(["commit-tree", &tree]);
-        let head = git(&copy.dir, &["rev-parse", "-q", "--verify", "HEAD"])
-            .await
-            .ok();
-        if let Some(h) = &head {
-            args.extend(["-p", h.as_str()]);
-        }
-        let msg = format!("cocoonbox back {}", copy.offload_id);
-        args.extend(["-m", &msg]);
-        let commit = git(&copy.dir, &args).await?;
-        let name = format!("refs/cocoonbox/back/{}", copy.offload_id);
-        git(&copy.dir, &["update-ref", &name, &commit]).await?;
-    }
-    let mut req = json!({"op": "post", "repo": repo, "kind": kind});
-    req["body"] = body.into();
-    let resp = call(layout, &req).await?;
-    Ok(json!({
-        "ok": true,
-        "seq": resp["seq"],
-        "status": if kind == "back" { "ready" } else { "posted" },
-    }))
-}
-
-/// Ends the repo's CLI, wipes its secrets and marks the copy returned.
-pub async fn end(layout: &Layout, repo: &str) -> Result<Value, Fail> {
-    let status = call(layout, &json!({"op": "status", "repo": repo})).await?;
-    if let Some(s) = status["sessions"].as_array().and_then(|s| s.first()) {
-        let cli = s["cli"].as_str().unwrap_or_default();
-        let session = tmux_session(repo, cli);
-        if s["tmux_alive"] == true {
-            quit(layout, &session, cli).await;
-        }
-        call(
-            layout,
-            &json!({"op": "event", "repo": repo, "cli": cli, "hook": "SessionEnd", "payload": {}}),
-        )
-        .await?;
-    }
-    wipe_secrets(layout, repo).await?;
-    if let Some(copy) = read_index(layout).await?.get(repo)
-        && copy.dir.join(".git").exists()
-    {
-        write_excludes(layout, &copy.dir).await?;
-    }
-    let key = repo.to_owned();
-    with_index(layout, move |index| {
-        if let Some(c) = index.get_mut(&key) {
-            c.unreturned = false;
-        }
-        Ok(())
-    })
-    .await?;
-    Ok(json!({"ok": true, "repo": repo, "copy": "mirror"}))
-}
-
-/// Removes the repo's secrets and stops its ssh-agent.
-pub async fn wipe_secrets(layout: &Layout, repo: &str) -> Result<(), Fail> {
-    let dir = layout.secrets_dir(repo);
-    if dir.join(SSH_SOCKET).exists() {
-        let _ = user_systemctl(layout, &["stop", &ssh_unit(repo)]).await;
-    }
-    match tokio::fs::remove_dir_all(&dir).await {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(Fail::Failed(format!("remove {}: {e}", dir.display()))),
-    }
-}
-
 /// One `send` stream's work.
 struct Offload<'a> {
     layout: &'a Layout,
@@ -614,6 +329,291 @@ struct Unpacked {
     worktree: bool,
     /// Secret entries relative to `secrets/`, already on the tmpfs.
     secrets: Vec<String>,
+}
+
+/// The box half of the preflight; on no `block`, takes the copy for the offload id and makes its directory.
+pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
+    let repo = a.repo()?;
+    let kind = a.kind()?;
+    let id = offload_id(a)?;
+    let wanted = a.required("name")?;
+    valid_name(&wanted)?;
+    let mut status = call(layout, &json!({"op": "status"})).await?;
+    let sessions = match status["sessions"].take() {
+        Value::Array(s) => s,
+        _ => Vec::new(),
+    };
+    let mine_running = sessions
+        .iter()
+        .any(|s| s["repo"] == repo.as_str() && s["status"] != "stopped");
+    let running = sessions.iter().filter(|s| s["status"] != "stopped").count();
+    let index = read_index(layout).await?;
+    let mut findings = Vec::new();
+    let mut block = |check: &str, detail: String| {
+        findings.push(json!({"check": check, "outcome": "block", "detail": detail}));
+    };
+    let missing = home_shell(
+        &layout.home,
+        "for t in git rsync tmux mise; do command -v \"$t\" >/dev/null || echo \"missing:$t\"; done",
+    )
+    .await
+    .unwrap_or_else(|e| e);
+    let missing: Vec<&str> = missing
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("missing:"))
+        .collect();
+    if !missing.is_empty() {
+        block(
+            "box_tools",
+            format!(
+                "the box lacks {}; upgrade the box first",
+                missing.join(", ")
+            ),
+        );
+    }
+    let cli = probe_cli(&layout.home, &kind).await;
+    if cli["version"].as_str().is_none_or(str::is_empty) {
+        block(
+            "box_cli",
+            format!("{kind} is not installed in the box; Install in box"),
+        );
+    } else if cli["signed_in"] != true {
+        block(
+            "box_cli",
+            format!("{kind} is signed out in the box; Sign in in the box"),
+        );
+    }
+    match super::copy_state(index.get(&repo), mine_running) {
+        "unreturned" | "busy" => block(
+            "copy",
+            "the box holds unreturned work for this repo; bring the last offload back first"
+                .to_owned(),
+        ),
+        _ if running >= super::inbox::MAX_SESSIONS => block(
+            "sessions",
+            format!(
+                "{running} box CLI sessions run in this box; at most {}",
+                super::inbox::MAX_SESSIONS
+            ),
+        ),
+        _ => {}
+    }
+    if !findings.is_empty() {
+        let mut detail = json!({});
+        detail["findings"] = findings.into();
+        detail["cli"] = cli;
+        return Err(Fail::Refused(
+            "the box preflight blocks this offload".to_owned(),
+            detail,
+        ));
+    }
+    let workspace = layout.workspace.clone();
+    let key = repo.clone();
+    let (copy, was) = with_index(layout, move |index| {
+        let was = match index.get(&key) {
+            Some(c) if c.unreturned => {
+                return Err(Fail::refused("the box holds unreturned work for this repo"));
+            }
+            Some(c) if c.dir.exists() => "mirror",
+            _ => "absent",
+        };
+        if !index.contains_key(&key) {
+            let name = free_name(index, &key, &wanted, &workspace);
+            let dir = workspace.join(&name);
+            index.insert(
+                key.clone(),
+                Copy {
+                    name,
+                    dir,
+                    ..Copy::default()
+                },
+            );
+        }
+        let copy = index
+            .get_mut(&key)
+            .ok_or_else(|| Fail::Failed("index entry vanished".to_owned()))?;
+        copy.offload_id = id;
+        Ok((copy.clone(), was))
+    })
+    .await?;
+    wipe_secrets(layout, &repo).await?;
+    let _ = tokio::fs::remove_dir_all(layout.repo_dir(&repo).join(STAGE_DIR)).await;
+    tokio::fs::create_dir_all(&copy.dir)
+        .await
+        .map_err(|e| format!("create {}: {e}", copy.dir.display()))?;
+    let refs = copy_refs(&copy.dir).await;
+    let ignored = if copy.dir.join(".git").exists() {
+        ignored_dirs(&copy.dir).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut out = json!({
+        "ok": true, "dir": copy.dir, "name": copy.name, "copy": was, "findings": [],
+    });
+    out["refs"] = refs;
+    out["ignored"] = ignored.into();
+    out["cli"] = cli;
+    Ok(out)
+}
+
+/// The offload stream: history, environment, secrets, the check against S, and the first prompt.
+pub async fn send<R: Read + Send + 'static>(
+    layout: &Layout,
+    a: &Args,
+    input: R,
+) -> Result<Value, Fail> {
+    let repo = a.repo()?;
+    let kind = a.kind()?;
+    let id = offload_id(a)?;
+    let copy = read_index(layout)
+        .await?
+        .remove(&repo)
+        .filter(|c| c.offload_id == id)
+        .ok_or_else(|| Fail::refused(format!("the copy is not held by offload {id}; run begin")))?;
+    if copy.unreturned {
+        return Err(Fail::refused(
+            "the box holds unreturned work for this repo; bring the last offload back first",
+        ));
+    }
+    let job = Offload {
+        layout,
+        repo: &repo,
+        kind: &kind,
+        id: &id,
+        copy: &copy,
+    };
+    let mut timings = serde_json::Map::new();
+    let stage = layout.repo_dir(&repo).join(STAGE_DIR);
+    let result = job.run(input, &stage, &mut timings).await;
+    let _ = tokio::fs::remove_dir_all(&stage).await;
+    let mut out = match result {
+        Ok(out) => out,
+        Err(e) => {
+            job.roll_back().await;
+            return Err(e);
+        }
+    };
+    out["timings_ms"] = Value::Object(timings);
+    Ok(out)
+}
+
+/// A message or BACK for the repo's running session.
+pub async fn message(layout: &Layout, a: &Args, text: String) -> Result<Value, Fail> {
+    let repo = a.repo()?;
+    if text.len() > MAX_BODY {
+        return Err(Fail::Usage(format!(
+            "a message is at most {MAX_BODY} bytes"
+        )));
+    }
+    let mut req = json!({
+        "op": "send",
+        "repo": repo,
+        "back": a.flag("back"),
+        "interrupt": a.flag("interrupt"),
+    });
+    req["body"] = text.into();
+    call(layout, &req).await
+}
+
+/// An outbox entry from the box agent; `--back` also records S'.
+pub async fn post(layout: &Layout, a: &Args, body: String) -> Result<Value, Fail> {
+    let repo = a.repo_or_env()?;
+    let kinds: Vec<&str> = ["progress", "question", "back"]
+        .into_iter()
+        .filter(|k| a.flag(k))
+        .collect();
+    let &[kind] = kinds.as_slice() else {
+        return Err(Fail::Usage(
+            "post takes one of --progress, --question, --back".to_owned(),
+        ));
+    };
+    if kind == "question" {
+        if body.len() > MAX_BODY {
+            return Err(Fail::Usage(format!(
+                "a question is at most {MAX_BODY} bytes"
+            )));
+        }
+    } else {
+        handover::check(&body).map_err(Fail::refused)?;
+    }
+    let copy = read_index(layout)
+        .await?
+        .remove(&repo)
+        .filter(|c| c.dir.join(".git").exists());
+    if let Some(copy) = &copy {
+        write_excludes(layout, &copy.dir).await?;
+    }
+    if kind == "back"
+        && let Some(copy) = &copy
+    {
+        let tree = snapshot_tree(&copy.dir).await?;
+        let mut args: Vec<&str> = SNAPSHOT_IDENTITY.to_vec();
+        args.extend(["commit-tree", &tree]);
+        let head = git(&copy.dir, &["rev-parse", "-q", "--verify", "HEAD"])
+            .await
+            .ok();
+        if let Some(h) = &head {
+            args.extend(["-p", h.as_str()]);
+        }
+        let msg = format!("cocoonbox back {}", copy.offload_id);
+        args.extend(["-m", &msg]);
+        let commit = git(&copy.dir, &args).await?;
+        let name = format!("refs/cocoonbox/back/{}", copy.offload_id);
+        git(&copy.dir, &["update-ref", &name, &commit]).await?;
+    }
+    let mut req = json!({"op": "post", "repo": repo, "kind": kind});
+    req["body"] = body.into();
+    let resp = call(layout, &req).await?;
+    Ok(json!({
+        "ok": true,
+        "seq": resp["seq"],
+        "status": if kind == "back" { "ready" } else { "posted" },
+    }))
+}
+
+/// Ends the repo's CLI, wipes its secrets and marks the copy returned.
+pub async fn end(layout: &Layout, repo: &str) -> Result<Value, Fail> {
+    let status = call(layout, &json!({"op": "status", "repo": repo})).await?;
+    if let Some(s) = status["sessions"].as_array().and_then(|s| s.first()) {
+        let cli = s["cli"].as_str().unwrap_or_default();
+        let session = tmux_session(repo, cli);
+        if s["tmux_alive"] == true {
+            quit(layout, &session, cli).await;
+        }
+        call(
+            layout,
+            &json!({"op": "event", "repo": repo, "cli": cli, "hook": "SessionEnd", "payload": {}}),
+        )
+        .await?;
+    }
+    wipe_secrets(layout, repo).await?;
+    if let Some(copy) = read_index(layout).await?.get(repo)
+        && copy.dir.join(".git").exists()
+    {
+        write_excludes(layout, &copy.dir).await?;
+    }
+    let key = repo.to_owned();
+    with_index(layout, move |index| {
+        if let Some(c) = index.get_mut(&key) {
+            c.unreturned = false;
+        }
+        Ok(())
+    })
+    .await?;
+    Ok(json!({"ok": true, "repo": repo, "copy": "mirror"}))
+}
+
+/// Removes the repo's secrets and stops its ssh-agent.
+pub async fn wipe_secrets(layout: &Layout, repo: &str) -> Result<(), Fail> {
+    let dir = layout.secrets_dir(repo);
+    if dir.join(SSH_SOCKET).exists() {
+        let _ = user_systemctl(layout, &["stop", &ssh_unit(repo)]).await;
+    }
+    match tokio::fs::remove_dir_all(&dir).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Fail::Failed(format!("remove {}: {e}", dir.display()))),
+    }
 }
 
 /// Reads the tar stream in order: small members into memory, the bundle and a worktree's
