@@ -193,7 +193,7 @@ func (s *Server) setConnectPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
-	revoked, err := s.connect.Remove(r.Context(), caller(r).ID, r.PathValue("connector"), connect.DoorConsole)
+	revoked, err := s.connect.Remove(r.Context(), caller(r).ID, r.PathValue("connector"))
 	if err != nil {
 		s.fail(w, r, err)
 		return

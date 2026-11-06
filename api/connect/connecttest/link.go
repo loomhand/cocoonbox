@@ -20,22 +20,18 @@ const (
 	invalidClient = "invalid_client"
 )
 
-// Link mocks Link's authorization server and API: the publishable key as Bearer, the client secret in the form, PKCE, rotating refresh tokens and spend requests.
+// Link mocks Link's authorization server and API: the publishable key as Bearer, the client secret in the form, PKCE and rotating refresh tokens.
 type Link struct {
 	*httptest.Server
 	ClientID     string
 	ClientSecret string
 	Key          string
 
-	mu        sync.Mutex
-	codes     map[string]string
-	access    map[string]bool
-	refresh   map[string]bool
-	spends    []map[string]any
-	failSpend bool
-	refreshes int
-	polls     int
-	revoked   []string
+	mu      sync.Mutex
+	codes   map[string]string
+	access  map[string]bool
+	refresh map[string]bool
+	revoked []string
 }
 
 // NewLink starts a mock Link with a client and a publishable key.
@@ -46,7 +42,6 @@ func NewLink() *Link {
 	mux.HandleFunc("POST /auth/token", l.token)
 	mux.HandleFunc("POST /auth/revoke", l.revoke)
 	mux.HandleFunc("GET /userinfo", l.userinfo)
-	mux.HandleFunc("GET /spend_requests", l.spendRequests)
 	l.Server = httptest.NewServer(mux)
 	return l
 }
@@ -56,32 +51,11 @@ func (l *Link) Consent(authorizeURL string) (string, string, error) {
 	return (&Vendor{}).Consent(authorizeURL)
 }
 
-// SetSpends sets what GET /spend_requests lists.
-func (l *Link) SetSpends(spends ...map[string]any) {
+// Revoked returns the tokens revoked so far.
+func (l *Link) Revoked() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.spends = spends
-}
-
-// FailSpends makes GET /spend_requests answer 500.
-func (l *Link) FailSpends(fail bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.failSpend = fail
-}
-
-// ExpireAccess makes every access token invalid, as an expiry at Link does.
-func (l *Link) ExpireAccess() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	clear(l.access)
-}
-
-// Snapshot returns the counters under the lock.
-func (l *Link) Snapshot() (refreshes, polls int, revoked []string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.refreshes, l.polls, slices.Clone(l.revoked)
+	return slices.Clone(l.revoked)
 }
 
 func (l *Link) authorize(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +91,6 @@ func (l *Link) token(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case grantRefresh:
-		l.refreshes++
 		if !l.refresh[f.Get(grantRefresh)] {
 			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: invalidGrant})
 			return
@@ -157,20 +130,6 @@ func (l *Link) userinfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"email": "buyer@example.com"})
-}
-
-func (l *Link) spendRequests(w http.ResponseWriter, r *http.Request) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.polls++
-	switch {
-	case !l.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]:
-		w.WriteHeader(http.StatusUnauthorized)
-	case l.failSpend:
-		w.WriteHeader(http.StatusInternalServerError)
-	default:
-		writeJSON(w, http.StatusOK, map[string]any{"data": l.spends})
-	}
 }
 
 func (l *Link) client(r *http.Request) bool {

@@ -32,9 +32,8 @@ const (
 	DoorMCP = "mcp"
 	// DoorBox is mode A: the box's agents, which need an approval for every ask tool.
 	DoorBox = "box"
-	// DoorConsole and DoorApp are where a disconnect comes from.
-	DoorConsole = "console"
-	DoorApp     = "app"
+
+	doorConsole = "console"
 
 	statusActive    = "active"
 	statusReconnect = "needs_reconnect"
@@ -129,15 +128,10 @@ type Service struct {
 	watchers     *watchers
 	origin       string
 	onInjection  InjectionFunc
-	linkAPI      string
 	tasksAPI     string
 
 	mu    sync.Mutex
 	conns map[string]*conn
-
-	spendReads singleflight.Group
-	spendMu    sync.Mutex
-	spends     map[string]*spendPoll
 }
 
 // Open connects to the database, applies the Connect migrations and builds the catalog.
@@ -156,10 +150,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		allowPrivate: opts.AllowPrivate,
 		watchers:     newWatchers(),
 		origin:       rand.Text(),
-		linkAPI:      linkAPI,
 		tasksAPI:     tasksAPI,
 		conns:        map[string]*conn{},
-		spends:       map[string]*spendPoll{},
 	}, nil
 }
 

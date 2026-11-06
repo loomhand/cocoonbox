@@ -12,22 +12,12 @@ service Connectors {
   rpc Catalog(CatalogRequest) returns (CatalogResponse);
   // List returns the caller's connected accounts.
   rpc List(ListConnectorsRequest) returns (ListConnectorsResponse);
-  // Begin returns the console page that connects the account. The console
-  // binds the flow to its own session, so the app opens the URL in the browser.
-  rpc Begin(BeginConnectRequest) returns (BeginConnectResponse);
-  // Disconnect revokes the grant at the vendor where the vendor offers a
-  // revoke call, then deletes it; its tools leave every MCP session.
-  rpc Disconnect(ConnectorRef) returns (DisconnectResponse);
   // SetPolicy sets one tool's policy; POLICY_UNSPECIFIED returns it to the default.
   rpc SetPolicy(SetPolicyRequest) returns (Connector);
   // Approve answers an approval-required call from a box (§16.5).
   rpc Approve(ApproveRequest) returns (ApproveResponse);
   // Activity returns the caller's audit records, newest first.
   rpc Activity(ActivityRequest) returns (ActivityResponse);
-  // SpendRequests returns the caller's Link spend requests that wait for the
-  // user. The api reads Link on this call when its last read is older than
-  // 30 seconds, and answers from that read in between.
-  rpc SpendRequests(SpendRequestsRequest) returns (SpendRequestsResponse);
 }
 
 enum Policy {
@@ -48,6 +38,8 @@ enum ApprovalDecision {
 }
 
 message CatalogEntry {
+  reserved 8 to 10;
+  reserved "mcp_url", "auth", "icon_url";
   // The connector's id, such as `github`, or `custom` for any MCP server by URL.
   string id = 1;
   string name = 2;
@@ -60,12 +52,6 @@ message CatalogEntry {
   bool grant_only = 6;
   // The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
   bool checkable = 7;
-  // The MCP server of the connector; empty for a grant-only connector and for `custom`.
-  string mcp_url = 8;
-  // How the user connects: `oauth` with the api's own client, `mcp` by the MCP server's own sign-in, `none` without a sign-in, or `custom`.
-  string auth = 9;
-  // An image of the vendor's icon; empty when the catalog names none.
-  string icon_url = 10;
 }
 
 message CatalogRequest {}
@@ -116,24 +102,6 @@ message ListConnectorsResponse {
   repeated Connector connectors = 1;
 }
 
-message BeginConnectRequest {
-  string connector_id = 1;
-}
-
-message BeginConnectResponse {
-  // `<endpoint>/cb/connect?connect=<connector id>`.
-  string url = 1;
-}
-
-message ConnectorRef {
-  string connector_id = 1;
-}
-
-message DisconnectResponse {
-  // False when the vendor has no revoke call or refused it; the grant is deleted either way.
-  bool revoked = 1;
-}
-
 message SetPolicyRequest {
   string connector_id = 1;
   // The upstream tool name.
@@ -177,29 +145,4 @@ message ActivityEntry {
   string args_hash = 11;
   // `ok`, `error` or `outcome_unknown`.
   string outcome = 12;
-}
-
-message SpendRequestsRequest {}
-
-message SpendRequestsResponse {
-  repeated SpendRequest requests = 1;
-  // When the api last read them; 0 before the first read and without an active Link grant.
-  int64 polled_at_ms = 2;
-}
-
-message SpendRequest {
-  // Link's id, `lsrq_…`.
-  string id = 1;
-  // In the currency's smallest unit, such as cents.
-  int64 amount = 2;
-  string currency = 3;
-  string merchant_name = 4;
-  string merchant_url = 5;
-  // `pending_approval`, or `requires_action` while the user must finish a step such as 3-D Secure.
-  string status = 6;
-  // Where the user approves it on the web; the Link app shows it too.
-  string approval_url = 7;
-  int64 created_at_ms = 8;
-  // 0 when Link names no expiry.
-  int64 expires_at_ms = 9;
 }

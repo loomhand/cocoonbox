@@ -5,19 +5,17 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/connect/connecttest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 const linkRecords = "LINK_ACCESS_TOKEN=cbc_link;api.link.com;Authorization:%20Bearer%20{} LINK_NO_REFRESH=1;;"
 
-func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
+func TestLinkGrantInjectsRefreshesAndDisconnects(t *testing.T) {
 	env := newEnv(t)
 	link := newLink(t, env.svc)
 	var hooked []string
@@ -63,70 +61,16 @@ func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
 		t.Errorf("Credentials near expiry = %+v, want the refreshed token", creds.Secrets["LINK_API"])
 	}
 
-	link.SetSpends(
-		map[string]any{
-			"id": "lsrq_1", "status": "pending_approval", "amount": 2599, "currency": "usd", "merchant_name": "Shop", "merchant_url": "https://shop.example",
-			"approval_url": "https://app.link.com/activity/approve/lsrq_1", "created_at": "2026-10-11T10:00:00Z", "expires_at": 1791800000, "context": "a book",
-		},
-		map[string]any{"id": "lsrq_2", "status": "approved", "amount": 100, "created_at": "2026-10-11T09:00:00Z"},
-		map[string]any{"id": "lsrq_3", "status": "requires_action", "amount": 700, "created_at": "2026-10-11T09:30:00Z"},
-	)
-	link.ExpireAccess()
-	ctx := auth.WithUser(t.Context(), alice)
-	got, err := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
-	if err != nil || len(got.GetRequests()) != 2 || got.GetPolledAtMs() == 0 {
-		t.Fatalf("SpendRequests = %v, %v", got, err)
-	}
-	first := got.GetRequests()[0]
-	if first.GetId() != "lsrq_1" || first.GetAmount() != 2599 || first.GetCurrency() != "usd" || first.GetMerchantName() != "Shop" ||
-		first.GetMerchantUrl() != "https://shop.example" || first.GetStatus() != "pending_approval" || first.GetApprovalUrl() != "https://app.link.com/activity/approve/lsrq_1" ||
-		first.GetCreatedAtMs() != time.Date(2026, 10, 11, 10, 0, 0, 0, time.UTC).UnixMilli() || first.GetExpiresAtMs() != 1791800000000 {
-		t.Errorf("first = %v", first)
-	}
-	if got.GetRequests()[1].GetStatus() != "requires_action" {
-		t.Errorf("second = %v", got.GetRequests()[1])
-	}
-	if refreshes, polls, _ := link.Snapshot(); refreshes != 2 || polls != 2 {
-		t.Errorf("refreshes, polls = %d, %d, want 2, 2 after a 401", refreshes, polls)
-	}
-	if cached, _ := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{}); cached.GetPolledAtMs() != got.GetPolledAtMs() {
-		t.Errorf("SpendRequests within %s = %v, want the cached read", spendInterval, cached)
-	}
-	if _, polls, _ := link.Snapshot(); polls != 2 {
-		t.Errorf("polls = %d, want 2: a read younger than %s answers", polls, spendInterval)
-	}
-	if got, err := env.svc.SpendRequests(auth.WithUser(t.Context(), bob), &controlv1.SpendRequestsRequest{}); err != nil || len(got.GetRequests()) != 0 || got.GetPolledAtMs() != 0 {
-		t.Errorf("bob's SpendRequests = %v, %v", got, err)
-	}
-
-	link.FailSpends(true)
-	expireSpends(env.svc, alice)
-	if again, _ := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{}); len(again.GetRequests()) != 2 || again.GetPolledAtMs() != got.GetPolledAtMs() {
-		t.Errorf("SpendRequests after a failed read = %v, want the last good one", again)
-	}
-	_, _ = env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
-	if _, polls, _ := link.Snapshot(); polls != 3 {
-		t.Errorf("polls = %d, want 3: a failed user waits out its backoff", polls)
-	}
-
 	current := linkSecrets(t, env.svc)
-	revoked, err := env.svc.Disconnect(ctx, &controlv1.ConnectorRef{ConnectorId: linkID})
-	if err != nil || !revoked.GetRevoked() || len(hooked) != 2 {
-		t.Fatalf("Disconnect = %v, %v, hook calls %v", revoked, err, hooked)
+	revoked, err := env.svc.Remove(t.Context(), alice, linkID)
+	if err != nil || !revoked || len(hooked) != 2 {
+		t.Fatalf("Remove = %t, %v, hook calls %v", revoked, err, hooked)
 	}
-	if _, _, revokedTokens := link.Snapshot(); len(revokedTokens) != 1 || revokedTokens[0] != current.RefreshToken {
+	if revokedTokens := link.Revoked(); len(revokedTokens) != 1 || revokedTokens[0] != current.RefreshToken {
 		t.Errorf("revoked = %v, want the current refresh token", revokedTokens)
 	}
 	if creds, _ := env.svc.Credentials(t.Context(), alice); creds.Secrets["LINK_API"] != nil || creds.Flags[guestEnv] != "" {
-		t.Errorf("Credentials after Disconnect = %+v", creds)
-	}
-	if got, _ := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{}); len(got.GetRequests()) != 0 || got.GetPolledAtMs() != 0 {
-		t.Errorf("SpendRequests after Disconnect = %v", got)
-	}
-	link.FailSpends(false)
-	_, _ = env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
-	if _, polls, _ := link.Snapshot(); polls != 3 || len(env.svc.spends) != 0 {
-		t.Errorf("polls = %d, spends = %v after Disconnect", polls, env.svc.spends)
+		t.Errorf("Credentials after Remove = %+v", creds)
 	}
 }
 
@@ -157,24 +101,8 @@ func TestLinkIsHiddenWithoutItsCredentials(t *testing.T) {
 			found = e
 		}
 	}
-	if found == nil || !found.GetAvailable() || !found.GetGrantOnly() || !found.GetCheckable() || found.GetAuth() != string(authOAuth) || found.GetMcpUrl() != "" {
+	if found == nil || !found.GetAvailable() || !found.GetGrantOnly() || !found.GetCheckable() {
 		t.Errorf("link = %v", found)
-	}
-}
-
-func TestSpendRequestsReadsNothingWithoutAnActiveLinkGrant(t *testing.T) {
-	env := newEnv(t)
-	link := newLink(t, env.svc)
-	env.connect(t)
-	env.exec(t, "INSERT INTO connect_grants (id, user_id, connector, kind, mcp_url, status, sealed) VALUES ('cg_lost', 'u-bob', 'link', 'link', '', 'needs_reconnect', '\\x00')")
-	for _, user := range []string{alice, bob} {
-		got, err := env.svc.SpendRequests(auth.WithUser(t.Context(), user), &controlv1.SpendRequestsRequest{})
-		if err != nil || len(got.GetRequests()) != 0 || got.GetPolledAtMs() != 0 {
-			t.Errorf("%s: SpendRequests = %v, %v", user, got, err)
-		}
-	}
-	if _, polls, _ := link.Snapshot(); polls != 0 || len(env.svc.spends) != 0 {
-		t.Errorf("polls = %d, spends = %v without an active Link grant", polls, env.svc.spends)
 	}
 }
 
@@ -185,14 +113,7 @@ func newLink(t *testing.T, svc *Service) *connecttest.Link {
 	e := svc.entry(linkID)
 	e.client = client{ID: l.ClientID, Secret: l.ClientSecret, Key: l.Key, TokenURL: l.URL + "/auth/token", RevokeURL: l.URL + "/auth/revoke"}
 	e.authorizeURL, e.params, e.userInfoURL = l.URL+"/auth", url.Values{"key": {l.Key}}, l.URL+"/userinfo"
-	svc.linkAPI = l.URL
 	return l
-}
-
-func expireSpends(svc *Service, user string) {
-	svc.spendMu.Lock()
-	defer svc.spendMu.Unlock()
-	svc.spends[user].next = time.Time{}
 }
 
 func linkSecrets(t *testing.T, svc *Service) *secrets {

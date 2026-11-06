@@ -29,11 +29,6 @@ final class MockConnect: Sendable {
     }
 
     private let state = Mutex(State())
-    private let base: String
-
-    init(base: String) {
-        self.base = base
-    }
 
     var grants: [Grant] {
         state.withLock { $0.grants }
@@ -136,16 +131,6 @@ final class MockConnect: Sendable {
         for stream in state.withLock({ Array($0.streams.values) }) { stream.yield(event) }
     }
 
-    func disconnect(_ id: String) -> Bool {
-        let removed = state.withLock { state in
-            let before = state.grants.count
-            state.grants.removeAll { $0.id == id }
-            return state.grants.count != before
-        }
-        if removed { changed() }
-        return removed
-    }
-
     // pend registers an approval the box agent waits on; answer and take play the broker's side.
     func pend(_ approvalID: String) {
         state.withLock { _ = $0.pending.insert(approvalID) }
@@ -164,10 +149,6 @@ final class MockConnect: Sendable {
             state.pending.remove(approvalID)
             return state.answers.removeValue(forKey: approvalID)
         }
-    }
-
-    func url(_ query: String) -> String {
-        base + "/cb/connect" + query
     }
 }
 
@@ -209,15 +190,6 @@ struct ConnectorsService: Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol 
         }
     }
 
-    func begin(request: Cocoonbox_Control_V1_BeginConnectRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_BeginConnectResponse {
-        .with { $0.url = connect.url("?connect=\(request.connectorID)") }
-    }
-
-    func disconnect(request: Cocoonbox_Control_V1_ConnectorRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_DisconnectResponse {
-        guard connect.disconnect(request.connectorID) else { throw RPCError(code: .notFound, message: "no connector \(request.connectorID)") }
-        return .with { $0.revoked = true }
-    }
-
     func setPolicy(request: Cocoonbox_Control_V1_SetPolicyRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Connector {
         throw RPCError(code: .unimplemented, message: "MockBox keeps the default policies")
     }
@@ -229,10 +201,6 @@ struct ConnectorsService: Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol 
     }
 
     func activity(request: Cocoonbox_Control_V1_ActivityRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ActivityResponse {
-        .init()
-    }
-
-    func spendRequests(request: Cocoonbox_Control_V1_SpendRequestsRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_SpendRequestsResponse {
         .init()
     }
 }
