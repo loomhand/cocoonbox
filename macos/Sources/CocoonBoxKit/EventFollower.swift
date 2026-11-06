@@ -63,9 +63,8 @@ public struct EventFollower<Event: Sendable>: Sendable {
         let clock = ContinuousClock()
         while !Task.isCancelled {
             let from = cursor.withLock { $0 }
-            if from == 0 {
-                Task { await onResync() }
-            }
+            let resync = from == 0 ? Task { await onResync() } : nil
+            defer { resync?.cancel() }
             progressed.withLock { $0 = false }
             let started = clock.now
             let failure: any Error
