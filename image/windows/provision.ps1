@@ -1,7 +1,7 @@
 # Provisions a cocoon Windows guest as a desk box: the agent's serve as a service under its virtual account, shuttle as a
 # logon task in the console session with the agent's toolhost as its service plugin, a 1280x800 virtual display and a
 # loopback VNC server in that session for the screen, Git for Windows for the shell, Chrome, the desk runtime and guide, and C:\workspace.
-# Runs as SYSTEM inside the guest from an unpacked copy of image/windows; idempotent. The desktop user logs in automatically.
+# Runs as SYSTEM inside the guest from an unpacked copy of image/; idempotent. The desktop user logs in automatically.
 # The time zone is UTC: Windows reads the RTC as local time, and Cloud Hypervisor's RTC runs in UTC.
 #   BOX_USER (default cocoon): the desktop user that logs in automatically
 #   GW_BASE_URL, GW_API_KEY, MODEL_MAIN, MODEL_COMPUTER: the agent's model contract

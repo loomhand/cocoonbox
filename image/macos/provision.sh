@@ -1,7 +1,7 @@
 #!/bin/bash
 # Provisions a cocoon-macos guest as a desk box: the agent's serve as a LaunchDaemon, shuttle as a LaunchAgent in the Aqua
 # session with the agent's toolhost as its service plugin, the desk runtime and guide, /workspace and /run, and autologin.
-# Runs as root inside the guest from an unpacked copy of image/macos with vendor/ filled; idempotent. A reboot follows the
+# Runs as root inside the guest from an unpacked copy of image/ with image/macos/vendor/ filled; idempotent. A reboot follows the
 # first run, as /etc/synthetic.conf makes /workspace and /run only at boot. The shuttle app gets Accessibility, Screen
 # Recording, the capture consent and Full Disk Access once per image through UI input; the toolhost runs as its child.
 #   BOX_USER (default cocoon), BOX_PASSWORD: the desktop user that logs in automatically
