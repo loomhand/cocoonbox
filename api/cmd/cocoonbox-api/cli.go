@@ -19,7 +19,7 @@ import (
 
 const cliUsage = `usage:
   cocoonbox-api [-config FILE] check
-  cocoonbox-api [-config FILE] user add NAME [-id ID] [-admin]
+  cocoonbox-api [-config FILE] user add NAME [-admin]
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
@@ -55,7 +55,6 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return setPolicy(ctx, cfg, name, args[3:], stdout)
 	}
 	flags := flag.NewFlagSet(verb, flag.ContinueOnError)
-	id := flags.String("id", "", "user id; migrated users keep their old name so their box id stays")
 	admin := flags.Bool("admin", false, "make the user an admin")
 	fromStdin := flags.Bool("stdin", false, "read the secret from the first line of stdin")
 	if err := flags.Parse(args[3:]); err != nil {
@@ -71,7 +70,7 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return printErr
 	}
 	if verb == "add" {
-		u, createErr := accounts.Create(ctx, users.NewUser{ID: *id, Name: name, Admin: *admin})
+		u, createErr := accounts.Create(ctx, users.NewUser{Name: name, Admin: *admin})
 		if createErr != nil {
 			return createErr
 		}
