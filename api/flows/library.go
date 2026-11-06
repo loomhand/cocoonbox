@@ -96,8 +96,6 @@ func (l *Library) EnableShared(shared *cluster.Store) {
 
 // List returns user's library rev and flows, newest first.
 func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error) {
-	unlock := l.users.Lock(user)
-	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
 		return 0, nil, err
