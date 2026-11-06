@@ -103,10 +103,6 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 	case http.MethodGet:
-		if !strings.Contains(r.Header.Get("Accept"), mcpwire.EventStream) {
-			http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
-			return
-		}
 		d.stream(w, r, user)
 		return
 	case http.MethodDelete:
@@ -229,6 +225,10 @@ func (d *Door) client(id string) string {
 }
 
 func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
+	if !strings.Contains(r.Header.Get("Accept"), mcpwire.EventStream) {
+		http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
+		return
+	}
 	watch, stop := d.svc.watchers.add(user, d.door == DoorBox)
 	defer stop()
 	var replay []*approval
@@ -330,10 +330,6 @@ func (s *Service) Reaches(ctx context.Context, user string, grants []string, nam
 
 // ServeChanges holds the mode B door's stream for user on w, which carries tools/list_changed whenever user's tools change, until r's context ends.
 func (s *Service) ServeChanges(w http.ResponseWriter, r *http.Request, user string) {
-	if !strings.Contains(r.Header.Get("Accept"), mcpwire.EventStream) {
-		http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
-		return
-	}
 	(&Door{svc: s, door: DoorMCP}).stream(w, r, user)
 }
 
