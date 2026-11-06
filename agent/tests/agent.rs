@@ -26,7 +26,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::{TcpListener, TcpStream, UnixListener};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
@@ -447,6 +447,41 @@ fn sse(events: &[Value]) -> String {
     events.iter().map(|e| format!("data: {e}\n\n")).collect()
 }
 
+struct HttpRequest {
+    line: String,
+    session: String,
+    body: Vec<u8>,
+}
+
+async fn read_http(reader: &mut BufReader<TcpStream>) -> Option<HttpRequest> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+        return None;
+    }
+    let (mut len, mut session) = (0, String::new());
+    loop {
+        let mut h = String::new();
+        reader.read_line(&mut h).await.unwrap();
+        if h == "\r\n" {
+            break;
+        }
+        let lower = h.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("content-length:") {
+            len = v.trim().parse().unwrap();
+        }
+        if let Some(v) = lower.strip_prefix("mcp-session-id:") {
+            session = v.trim().to_owned();
+        }
+    }
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body).await.unwrap();
+    Some(HttpRequest {
+        line,
+        session,
+        body,
+    })
+}
+
 async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -465,26 +500,14 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
             let log = Arc::clone(&log);
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
+                let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
+                    return;
+                };
                 let path = line
                     .split_whitespace()
                     .nth(1)
                     .unwrap_or_default()
                     .to_owned();
-                let mut len = 0;
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).await.unwrap();
-                    if h == "\r\n" {
-                        break;
-                    }
-                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
-                        len = v.trim().parse().unwrap();
-                    }
-                }
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await.unwrap();
                 log.lock()
                     .unwrap()
                     .push((path.clone(), serde_json::from_slice(&body).unwrap()));
@@ -529,25 +552,14 @@ async fn mock_door(
             );
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
-                let (mut len, mut session) = (0, String::new());
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).await.unwrap();
-                    if h == "\r\n" {
-                        break;
-                    }
-                    let lower = h.to_ascii_lowercase();
-                    if let Some(v) = lower.strip_prefix("content-length:") {
-                        len = v.trim().parse().unwrap();
-                    }
-                    if let Some(v) = lower.strip_prefix("mcp-session-id:") {
-                        session = v.trim().to_owned();
-                    }
-                }
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await.unwrap();
+                let Some(HttpRequest {
+                    line,
+                    session,
+                    body,
+                }) = read_http(&mut reader).await
+                else {
+                    return;
+                };
                 let mut stream = reader.into_inner();
                 if line.starts_with("GET") && readers.fetch_add(1, Ordering::SeqCst) < refused {
                     log.lock().unwrap().push((
@@ -3149,7 +3161,7 @@ async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
             let (mut down, _) = listener.accept().await.unwrap();
             let target = target.clone();
             conns.spawn(async move {
-                let mut up = tokio::net::TcpStream::connect(target).await.unwrap();
+                let mut up = TcpStream::connect(target).await.unwrap();
                 let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
             });
         }
@@ -5191,10 +5203,9 @@ async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 loop {
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
                         return;
-                    }
+                    };
                     let mut parts = line.split_whitespace();
                     let method = parts.next().unwrap_or_default().to_owned();
                     let name = parts
@@ -5204,19 +5215,6 @@ async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
                         .next()
                         .unwrap()
                         .to_owned();
-                    let mut len = 0;
-                    loop {
-                        let mut h = String::new();
-                        reader.read_line(&mut h).await.unwrap();
-                        if h == "\r\n" {
-                            break;
-                        }
-                        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
-                            len = v.trim().parse().unwrap();
-                        }
-                    }
-                    let mut body = vec![0u8; len];
-                    reader.read_exact(&mut body).await.unwrap();
                     let (status, reply) = if method == "PUT" {
                         objects.lock().unwrap().insert(name, body);
                         ("200 OK", Vec::new())
