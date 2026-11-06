@@ -82,14 +82,7 @@ struct OffloadRow: View {
     }
 
     static func since(_ model: AppModel, _ record: OffloadRecord, now: Date) -> String {
-        let at = model.offloadActivity[record.repo]?.at ?? Date(timeIntervalSince1970: Double(record.startedAtMs) / 1000)
-        let minutes = Int(now.timeIntervalSince(at)) / 60
-        switch minutes {
-        case ..<1: return "just now"
-        case ..<60: return "\(minutes) min ago"
-        case ..<(24 * 60): return "\(minutes / 60) h ago"
-        default: return at.formatted(date: .abbreviated, time: .shortened)
-        }
+        ago(model.offloadActivity[record.repo]?.at ?? Date(timeIntervalSince1970: Double(record.startedAtMs) / 1000), now: now)
     }
 
     static func color(_ status: String) -> Color {

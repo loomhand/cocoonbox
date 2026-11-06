@@ -8,7 +8,7 @@ enum Snapshot {
     private typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
 
     static func write(window: NSWindow, to path: String, framebuffer: CGImage?, screenFrame: CGRect?) -> String {
-        if let image = windowServerImage(window), !isBlank(image) {
+        if let image = windowServerImage(window), image.width >= 8, image.height >= 8 {
             return save(image, path) ? "window-server" : "failed"
         }
         guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return "failed" }
@@ -32,10 +32,6 @@ enum Snapshot {
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
         let create = unsafeBitCast(symbol, to: CreateImage.self)
         return create(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0 | 1 << 3)?.takeRetainedValue()
-    }
-
-    private static func isBlank(_ image: CGImage) -> Bool {
-        image.width < 8 || image.height < 8
     }
 
     @discardableResult

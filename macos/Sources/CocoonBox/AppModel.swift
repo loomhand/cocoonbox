@@ -806,7 +806,7 @@ final class AppModel {
     }
 
     private func upgradeNow(_ box: Box) {
-        guard let connection, !box.latestImage.isEmpty, box.latestImage != box.image else { return }
+        guard let connection else { return }
         busy = true
         let target = box.latestImage
         Task {
@@ -866,7 +866,7 @@ final class AppModel {
         }
     }
 
-    private func record(operationEvent event: OperationEvent) async {
+    private func record(operationEvent event: OperationEvent) {
         guard var progress = operation, progress.id == event.operationID else { return }
         progress.events.append(event)
         progress.replacing = progress.replacing || event.phase == .restoring
@@ -924,8 +924,8 @@ final class AppModel {
                 let response = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
                 guard !Task.isCancelled, generation == agentGeneration else { return }
                 hello = response
-                if let boxID, let hello { automations[boxID] = hello.automation }
-                Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
+                if let boxID { automations[boxID] = response.automation }
+                Perf.mark("hello", "agent=\(response.agentVersion) screen=\(response.screenWidth)x\(response.screenHeight)")
                 return
             } catch {
                 if Task.isCancelled { return }
