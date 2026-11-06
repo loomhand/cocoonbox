@@ -152,7 +152,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts, &loops)
 		library = flows.NewLibrary(st, accounts)
 	}
-	enableLedger(ctx, cfg, db, backend, svc)
+	enableLedger(ctx, cfg, db, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -551,19 +551,18 @@ func openCluster(ctx context.Context, cfg *config.Config) (*cluster.Store, error
 	return cluster.Open(ctx, dsn)
 }
 
-func enableLedger(ctx context.Context, cfg *config.Config, db *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
+func enableLedger(ctx context.Context, cfg *config.Config, db *cluster.Store, svc *boxes.Service) {
 	if !cfg.Cluster.Ledger {
 		return
 	}
 	svc.EnableLedger(ctx, db)
 	if cfg.Cluster.Shared {
 		svc.EnableShared(ctx, db)
-		svc.SyncMachines(backend.SyncOwner)
 	}
-	go verifyLedger(ctx, backend, svc)
+	go verifyLedger(ctx, svc)
 }
 
-func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Service) {
+func verifyLedger(ctx context.Context, svc *boxes.Service) {
 	logger := log.WithFunc("main.verifyLedger")
 	tick := time.Tick(verifyInterval)
 	for {
@@ -573,15 +572,14 @@ func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Ser
 		case <-tick:
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
-		machineDrift, machineErr := backend.Verify(verifyCtx)
 		drift, err := svc.Verify(verifyCtx)
 		cancel()
-		if err = errors.Join(machineErr, err); err != nil {
+		if err != nil {
 			logger.Error(ctx, err, "verify the ledger")
 			continue
 		}
-		if n := len(machineDrift) + len(drift.Heads) + len(drift.Operations); n > 0 {
-			logger.Warnf(ctx, "ledger drift repaired: machines %q, heads %q, operations %q", machineDrift, drift.Heads, drift.Operations)
+		if n := len(drift.Heads) + len(drift.Operations); n > 0 {
+			logger.Warnf(ctx, "ledger drift repaired: heads %q, operations %q", drift.Heads, drift.Operations)
 			continue
 		}
 		logger.Debug(ctx, "ledger verified: no drift")
