@@ -1377,7 +1377,7 @@ type fakeSandboxd struct {
 	info        map[string]any
 }
 
-func newFakeSandboxd(t *testing.T) *fakeSandboxd {
+func newFakeSandboxd(t testing.TB) *fakeSandboxd {
 	t.Helper()
 	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, adoptable: map[string]*fakeSandbox{}}
 	mux := f.handler()
