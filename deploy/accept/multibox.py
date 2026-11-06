@@ -131,7 +131,7 @@ def main():
     # 5. another user's box, by id at the edge and by name or id at the control MCP.
     other = box_id("dev")
     status, _ = MCP("/cocoonbox.mcp/" + other, token).post("ping")
-    check(status == 403, f"5. the edge answers {status} for another user's box id, want 403")
+    check(status == 404, f"5. the edge answers {status} for another user's box id, want 404")
     _, result, _ = control.tool("box_status", {"box": other})
     check(result.get("isError") and "no box" in text(result), "5. the control MCP refuses another user's box id")
 

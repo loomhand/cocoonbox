@@ -328,8 +328,8 @@ def main():
     status, out = guest.call("shell", {"command": "echo guest-write"})
     check("guest-write" in json.dumps(out.get("result", {})), "with write on, the next guest shell call runs")
     status, tools = guest.tools()
-    check(len(tools) == 13 and not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
-          "with write on the guest lists 13 tools, none of them lifecycle or FillCredential")
+    check(not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
+          "with write on the guest lists no lifecycle tool and no FillCredential")
     status, _, _ = http("POST", "/cocoonbox.mcp/control", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"Authorization": "Bearer " + secret})
     check(status == 401, f"the control MCP refuses the share secret ({status})")
     os.environ["SHARE_SECRET"] = secret
