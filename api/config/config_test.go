@@ -194,6 +194,25 @@ func TestLoadTakesClusterSharedOnlyWithTheLedgerAndConditionalWrites(t *testing.
 	}
 }
 
+func TestSharedIdleThresholdOutlastsActivityRefresh(t *testing.T) {
+	shared := "cluster:\n  ledger: true\n  shared: true\nstate:\n  conditional_writes: true\n"
+	for _, setting := range []string{"oauth:\n  idle_hibernate: ", "user_idle_hibernate: ", "squeezed_idle_hibernate: "} {
+		for _, after := range []string{"0s", "10s", "30s", "59s", "1m"} {
+			t.Run(setting+after, func(t *testing.T) {
+				body := required + setting + after + "\n"
+				if _, err := Load(writeConfig(t, body)); err != nil {
+					t.Fatalf("single api: %v", err)
+				}
+				_, err := Load(writeConfig(t, body+shared))
+				invalid := after != "0s" && after != "1m"
+				if (err != nil) != invalid || err != nil && !strings.Contains(err.Error(), "at least 1m") {
+					t.Errorf("shared idle %s: %v", after, err)
+				}
+			})
+		}
+	}
+}
+
 func TestLoadClusterDrain(t *testing.T) {
 	cfg, err := Load(writeConfig(t, required+"cluster:\n  drain: 3s\n"))
 	if err != nil || cfg.Cluster.Drain != Duration(3*time.Second) {
