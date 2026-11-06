@@ -178,7 +178,7 @@ impl Mcp {
     }
 
     /// Closes the session that drives agent `agent_id`.
-    pub async fn end_agent(&self, agent_id: &str) -> Result<(), Status> {
+    pub async fn end_agent(self: &Arc<Self>, agent_id: &str) -> Result<(), Status> {
         let session = lock(&self.sessions)
             .extract_if(|_, s| s.agent_id() == Some(agent_id))
             .next()
@@ -186,19 +186,16 @@ impl Mcp {
         let session = session.ok_or_else(|| {
             Status::not_found(format!("no open MCP session drives agent {agent_id}"))
         })?;
-        self.close(&session, "ended by the owner").await;
-        Ok(())
+        self.finish(vec![session], "ended by the owner").await
     }
 
     /// Closes every session opened through share `share_id`.
-    pub async fn end_share(&self, share_id: &str) {
+    pub async fn end_share(self: &Arc<Self>, share_id: &str) -> Result<(), Status> {
         let ended: Vec<Arc<Session>> = lock(&self.sessions)
             .extract_if(|_, s| s.guest.as_ref().is_some_and(|g| g.share == share_id))
             .map(|(_, s)| s)
             .collect();
-        for s in ended {
-            self.close(&s, "the share ended").await;
-        }
+        self.finish(ended, "the share ended").await
     }
 
     /// Closes every session; used when the agent shuts down.
@@ -273,6 +270,19 @@ impl Mcp {
     }
 
     async fn open(
+        self: &Arc<Self>,
+        params: Value,
+        principal: Principal,
+    ) -> Result<(Arc<Session>, Value), (StatusCode, i64, String)> {
+        let mcp = Arc::clone(self);
+        self.rt
+            .tasks
+            .spawn(async move { mcp.initialize(&params, &principal).await })
+            .await
+            .map_err(|e| internal(format!("initialize session task: {e}")))?
+    }
+
+    async fn initialize(
         &self,
         params: &Value,
         principal: &Principal,
@@ -397,6 +407,23 @@ impl Mcp {
             let _ = self.machine.set(line.clone());
         }
         line
+    }
+
+    async fn finish(
+        self: &Arc<Self>,
+        sessions: Vec<Arc<Session>>,
+        reason: &'static str,
+    ) -> Result<(), Status> {
+        let mcp = Arc::clone(self);
+        self.rt
+            .tasks
+            .spawn(async move {
+                for session in sessions {
+                    mcp.close(&session, reason).await;
+                }
+            })
+            .await
+            .map_err(|e| Status::internal(format!("close sessions task: {e}")))
     }
 
     async fn close(&self, s: &Session, reason: &str) {
@@ -806,11 +833,11 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
         Ok(p) => p,
         Err(code) => return code.into_response(),
     };
-    let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
+    let Ok(mut msg) = serde_json::from_slice::<Value>(&body) else {
         return rpc_failure(StatusCode::BAD_REQUEST, -32700, "parse error");
     };
     if msg["method"] == "initialize" {
-        return match mcp.open(&msg["params"], &principal).await {
+        return match mcp.open(msg["params"].take(), principal).await {
             Ok((session, result)) => {
                 let mut reply = json!({"jsonrpc": "2.0", "id": msg["id"]});
                 reply["result"] = result;
@@ -983,10 +1010,10 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
                 .flatten()
         });
     match removed {
-        Some(s) => {
-            mcp.close(&s, "deleted by the client").await;
-            StatusCode::NO_CONTENT.into_response()
-        }
+        Some(s) => match mcp.finish(vec![s], "deleted by the client").await {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -1115,6 +1142,151 @@ fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ClosingTools {
+        entered: Notify,
+        release: tokio::sync::Semaphore,
+        closed: Mutex<Vec<String>>,
+    }
+
+    #[tonic::async_trait]
+    impl crate::dispatch::Tools for ClosingTools {
+        async fn run(&self, owner: &str, name: &str, _args: Value) -> ToolOutput {
+            if name == "browser_end" {
+                self.entered.notify_one();
+                self.release.acquire().await.unwrap().forget();
+                lock(&self.closed).push(owner.to_owned());
+            }
+            ToolOutput {
+                text: String::new(),
+                image: None,
+                is_error: false,
+            }
+        }
+    }
+
+    async fn lifecycle_mcp(dir: &std::path::Path, tools: Arc<ClosingTools>) -> Arc<Mcp> {
+        let cfg = crate::testing::config(dir, "http://127.0.0.1:1");
+        let gate = Arc::new(Gate::new(cfg.identity_path.clone(), cfg.identity_owner));
+        let model = crate::llm::Client::new(&cfg.gw_base_url, &cfg.gw_api_key, false).unwrap();
+        let rt = Runtime::open(cfg, model, tools).await.unwrap();
+        Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate)
+    }
+
+    fn closing_tools() -> Arc<ClosingTools> {
+        Arc::new(ClosingTools {
+            entered: Notify::new(),
+            release: tokio::sync::Semaphore::new(0),
+            closed: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn guest() -> Principal {
+        Principal::Share {
+            id: "share".into(),
+            write: true,
+            user: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_initialize_registers_its_persisted_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = closing_tools();
+        let mcp = lifecycle_mcp(dir.path(), Arc::clone(&tools)).await;
+        let connection = rusqlite::Connection::open(dir.path().join("agent.db")).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let params = json!({"clientInfo": {"name": "test"}});
+        let principal = guest();
+        let mut opening = Box::pin(mcp.open(params, principal));
+        assert!(futures_util::poll!(&mut opening).is_pending());
+        drop(opening);
+        connection.execute_batch("COMMIT").unwrap();
+        let agent = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Some(agent) = mcp.rt.journal.store.list_agents().await.unwrap().pop() {
+                    break agent;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !mcp.serves(&agent.id) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the persisted session is invisible to the reaper");
+        tools.release.add_permits(1);
+        mcp.end_agent(&agent.id).await.unwrap();
+        assert!(
+            mcp.rt
+                .journal
+                .store
+                .unfinished_turns()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelled_end_agent_finishes_closing_its_removed_session() {
+        cancelled_end(false).await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_end_share_finishes_closing_every_removed_session() {
+        cancelled_end(true).await;
+    }
+
+    async fn cancelled_end(share: bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = closing_tools();
+        let mcp = lifecycle_mcp(dir.path(), Arc::clone(&tools)).await;
+        let mut ids = Vec::new();
+        for _ in 0..if share { 2 } else { 1 } {
+            let (session, _) = mcp.open(json!({}), guest()).await.unwrap();
+            ids.push(session.agent_id().unwrap().to_owned());
+        }
+        let mut closing = Box::pin(async {
+            if share {
+                mcp.end_share("share").await.unwrap();
+            } else {
+                mcp.end_agent(&ids[0]).await.unwrap();
+            }
+        });
+        tokio::select! {
+            () = tools.entered.notified() => {}
+            () = &mut closing => panic!("closed before the toolhost was released"),
+        }
+        assert!(ids.iter().all(|id| !mcp.serves(id)));
+        drop(closing);
+        tools.release.add_permits(ids.len());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let agents = mcp.rt.journal.store.list_agents().await.unwrap();
+                if agents.iter().all(|a| a.status == AgentStatus::Idle as i32) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("a removed session was never closed after cancellation");
+        assert_eq!(lock(&tools.closed).len(), ids.len());
+        assert!(
+            mcp.rt
+                .journal
+                .store
+                .unfinished_turns()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn the_desk_resource_uses_the_platform_guide_path() {
