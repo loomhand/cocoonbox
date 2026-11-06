@@ -5152,7 +5152,7 @@ async fn upload_missing(
         url: format!("{base}/{id}"),
         headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
     };
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .upload(authed(pb::UploadRequest {
             snapshot_id: planned.snapshot_id.clone(),
@@ -5163,11 +5163,7 @@ async fn upload_missing(
         .await
         .unwrap()
         .into_inner();
-    let mut last = None;
-    while let Some(p) = stream.message().await.unwrap() {
-        last = Some(p);
-    }
-    let last = last.unwrap();
+    let last = last_message(stream).await.unwrap();
     assert!(last.finished);
     assert_eq!(last.manifest_id, planned.snapshot_id);
     assert_eq!(last.done_chunks as usize, missing.len() + 1);
@@ -5212,14 +5208,18 @@ async fn restore_pages(
         gets: page.to_vec(),
         ..Default::default()
     }));
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .restore(authed(tokio_stream::iter(reqs)))
         .await?
         .into_inner();
+    last_message(stream).await
+}
+
+async fn last_message<T>(mut stream: tonic::Streaming<T>) -> Result<T, tonic::Status> {
     let mut last = None;
-    while let Some(p) = stream.message().await? {
-        last = Some(p);
+    while let Some(m) = stream.message().await? {
+        last = Some(m);
     }
     Ok(last.unwrap())
 }
@@ -5231,12 +5231,12 @@ fn manifest_of(objects: &Objects, id: &str) -> Value {
 }
 
 fn known_files(h: &Harness) -> Value {
-    let path = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
-    serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["files"].take()
+    serde_json::from_slice::<Value>(&std::fs::read(known_chunks(h)).unwrap()).unwrap()["files"]
+        .take()
+}
+
+fn known_chunks(h: &Harness) -> PathBuf {
+    h.dir.path().join("state/state/known-chunks.json")
 }
 
 fn chunks_of(m: &Value, path: &str) -> Value {
@@ -5587,7 +5587,7 @@ async fn an_android_box_fails_a_quiesced_plan_when_its_session_save_fails() {
 #[tokio::test]
 async fn a_restore_tells_the_offload_inbox_to_rescan() {
     let h = Harness::start(Vec::new()).await;
-    let inbox = UnixListener::bind(h.home.parent().unwrap().join("offload.sock")).unwrap();
+    let inbox = UnixListener::bind(h.dir.path().join("offload.sock")).unwrap();
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), b"x").unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
@@ -5816,7 +5816,7 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
         let snapshot_id = planned.snapshot_id.clone();
         let h = &h;
         async move {
-            let mut stream = state_client(h)
+            let stream = state_client(h)
                 .await
                 .upload(authed(pb::UploadRequest {
                     snapshot_id,
@@ -5827,11 +5827,7 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
                 .await
                 .unwrap()
                 .into_inner();
-            let mut last = None;
-            while let Some(p) = stream.message().await.unwrap() {
-                last = Some(p);
-            }
-            last.unwrap()
+            last_message(stream).await.unwrap()
         }
     };
     let part = call(first.iter().map(|id| put(id)).collect(), None).await;
@@ -5899,11 +5895,7 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
         .set_modified(mtime)
         .unwrap();
     assert_eq!(std::fs::metadata(&a).unwrap().modified().unwrap(), mtime);
-    let known = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
+    let known = known_chunks(&h);
     let mut forged: Value = serde_json::from_slice(&std::fs::read(&known).unwrap()).unwrap();
     forged["files"]["workspace/c.txt"]["chunks"] =
         forged["files"]["workspace/b.txt"]["chunks"].clone();
@@ -5963,11 +5955,7 @@ async fn a_plan_right_after_a_restore_reads_no_file_the_restore_wrote() {
     let first = plan(&h, pb::Consistency::Live, "").await;
     upload_missing(&h, &base, &objects, &first).await;
     let m1 = manifest_of(&objects, &first.snapshot_id);
-    let known = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
+    let known = known_chunks(&h);
     std::fs::remove_file(&known).unwrap();
     std::fs::remove_file(h.workspace.join("a.txt")).unwrap();
 
@@ -6133,7 +6121,7 @@ async fn restore_fetches_a_chunk_shared_by_several_files_once() {
         std::fs::read(h.workspace.join("own.txt")).unwrap(),
         noise(7_000, 23)
     );
-    let work = h.home.parent().unwrap().join("state/state");
+    let work = h.dir.path().join("state/state");
     let leftovers: Vec<_> = std::fs::read_dir(&work)
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -6150,7 +6138,7 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
     assert_eq!(ok["isError"], false, "{ok}");
     let first = driver_calls(&h, "desk_computer_state")[0]["session"].clone();
 
-    let toolhost = toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
+    let toolhost = toolhost::rpc::Client::new(h.dir.path().join("toolhost.sock"));
     let end = Call {
         agent_id: String::new(),
         tool: "computer_end".into(),
@@ -6225,7 +6213,7 @@ async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
 async fn a_failed_plan_removes_its_spool() {
     let h = Harness::start(Vec::new()).await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 41)).unwrap();
-    let dir = h.home.parent().unwrap().to_path_buf();
+    let dir = h.dir.path();
     std::fs::remove_file(dir.join("toolhost.sock")).unwrap();
     let err = state_client(&h)
         .await
@@ -6485,16 +6473,12 @@ async fn restore_paths(
             ..Default::default()
         }
     }));
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .restore_paths(authed(tokio_stream::iter(reqs)))
         .await?
         .into_inner();
-    let mut last = None;
-    while let Some(p) = stream.message().await? {
-        last = Some(p);
-    }
-    Ok(last.unwrap())
+    last_message(stream).await
 }
 
 fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
