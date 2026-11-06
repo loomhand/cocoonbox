@@ -24,7 +24,6 @@ const (
 	rfbPixelBytes   = rfbBitsPerPixel / 8
 	rfbServerInit   = 24
 	maxFencePayload = 64
-	maxRFBBuffer    = 1 << 20
 
 	encodingRaw          = 0
 	encodingCopyRect     = 1
@@ -88,9 +87,6 @@ func (f *viewOnly) feed(in []byte) ([]byte, error) {
 		}
 		out = append(out, forward...)
 		f.buf = f.buf[size:]
-	}
-	if len(f.buf) > maxRFBBuffer {
-		return nil, errors.New("rfb: viewer message too large")
 	}
 	f.buf = slices.Clone(f.buf)
 	return out, nil
@@ -188,9 +184,6 @@ func (f *screenOnly) feed(in []byte) ([]byte, error) {
 		pos += head
 	}
 	f.buf = append(f.buf[:0], f.buf[pos:]...)
-	if len(f.buf) > maxRFBBuffer {
-		return nil, errors.New("rfb: server message header too large")
-	}
 	return out, nil
 }
 
