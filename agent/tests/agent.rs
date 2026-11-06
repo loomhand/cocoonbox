@@ -4832,19 +4832,28 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
         .unwrap();
     assert_eq!(deleted.status(), 204);
     let mut open = McpClient::connect_as(&h, Some(guest)).await;
-    for _ in 0..8 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut names: Vec<(String, String)> = Vec::new();
+    for _ in 0..50 {
         open.rpc("ping", json!({})).await;
+        names = agents
+            .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
+            .await
+            .unwrap()
+            .into_inner()
+            .agents
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect();
+        if names
+            .iter()
+            .filter(|(_, n)| n == "mcp:test-client@sh-1")
+            .count()
+            == 1
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let names: Vec<(String, String)> = agents
-        .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
-        .await
-        .unwrap()
-        .into_inner()
-        .agents
-        .into_iter()
-        .map(|a| (a.id, a.name))
-        .collect();
     let mcp_count = names
         .iter()
         .filter(|(_, n)| n == "mcp:test-client@sh-1")
