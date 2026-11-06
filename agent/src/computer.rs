@@ -160,8 +160,13 @@ async fn drive(
             true,
         ),
     };
+    let text = if shot.image.is_some() {
+        format!("{text}\n[the final screenshot is attached to this result for the user]")
+    } else {
+        text
+    };
     Ok(ToolOutput {
-        text: format!("{text}\n[the final screenshot is attached to this result for the user]"),
+        text,
         image: shot.image,
         is_error,
     })
