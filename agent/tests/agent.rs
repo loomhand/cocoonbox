@@ -255,12 +255,10 @@ impl Harness {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(server::serve_on(listener, rt));
-        for _ in 0..100 {
-            if toolhost_socket.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        assert!(
+            wait_until(Duration::from_secs(1), || toolhost_socket.exists()).await,
+            "the toolhost never listened"
+        );
         Self {
             _chrome: chrome.map(|_| ChromeGuard(dir.path().join("chrome"))),
             dir,
@@ -334,30 +332,7 @@ async fn wait_turn_end(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
 ) -> Vec<pb::TranscriptEntry> {
-    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
-    for _ in 0..500 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.into(),
-                after_seq: entries.last().map_or(0, |e| e.seq),
-                limit: 1000,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        entries.extend(page.entries);
-        if page.has_more {
-            continue;
-        }
-        if entries
-            .iter()
-            .any(|e| matches!(e.body, Some(Body::TurnEnd(_))))
-        {
-            return entries;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("turn did not end");
+    turn_ends(agents, agent_id, 1).await
 }
 
 fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
@@ -839,13 +814,18 @@ fn alive(pid_file: &Path) -> bool {
 }
 
 async fn wait_gone(pid_file: &Path) -> bool {
-    for _ in 0..100 {
-        if !alive(pid_file) {
-            return true;
+    wait_until(Duration::from_secs(2), || !alive(pid_file)).await
+}
+
+async fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while !cond() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    false
+    true
 }
 
 fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> String {
@@ -1996,13 +1976,10 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 
     send(&mut agents, &agent_id, "sleep", "").await;
     let started = h.workspace.join("started");
-    for _ in 0..250 {
-        if started.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(started.exists(), "the shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || started.exists()).await,
+        "the shell call never started"
+    );
     agents
         .cancel(authed(pb::CancelRequest {
             agent_id: agent_id.clone(),
@@ -2075,13 +2052,10 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
                 .await
         })
     };
-    for _ in 0..200 {
-        if saving.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(saving.exists(), "the quiesce never started");
+    assert!(
+        wait_until(Duration::from_secs(2), || saving.exists()).await,
+        "the quiesce never started"
+    );
     agents
         .respond(authed(pb::RespondRequest {
             agent_id: agent_id.clone(),
@@ -2199,12 +2173,10 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .count();
     assert_eq!(approved_calls, 1, "a declined call ran again");
 
-    for _ in 0..200 {
-        if door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until(Duration::from_secs(2), || {
+        door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
+    })
+    .await;
     events
         .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
         .unwrap();
@@ -2249,21 +2221,17 @@ async fn an_ended_door_stream_is_followed_again_within_a_second_each_time() {
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
     let _h = Harness::with_connect(vec![], door).await;
     for readers in 1..=4 {
-        let since = tokio::time::Instant::now();
-        while door_log
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(m, _)| m == "GET")
-            .count()
-            < readers
-        {
-            assert!(
-                since.elapsed() < Duration::from_millis(2500),
-                "reader {readers} did not come within 2.5 s"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let came = wait_until(Duration::from_millis(2500), || {
+            door_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _)| m == "GET")
+                .count()
+                >= readers
+        })
+        .await;
+        assert!(came, "reader {readers} did not come within 2.5 s");
         events.send("close".to_owned()).unwrap();
     }
 }
@@ -2283,15 +2251,8 @@ async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() 
             .map(|(_, v)| v["ms"].as_u64().unwrap())
             .collect()
     };
-    let since = tokio::time::Instant::now();
-    while refusals().len() < 6 {
-        assert!(
-            since.elapsed() < Duration::from_secs(25),
-            "{:?}",
-            refusals()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let refused = wait_until(Duration::from_secs(25), || refusals().len() >= 6).await;
+    assert!(refused, "{:?}", refusals());
     let gaps: Vec<u64> = refusals().windows(2).map(|w| w[1] - w[0]).collect();
     assert!(gaps.iter().all(|&g| g < 5500), "{gaps:?}");
     assert!(gaps[3..].iter().all(|&g| g >= 4500), "{gaps:?}");
@@ -2317,14 +2278,11 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "make x", "").await;
     let asked = connector_approval(&mut agents, &agent_id, 0).await;
-    let refused_at = tokio::time::Instant::now();
-    while !door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
-        assert!(
-            refused_at.elapsed() < Duration::from_secs(5),
-            "no reader came back after the refused one"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let came_back = wait_until(Duration::from_secs(5), || {
+        door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
+    })
+    .await;
+    assert!(came_back, "no reader came back after the refused one");
     events
         .send(
             json!({"jsonrpc": "2.0", "method": "notifications/cocoonbox/approval_answered",
@@ -2429,17 +2387,22 @@ async fn wait_transcript<T>(
     after_seq: u64,
     mut found: impl FnMut(&[pb::TranscriptEntry]) -> Option<T>,
 ) -> T {
+    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
     for _ in 0..500 {
         let page = agents
             .transcript(authed(pb::TranscriptRequest {
                 agent_id: agent_id.into(),
-                after_seq,
+                after_seq: entries.last().map_or(after_seq, |e| e.seq),
                 limit: 1000,
             }))
             .await
             .unwrap()
             .into_inner();
-        if let Some(t) = found(&page.entries) {
+        entries.extend(page.entries);
+        if page.has_more {
+            continue;
+        }
+        if let Some(t) = found(&entries) {
             return t;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -3082,12 +3045,10 @@ async fn cancelling_exec_kills_the_command() {
             .exec(authed(tokio_stream_from(rx)))
             .await
             .unwrap();
-        for _ in 0..100 {
-            if std::fs::read_to_string(&pid).is_ok_and(|p| !p.trim().is_empty()) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        wait_until(Duration::from_secs(2), || {
+            std::fs::read_to_string(&pid).is_ok_and(|p| !p.trim().is_empty())
+        })
+        .await;
         assert!(alive(&pid), "{name}: not running");
         if fill {
             let chunk = noise(64 << 10, 3);
@@ -3220,15 +3181,13 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     assert!(
         matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.error == "cancelled")
     );
-    for _ in 0..200 {
-        if h.desk_log.lock().unwrap().iter().any(|(n, a)| {
+    let ended = || {
+        h.desk_log.lock().unwrap().iter().any(|(n, a)| {
             n == "desk_computer_end" && a["session"].as_str().is_some_and(|s| s.starts_with("cu-"))
-        }) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!(
+        })
+    };
+    assert!(
+        wait_until(Duration::from_secs(4), ended).await,
         "cancel did not end the driver session: {:?}",
         h.desk_log.lock().unwrap()
     );
@@ -4712,13 +4671,10 @@ async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
         .await
     });
     let running = h.workspace.join("started");
-    for _ in 0..250 {
-        if running.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(running.exists(), "the MCP shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || running.exists()).await,
+        "the MCP shell call never started"
+    );
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
     let waited = started.elapsed();
@@ -4754,23 +4710,24 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
     assert_eq!(stream.headers()["content-type"], "text/event-stream");
     assert!(stream.chunk().await.unwrap().is_some());
     drop(stream);
-    for _ in 0..100 {
-        if !driver_calls(&h, "desk_computer_end").is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    assert!(
+        wait_until(Duration::from_secs(1), || !driver_calls(
+            &h,
+            "desk_computer_end"
+        )
+        .is_empty())
+        .await,
+        "the stream close never ended the driver session"
+    );
     assert_eq!(driver_calls(&h, "desk_computer_end")[0]["session"], first);
 
     mcp.call("screenshot", json!({})).await;
     let second = driver_calls(&h, "desk_look")[1]["session"].clone();
     assert_ne!(first, second);
-    for _ in 0..300 {
-        if driver_calls(&h, "desk_computer_end").len() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until(Duration::from_secs(3), || {
+        driver_calls(&h, "desk_computer_end").len() == 2
+    })
+    .await;
     let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 2, "{ended:?}");
     assert_eq!(ended[1]["session"], second);
@@ -4806,12 +4763,10 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
             .await
     });
     let pid = h.workspace.join("guest.pid");
-    for _ in 0..100 {
-        if pid.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    assert!(
+        wait_until(Duration::from_secs(2), || pid.exists()).await,
+        "the guest's shell call never started"
+    );
     let started = std::time::Instant::now();
     state_client(&h).await.plan(quiesced(&owner)).await.unwrap();
     let took = started.elapsed();
@@ -4839,13 +4794,10 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
             .await
     });
     let running = h.workspace.join("mine.started");
-    for _ in 0..250 {
-        if running.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(running.exists(), "the owner's MCP shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || running.exists()).await,
+        "the owner's MCP shell call never started"
+    );
     let busy = state_client(&h).await.plan(quiesced(&owner)).await;
     assert_eq!(busy.unwrap_err().code(), Code::Unavailable);
     assert_eq!(call.await.unwrap()["isError"], false);
