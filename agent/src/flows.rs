@@ -99,6 +99,9 @@ impl Syncer {
             Ok(Err(e)) => eprintln!("flows: pull: {e}"),
             Err(_) => eprintln!("flows: pull: no answer in {PULL_BUDGET:?}"),
         }
+        if !self.stale_index.load(Ordering::SeqCst) {
+            return;
+        }
         let _gate = self.gate.lock().await;
         if self.stale_index.load(Ordering::SeqCst) {
             match self.run("flows_index", json!({})).await {
