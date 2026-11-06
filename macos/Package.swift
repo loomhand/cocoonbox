@@ -9,8 +9,6 @@ let package = Package(
     name: "CocoonBox",
     platforms: [.macOS(.v15)],
     products: [
-        .library(name: "CocoonBoxKit", targets: ["CocoonBoxKit"]),
-        .library(name: "CocoonBoxTerminal", targets: ["CocoonBoxTerminal"]),
         .executable(name: "CocoonBox", targets: ["CocoonBox"]),
         .executable(name: "MockBox", targets: ["MockBox"]),
         .executable(name: "cocoonbox-cli", targets: ["CocoonBoxCLI"]),
