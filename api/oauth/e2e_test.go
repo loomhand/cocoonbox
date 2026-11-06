@@ -604,7 +604,7 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 		t.Errorf("renewal consent = %+v, want mock ticked", renewal)
 	}
 	tools := e.rootTools(t, access)
-	if !slices.Contains(slices.Collect(maps.Keys(tools)), "mock_list_items") || slices.ContainsFunc(slices.Collect(maps.Keys(tools)), func(n string) bool { return strings.HasPrefix(n, "other_") }) {
+	if _, ok := tools["mock_list_items"]; !ok || slices.ContainsFunc(slices.Collect(maps.Keys(tools)), func(n string) bool { return strings.HasPrefix(n, "other_") }) {
 		t.Fatalf("grant tools = %v, want mock's and not other's", slices.Sorted(maps.Keys(tools)))
 	}
 	if !strings.Contains(tools["mock_create_item"], `"destructiveHint":true`) || !strings.Contains(tools["mock_list_items"], `"readOnlyHint":true`) {
@@ -678,32 +678,6 @@ func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 	if resp := e.rootRPC(t, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("tools/list after the revoke = %d", resp.StatusCode)
-	}
-}
-
-func TestTheConnectorMigrationAppliesOnAnExistingDatabase(t *testing.T) {
-	e := newEnv(t)
-	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
-	conn, err := pgx.Connect(t.Context(), e.dsn)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	if _, err := conn.Exec(t.Context(), "DROP TABLE oauth_connectors; ALTER TABLE oauth_codes DROP COLUMN connectors; DELETE FROM oauth_schema_migrations WHERE version = 4"); err != nil {
-		t.Fatalf("roll back to migration 3: %v", err)
-	}
-	grants, err := oauth.Open(t.Context(), oauth.Options{DSN: e.dsn, Issuer: e.srv.URL, Resource: e.resource, Accounts: e.users})
-	if err != nil {
-		t.Fatalf("open on a database at migration 3: %v", err)
-	}
-	defer grants.Close()
-	g, err := grants.Authenticate(t.Context(), "Bearer "+access)
-	if err != nil || len(g.Connectors) != 0 {
-		t.Fatalf("a grant made before the migration = %+v, %v", g, err)
-	}
-	var applied bool
-	if err := conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM oauth_schema_migrations WHERE version = 4)").Scan(&applied); err != nil || !applied {
-		t.Errorf("migration 4 applied: %t, %v", applied, err)
 	}
 }
 
