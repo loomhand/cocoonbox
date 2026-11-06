@@ -772,6 +772,12 @@ func capText(micros *int64) string {
 	}
 }
 
+func page(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "static/"+name)
+	}
+}
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.UnmarshalRead(r.Body, v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")

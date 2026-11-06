@@ -37,9 +37,7 @@ type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
 // EnableSignup serves the GitHub sign-in, linking, self-delete, the queue page and the admin's signup calls over sig.
 func (s *Server) EnableSignup(sig *signup.Service) {
 	s.signup = sig
-	s.mux.HandleFunc("GET "+queuePage, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/queue.html")
-	})
+	s.mux.HandleFunc("GET "+queuePage, page("queue.html"))
 	s.mux.HandleFunc("GET "+Prefix+"api/auth/providers", s.providers)
 	s.mux.HandleFunc("POST "+Prefix+"api/auth/github/begin", s.beginLogin)
 	s.mux.HandleFunc("GET "+Prefix+"api/me/identities", s.signedIn(s.listIdentities))

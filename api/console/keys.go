@@ -25,9 +25,7 @@ type key struct {
 // EnableKeys serves the Keys page and its calls over keys.
 func (s *Server) EnableKeys(keys controlv1.KeysServer) {
 	s.keys = keys
-	s.mux.HandleFunc("GET "+keysPage, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/keys.html")
-	})
+	s.mux.HandleFunc("GET "+keysPage, page("keys.html"))
 	s.mux.HandleFunc("GET "+Prefix+"api/keys", s.signedIn(s.listKeys))
 	s.mux.HandleFunc("POST "+Prefix+"api/keys", s.signedIn(s.addKey))
 	s.mux.HandleFunc("PUT "+Prefix+"api/keys/{name}", s.signedIn(s.rotateKey))
