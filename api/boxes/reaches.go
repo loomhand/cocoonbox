@@ -100,19 +100,6 @@ func (r *reaches) read(ctx context.Context) error {
 	return nil
 }
 
-// run flushes every reachFlush until ctx ends.
-func (r *reaches) run(ctx context.Context, open func() []string) {
-	tick := time.Tick(reachFlush)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick:
-		}
-		r.flush(ctx, open())
-	}
-}
-
 // flush writes the reaches since the last flush, with the open boxes at now, and keeps them for the next on a failure.
 func (r *reaches) flush(ctx context.Context, open []string) {
 	logger := log.WithFunc("boxes.reaches.flush")
