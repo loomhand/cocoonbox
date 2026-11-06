@@ -631,6 +631,12 @@ func TestAnUncertainWriteIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestATokenRefreshFailureIsNotAnUncertainWrite(t *testing.T) {
+	if uncertain(&oauthError{status: http.StatusServiceUnavailable}, exchange{}) {
+		t.Error("uncertain(token endpoint 503) = true; want false, the call never left")
+	}
+}
+
 func TestAnInternalFailureReachesTheClientWithoutItsText(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
