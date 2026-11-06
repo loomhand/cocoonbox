@@ -794,6 +794,18 @@ async fn tab_gone(port: u16, url: &str) -> bool {
     false
 }
 
+fn assert_continued(chats: &[Value], before: usize, after: usize) {
+    let before = chats[before]["messages"].as_array().unwrap();
+    let after = chats[after]["messages"].as_array().unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(after[..before.len()], before[..]);
+    assert_eq!(after[before.len()]["role"], "user");
+    assert_eq!(
+        after[before.len()]["content"][0]["text"],
+        "Continue: call the next tool, or give your final answer."
+    );
+}
+
 fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
     log.lock()
         .unwrap()
@@ -1661,17 +1673,8 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
         .collect();
     assert_eq!(texts, ["list it", "Let me check.", "Listed."]);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    for (empty, next) in [(0, 1), (2, 3)] {
-        let before = chats[empty]["messages"].as_array().unwrap();
-        let after = chats[next]["messages"].as_array().unwrap();
-        assert_eq!(after.len(), before.len() + 1);
-        assert_eq!(after[..before.len()], before[..]);
-        assert_eq!(after[before.len()]["role"], "user");
-        assert_eq!(
-            after[before.len()]["content"][0]["text"],
-            "Continue: call the next tool, or give your final answer."
-        );
-    }
+    assert_continued(&chats, 0, 1);
+    assert_continued(&chats, 2, 3);
     let silent = create_agent(&mut agents).await;
     send(&mut agents, &silent, "say nothing", "").await;
     let entries = wait_turn_end(&mut agents, &silent).await;
@@ -1805,16 +1808,8 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
     let entries = wait_turn_end(&mut agents, &listed).await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    for (markup, next) in [(0, 1), (2, 3)] {
-        let before = chats[markup]["messages"].as_array().unwrap();
-        let after = chats[next]["messages"].as_array().unwrap();
-        assert_eq!(after.len(), before.len() + 1);
-        assert_eq!(after[..before.len()], before[..]);
-        assert_eq!(
-            after[before.len()]["content"][0]["text"],
-            "Continue: call the next tool, or give your final answer."
-        );
-    }
+    assert_continued(&chats, 0, 1);
+    assert_continued(&chats, 2, 3);
     let prose = create_agent(&mut agents).await;
     send(&mut agents, &prose, "again", "").await;
     let entries = wait_turn_end(&mut agents, &prose).await;
@@ -1852,14 +1847,7 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     let entries = wait_turn_end(&mut agents, &listed).await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let before = chats[1]["messages"].as_array().unwrap();
-    let after = chats[2]["messages"].as_array().unwrap();
-    assert_eq!(after.len(), before.len() + 1);
-    assert_eq!(after[..before.len()], before[..]);
-    assert_eq!(
-        after[before.len()]["content"][0]["text"],
-        "Continue: call the next tool, or give your final answer."
-    );
+    assert_continued(&chats, 1, 2);
     let idle = create_agent(&mut agents).await;
     send(&mut agents, &idle, "run it", "").await;
     let entries = wait_turn_end(&mut agents, &idle).await;
@@ -1902,11 +1890,7 @@ async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 3);
-    let last = chats[2]["messages"].as_array().unwrap();
-    assert_eq!(
-        last[last.len() - 1]["content"][0]["text"],
-        "Continue: call the next tool, or give your final answer."
-    );
+    assert_continued(&chats, 1, 2);
 }
 
 #[tokio::test]
