@@ -368,6 +368,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                     try await pipes.waitForAll()
                 }
                 for await code in exits {
+                    if commandLine.hasPrefix("cocoonbox-agent offload send "), FileManager.default.fileExists(atPath: workspace.appendingPathComponent("exec-no-exit").path) { break }
                     try await response.write(.with { $0.exitCode = code })
                 }
             } onCancel: {

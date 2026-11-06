@@ -5,6 +5,28 @@ import Foundation
 import Testing
 
 @Suite(.serialized) struct OffloadTests {
+    @Test func aSendWithoutAnExitCodeKeepsTheRecordAndCanComeBack() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("no-exit")
+        let marker = box.root.appendingPathComponent("workspace/exec-no-exit")
+        try Data().write(to: marker)
+        defer { try? FileManager.default.removeItem(at: marker) }
+        do {
+            _ = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
+            Issue.record("accepted a send without an exit code")
+        } catch let error as OffloadError {
+            #expect(error.description.contains("without an exit code"))
+        }
+        try FileManager.default.removeItem(at: marker)
+        let key = try #require(box.key(repo))
+        let record = try #require(box.store.record(key))
+        #expect(try box.sh("git rev-parse refs/cocoonbox/offload/\(record.id)", in: repo) == record.base)
+        #expect(!(try box.sh("git rev-parse refs/cocoonbox/index/\(record.id)", in: repo)).isEmpty)
+        try box.post(back: Self.handover, in: URL(fileURLWithPath: record.dir), key: record.repo)
+        #expect(try await box.offloader().back(record.repo, interrupt: false).landing == .unchanged)
+        #expect(box.store.record(record.repo) == nil)
+    }
+
     @Test func roundTripKeepsStagedUnstagedAndUntrackedChanges() async throws {
         let box = try await Harness.shared()
         let repo = try box.repo("round")

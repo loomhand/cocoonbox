@@ -206,8 +206,8 @@ public struct Offloader: Sendable {
             reply = try await verb(["send", "--repo", key, "--kind", request.kind.rawValue, "--id", id], input: ExecFrames.tar(members))
             mark("send")
         } catch {
-            // a send cut off in transit may have started the box CLI, so its record stays for back
-            if sending, !(error is OffloadError) {
+            let rejected = if case OffloadError.box = error { true } else { false }
+            if sending, !rejected {
                 throw OffloadError.failed("the connection broke while the box took the task (\(BoxConnection.describe(error))); check `cocoonbox offload status`, then offload again or bring it back")
             }
             store.remove(key)
