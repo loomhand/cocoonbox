@@ -180,12 +180,14 @@ impl Client {
 
     /// Sends one request, opening a session first and once more when the door ended it.
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, String> {
+        let mut msg = json!({"jsonrpc": "2.0", "id": 1, "method": method});
+        msg["params"] = params;
         let session = self.session().await?;
-        match self.post(&session, method, &params).await {
+        match self.post(&session, &msg).await {
             Err(Gone) => {
                 self.forget(&session);
                 let session = self.session().await?;
-                self.post(&session, method, &params)
+                self.post(&session, &msg)
                     .await
                     .map_err(|_| "the door ended a new session".to_owned())?
             }
@@ -215,14 +217,8 @@ impl Client {
         Ok(session)
     }
 
-    async fn post(
-        &self,
-        session: &str,
-        method: &str,
-        params: &Value,
-    ) -> Result<Result<Value, String>, Gone> {
-        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-        match self.send(Some(session), &msg).await {
+    async fn post(&self, session: &str, msg: &Value) -> Result<Result<Value, String>, Gone> {
+        match self.send(Some(session), msg).await {
             Ok(resp) if resp.status() == StatusCode::NOT_FOUND => Err(Gone),
             Ok(resp) => Ok(answer(resp).await),
             Err(e) => Ok(Err(e)),
