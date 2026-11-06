@@ -7,12 +7,7 @@ description = "In-box agent for cocoonbox: agent loop, gRPC surface and tool hos
 license = "AGPL-3.0-only"
 publish = false
 
-[[bin]]
-name = "cocoonbox-agent"
-path = "src/main.rs"
-
 [dependencies]
-aes = { version = "0.9", features = ["zeroize"] }
 aes-gcm = { version = "0.11", features = ["zeroize"] }
 axum = { version = "0.8", default-features = false }
 base64 = "0.23"
