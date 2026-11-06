@@ -27,6 +27,55 @@ final class Script: Sendable {
 }
 
 @Suite struct EventFollowerTests {
+    @Test func cancellingTheFollowerCancelsItsResync() async {
+        let started = Mutex(false)
+        let cancelled = Mutex(false)
+        let (pending, finish) = AsyncStream<Void>.makeStream()
+        defer { finish.finish() }
+        let follower = EventFollower<Tick>(offsetOf: { $0.offset }, isResync: { _ in false })
+        let task = Task {
+            await follower.run(
+                from: 0,
+                subscribe: { _, _ in try await pause(.seconds(3600)) },
+                onEvent: { _ in },
+                onResync: {
+                    started.withLock { $0 = true }
+                    for await _ in pending {}
+                    cancelled.withLock { $0 = Task.isCancelled }
+                },
+                onDisconnect: { _ in }
+            )
+        }
+        #expect(await until { started.withLock { $0 } })
+        task.cancel()
+        await task.value
+        #expect(await until { cancelled.withLock { $0 } })
+    }
+
+    @Test func everyLiveRetryCancelsItsPreviousResync() async {
+        let started = Mutex(0)
+        let cancelled = Mutex(0)
+        let plans = (1...3).map { count in
+            { @Sendable (_: UInt64, _: EventFollower<Tick>.Deliver) async throws in
+                #expect(await until { started.withLock { $0 } == count })
+                throw RPCError(code: .unavailable, message: "down")
+            }
+        }
+        let script = Script(plans)
+        await follower(script).run(
+            from: 0,
+            subscribe: script.subscribe,
+            onEvent: { _ in },
+            onResync: {
+                started.withLock { $0 += 1 }
+                do { try await pause(.seconds(3600)) } catch {}
+                if Task.isCancelled { cancelled.withLock { $0 += 1 } }
+            },
+            onDisconnect: { _ in }
+        )
+        #expect(await until { cancelled.withLock { $0 } == 3 })
+    }
+
     func follower(_ script: Script) -> EventFollower<Tick> {
         EventFollower<Tick>(
             backoff: Backoff(initial: .milliseconds(100), max: .milliseconds(400), multiplier: 2),

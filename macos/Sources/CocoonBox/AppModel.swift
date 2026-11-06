@@ -113,6 +113,7 @@ final class AppModel {
     @ObservationIgnored private var boxesTask: Task<Void, Never>?
     @ObservationIgnored private var boxesLive = false
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
+    @ObservationIgnored private var agentGeneration = UUID()
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var settleTask: Task<Void, Never>?
 
@@ -801,11 +802,11 @@ final class AppModel {
 
     func upgrade() {
         guard let box, upgradeAvailable else { return }
-        warnIfBusy(box, title: "Upgrade while a box agent works?", consequence: "The upgrade restarts it from its last hand-over.") { self.upgradeNow() }
+        warnIfBusy(box, title: "Upgrade while a box agent works?", consequence: "The upgrade restarts it from its last hand-over.") { self.upgradeNow(box) }
     }
 
-    private func upgradeNow() {
-        guard let connection, let box, upgradeAvailable else { return }
+    private func upgradeNow(_ box: Box) {
+        guard let connection, !box.latestImage.isEmpty, box.latestImage != box.image else { return }
         busy = true
         let target = box.latestImage
         Task {
@@ -821,13 +822,13 @@ final class AppModel {
 
     func hibernate() {
         guard let box else { return }
-        warnIfBusy(box, title: "Hibernate while a box agent works?", consequence: "Hibernating pauses it until the box wakes.") { self.hibernateNow() }
+        warnIfBusy(box, title: "Hibernate while a box agent works?", consequence: "Hibernating pauses it until the box wakes.") { self.hibernateNow(box) }
     }
 
-    private func hibernateNow() {
-        guard let connection, let box else { return }
+    private func hibernateNow(_ box: Box) {
+        guard let connection else { return }
         busy = true
-        stopAgentSide()
+        if selectedBoxID == box.id { stopAgentSide() }
         Task {
             defer { busy = false }
             do {
@@ -835,7 +836,7 @@ final class AppModel {
                 watch(operation: op.id, box: box.id, title: "Hibernating")
             } catch {
                 report("hibernate", error)
-                if boxRunning { startAgentSide() }
+                if selectedBoxID == box.id, boxRunning { startAgentSide() }
             }
         }
     }
@@ -843,7 +844,7 @@ final class AppModel {
     private func watch(operation id: String, box boxID: String, title: String, replacing: Bool = false) {
         operationTask?.cancel()
         operation = OperationProgress(id: id, boxID: boxID, title: title, replacing: replacing)
-        if replacing { screen.takeOver = false }
+        if replacing, selectedBoxID == boxID { screen.takeOver = false }
         operationTask = Task { [weak self] in
             var attempt = 0
             let backoff = Backoff()
@@ -884,10 +885,12 @@ final class AppModel {
 
     private func startAgentSide() {
         guard let connection, let box else { return }
+        agentGeneration = UUID()
         connection.boxID = box.id
         eventsTask?.cancel()
         eventsTask = Task {
             await loadHello()
+            guard !Task.isCancelled else { return }
             await connection.followEvents(
                 onEvent: { event in await self.handle(event: event) },
                 onResync: { await self.resync() },
@@ -899,6 +902,7 @@ final class AppModel {
     }
 
     private func stopAgentSide() {
+        agentGeneration = UUID()
         eventsTask?.cancel()
         eventsTask = nil
         eventsLive = false
@@ -912,11 +916,14 @@ final class AppModel {
     }
 
     private func loadHello() async {
-        guard let connection else { return }
+        guard let connection, !Task.isCancelled else { return }
         let boxID = selectedBoxID
+        let generation = agentGeneration
         for attempt in 0..<8 {
             do {
-                hello = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
+                let response = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
+                guard !Task.isCancelled, generation == agentGeneration else { return }
+                hello = response
                 if let boxID, let hello { automations[boxID] = hello.automation }
                 Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
                 return
@@ -936,20 +943,26 @@ final class AppModel {
     }
 
     private func resync() async {
-        guard let connection else { return }
+        guard let connection, !Task.isCancelled else { return }
+        let generation = agentGeneration
         do {
-            agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
+            let listed = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
+            guard !Task.isCancelled, generation == agentGeneration else { return }
+            agents = listed
             live = [:]
             selectedAgentID = Agent.resynced(selectedAgentID, local: selectedLocal != nil || selectedOffload != nil, in: agents)
             loadedTranscripts = []
             if let id = selectedTranscriptID {
                 loadedTranscripts.insert(id)
-                if !(await loadTranscript(agentID: id)) { loadedTranscripts.remove(id) }
+                let loaded = await loadTranscript(agentID: id)
+                guard !Task.isCancelled, generation == agentGeneration else { return }
+                if !loaded { loadedTranscripts.remove(id) }
             }
+            guard !Task.isCancelled, generation == agentGeneration else { return }
             eventsLive = true
             lastError = nil
         } catch {
-            report("list agents", error)
+            if !Task.isCancelled, generation == agentGeneration { report("list agents", error) }
         }
     }
 
@@ -959,24 +972,30 @@ final class AppModel {
 
     private func loadSelectedTranscript() {
         guard eventsLive, let id = selectedTranscriptID, !loadedTranscripts.contains(id) else { return }
+        let generation = agentGeneration
         loadedTranscripts.insert(id)
-        Task { if !(await loadTranscript(agentID: id)) { loadedTranscripts.remove(id) } }
+        Task {
+            guard generation == agentGeneration else { return }
+            if !(await loadTranscript(agentID: id)), generation == agentGeneration { loadedTranscripts.remove(id) }
+        }
     }
 
     @discardableResult
     private func loadTranscript(agentID: String) async -> Bool {
         guard let connection else { return false }
+        let generation = agentGeneration
         var after: UInt64 = 0
         while true {
             do {
                 let page = try await connection.transcript(agentID: agentID, after: after, limit: 200)
+                guard !Task.isCancelled, generation == agentGeneration else { return false }
                 for entry in page.entries {
                     upsert(entry)
                 }
                 guard page.hasMore_p, let last = page.entries.last else { return true }
                 after = last.seq
             } catch {
-                report("transcript", error)
+                if !Task.isCancelled, generation == agentGeneration { report("transcript", error) }
                 return false
             }
         }
