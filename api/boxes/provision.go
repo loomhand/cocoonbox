@@ -109,11 +109,6 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 			return err
 		}
 		defer unlockShared()
-		if s.syncMachines != nil {
-			if err := s.syncMachines(ctx, m.Owner); err != nil {
-				return err
-			}
-		}
 	}
 	cur, err := s.machines.Get(ctx, m.ID)
 	if err != nil {

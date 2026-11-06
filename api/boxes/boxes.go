@@ -120,33 +120,29 @@ type Registry interface {
 	OnBoxes(fn func(owner string))
 }
 
-// MachineSync reads an owner's machines from the shared table into a backend's cache.
-type MachineSync func(ctx context.Context, owner string) error
-
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
 type Service struct {
 	controlv1.UnimplementedBoxesServer
 
-	machines     machines.Machines
-	defaults     Defaults
-	registry     Registry
-	ops          *operations
-	state        *stateLayer
-	provision    *provisioner
-	exit         *exitPolicy
-	accounts     Accounts
-	connect      Connect
-	vault        Vault
-	wake         *wakeAlarms
-	park         *parking
-	usage        *usageMeter
-	idle         *idling
-	activity     Activity
-	ledger       *cluster.Store
-	mirror       *cluster.Mirror
-	reaches      *reaches
-	userLocks    *cluster.Store
-	syncMachines MachineSync
+	machines  machines.Machines
+	defaults  Defaults
+	registry  Registry
+	ops       *operations
+	state     *stateLayer
+	provision *provisioner
+	exit      *exitPolicy
+	accounts  Accounts
+	connect   Connect
+	vault     Vault
+	wake      *wakeAlarms
+	park      *parking
+	usage     *usageMeter
+	idle      *idling
+	activity  Activity
+	ledger    *cluster.Store
+	mirror    *cluster.Mirror
+	reaches   *reaches
+	userLocks *cluster.Store
 
 	starts utils.Locks
 }
@@ -383,11 +379,6 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	}
 }
 
-// SyncMachines registers fn, which a start under the user's lock runs before it reads machines.
-func (s *Service) SyncMachines(fn MachineSync) {
-	s.syncMachines = fn
-}
-
 // current returns the serving machine of user's box: the oldest, which a rebase replaces only when it deletes it.
 func (s *Service) current(ctx context.Context, user, box string) (machines.Machine, error) {
 	current, err := s.currentMachines(ctx, user)
@@ -526,13 +517,8 @@ func (s *Service) lockShared(ctx context.Context, user string) (func(), error) {
 	return s.lockStarts(ctx, user)
 }
 
-// syncUser reads user's machines, operations and heads from the shared table, so a start under the user's lock never acts on what this process's cache has yet to learn.
+// syncUser reads user's operations and heads from the shared table, so a start under the user's lock never acts on what this process's cache has yet to learn.
 func (s *Service) syncUser(ctx context.Context, user string) error {
-	if s.syncMachines != nil {
-		if err := s.syncMachines(ctx, user); err != nil {
-			return err
-		}
-	}
 	if err := s.ops.reload(ctx, user); err != nil {
 		return err
 	}

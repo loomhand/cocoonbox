@@ -37,10 +37,11 @@ var tiers = []struct {
 	{"2xlarge", machines.Flavor{VCPUs: 8, MemoryMiB: 16384}},
 }
 
-// view is what an owner's watchers last saw of one machine.
-type view struct {
-	owner string
-	key   string
+// seenClaim holds a claim's own token, kept in memory only, to ask the mesh which node owns the claim.
+type seenClaim struct {
+	sandbox string
+	token   string
+	kept    time.Time
 }
 
 // entry is the backend's record of one machine: its claim row and what the backend knows beyond it.
@@ -51,20 +52,14 @@ type entry struct {
 	// created stands in for the claim time until the claim row exists.
 	created time.Time
 	row     *row
-	// rowAt is when this process first saw the row's sandbox, so a claim list taken before it cannot drop the machine.
-	rowAt time.Time
 	// ownerAddr names the node that holds the claim as the mesh names it; an older api wrote "" for its entry node.
 	ownerAddr string
-	// token is the claim's own token, kept in memory only, to ask the mesh which node owns the claim.
-	token  string
-	loaded uint64
 
 	op    string
 	opErr string
 	// opUntil is when op's process gives up on it, so a later reader takes it as ended.
 	opUntil  time.Time
 	revision int64
-	changed  chan struct{}
 
 	meta map[string]string
 	// env maps each env name the claim holds to the fingerprint of the entry this process wrote, "" when unknown.
@@ -74,8 +69,24 @@ type entry struct {
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
 	ready         bool
 	readyRestarts int
-	// version is the shared row version the entry was loaded from.
-	version int64
+}
+
+func loadEntry(rec cluster.Machine) *entry {
+	e := &entry{
+		id: rec.ID, owner: rec.Owner, image: rec.Image, created: rec.CreatedAt, ownerAddr: rec.OwnerAddr,
+		op: rec.Op, opErr: rec.OpErr, opUntil: rec.OpUntil, revision: rec.Revision,
+		meta: maps.Clone(rec.Meta), env: maps.Clone(rec.Env), wakes: rec.Wakes, routed: rec.Routed, ready: rec.Ready, readyRestarts: rec.ReadyRestarts,
+	}
+	if e.meta == nil {
+		e.meta = map[string]string{}
+	}
+	if rec.Claim != nil {
+		var r row
+		if json.Unmarshal(rec.Claim, &r) == nil {
+			e.row = &r
+		}
+	}
+	return e
 }
 
 func (e *entry) state() (machines.State, string) {
@@ -119,13 +130,6 @@ func (e *entry) busy(now time.Time) bool {
 func (e *entry) begin(op string, now time.Time, lease time.Duration) {
 	e.op, e.opErr, e.opUntil = op, "", now.Add(lease)
 	e.revision++
-}
-
-func (e *entry) notifyLocked() {
-	if e.changed != nil {
-		close(e.changed)
-		e.changed = nil
-	}
 }
 
 func (e *entry) machine(disk uint32) machines.Machine {
@@ -176,24 +180,6 @@ func (e *entry) record() cluster.Machine {
 		m.Claim, _ = json.Marshal(e.row, json.Deterministic(true))
 	}
 	return m
-}
-
-// load takes rec's fields; the watchers of e stay.
-func (e *entry) load(rec cluster.Machine) {
-	e.owner, e.image, e.created, e.ownerAddr = rec.Owner, rec.Image, rec.CreatedAt, rec.OwnerAddr
-	e.op, e.opErr, e.opUntil, e.revision = rec.Op, rec.OpErr, rec.OpUntil, rec.Revision
-	e.meta, e.wakes, e.routed, e.ready, e.readyRestarts = maps.Clone(rec.Meta), rec.Wakes, rec.Routed, rec.Ready, rec.ReadyRestarts
-	e.env = maps.Clone(rec.Env)
-	if e.meta == nil {
-		e.meta = map[string]string{}
-	}
-	e.row, e.version = nil, rec.Version
-	if rec.Claim != nil {
-		var r row
-		if json.Unmarshal(rec.Claim, &r) == nil {
-			e.row = &r
-		}
-	}
 }
 
 // loadEnv reads the service meta, the wake count, whether an upstream is set and the names from the claim's env entries.

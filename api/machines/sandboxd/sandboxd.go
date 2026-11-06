@@ -67,7 +67,7 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
-	// Store holds the machine records: every change lands on a row's version and the backend caches the table.
+	// Store holds the machine records: every change lands on a row's version.
 	Store *cluster.Store
 }
 
@@ -105,14 +105,13 @@ type Backend struct {
 	nodes  map[string]*client
 	peers  []string
 
-	mu      sync.Mutex
-	entries map[string]*entry
-	owners  map[string]chan struct{}
-	views   map[string]view
+	mu       sync.Mutex
+	seen     map[string]seenClaim
+	watchers map[string]chan struct{}
+	owners   map[string]chan struct{}
 	// away maps a node that machines name to when the refresh first saw it out of the mesh.
-	away  map[string]time.Time
-	full  map[string]bool
-	loads uint64
+	away map[string]time.Time
+	full map[string]bool
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -132,22 +131,22 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		entryAddr: cmp.Or(advertised, opts.URL),
 		ctx:       ctx,
 		nodes:     map[string]*client{},
-		entries:   map[string]*entry{},
+		seen:      map[string]seenClaim{},
+		watchers:  map[string]chan struct{}{},
 		owners:    map[string]chan struct{}{},
-		views:     map[string]view{},
 		away:      map[string]time.Time{},
 		full:      map[string]bool{},
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
-	if err := b.reload(ctx, ""); err != nil {
-		return nil, fmt.Errorf("read the shared machines: %w", err)
-	}
-	go opts.Store.Listen(ctx, cluster.ChannelMachines, func() {
-		if err := b.reload(ctx, ""); err != nil {
-			log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
+	go opts.Store.Listen(ctx, cluster.ChannelMachines, b.publishAll, func(payload string) {
+		c, err := cluster.ParseChange(payload)
+		if err != nil {
+			log.WithFunc("sandboxd.New").Warnf(ctx, "take a machines notify: %v", err)
+			return
 		}
-	}, func(payload string) { b.changed(ctx, payload) })
+		b.publish(c.ID, c.Owner)
+	})
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
 	}
@@ -172,8 +171,8 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		return machines.Machine{}, machines.ActionNone, err
 	}
 	template := cmp.Or(spec.Image, b.opts.Image)
-	action, sandbox, addr := machines.ActionNone, "", ""
-	m, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
+	action, sandbox, addr, wakes := machines.ActionNone, "", "", 0
+	e, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
 		now := time.Now()
 		action = machines.ActionNone
 		switch {
@@ -189,7 +188,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 			return e, false
 		}
 		if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
-			sandbox, addr = e.row.ID, e.ownerAddr
+			sandbox, addr, wakes = e.row.ID, e.ownerAddr, e.wakes+1
 			e.begin(opWake, now, b.leaseFor)
 			action = machines.ActionWoken
 			return e, true
@@ -201,27 +200,36 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 	}
 	switch action {
 	case machines.ActionCreated:
-		b.run(spec.ID, opClaim, m.Revision, func(ctx context.Context) error { return b.claim(ctx, spec, template, size) })
+		b.run(spec.ID, opClaim, e.revision, func(ctx context.Context) error { return b.claim(ctx, spec, template, size) })
 	case machines.ActionWoken:
-		b.run(spec.ID, opWake, m.Revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, addr, sandbox) })
+		b.run(spec.ID, opWake, e.revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, addr, sandbox, wakes) })
 	}
-	return m, action, nil
+	return b.machine(e), action, nil
 }
 
 func (b *Backend) Get(ctx context.Context, id string) (machines.Machine, error) {
-	return b.lookup(ctx, id)
+	e, err := b.lookup(ctx, id)
+	if err != nil {
+		return machines.Machine{}, err
+	}
+	return b.machine(e), nil
 }
 
-func (b *Backend) List(_ context.Context, owner string) ([]machines.Machine, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	var out []machines.Machine
-	for _, e := range b.entries {
-		if owner == "" || e.owner == owner {
-			out = append(out, b.machineLocked(e))
-		}
+func (b *Backend) List(ctx context.Context, owner string) ([]machines.Machine, error) {
+	var recs []cluster.Machine
+	var err error
+	if owner == "" {
+		recs, err = b.opts.Store.Machines(ctx)
+	} else {
+		recs, err = b.opts.Store.MachinesOf(ctx, owner)
 	}
-	slices.SortFunc(out, func(x, y machines.Machine) int { return cmp.Compare(x.ID, y.ID) })
+	if err != nil {
+		return nil, err
+	}
+	out := make([]machines.Machine, 0, len(recs))
+	for _, rec := range recs {
+		out = append(out, b.machine(loadEntry(rec)))
+	}
 	return out, nil
 }
 
@@ -230,7 +238,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 		return machines.Machine{}, err
 	}
 	started, missing, sandbox, addr := false, false, "", ""
-	m, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+	e, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 		started, missing = false, e == nil || e.row == nil
 		if missing {
 			return e, false
@@ -250,7 +258,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 		return machines.Machine{}, machines.ErrNotFound
 	}
 	if started {
-		b.run(id, opHibernate, m.Revision, func(ctx context.Context) error {
+		b.run(id, opHibernate, e.revision, func(ctx context.Context) error {
 			at, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "hibernate", nil) })
 			if err != nil {
 				return err
@@ -258,7 +266,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 			return b.reread(ctx, id, at, sandbox)
 		})
 	}
-	return m, nil
+	return b.machine(e), nil
 }
 
 func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan machines.Machine {
@@ -270,15 +278,14 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 		seen, last := false, ""
 		for {
 			changed := b.changes(id)
-			m, err := b.lookup(ctx, id)
+			e, err := b.lookup(ctx, id)
 			switch {
 			case errors.Is(err, machines.ErrNotFound) && seen:
 				send(ctx, out, machines.Machine{ID: id, State: machines.StateGone})
 				return
 			case err == nil:
 				seen = true
-				b.probe(ctx, id)
-				if m, err = b.cached(id); err == nil && m.Revision >= revision {
+				if m := b.machine(b.probe(ctx, e)); m.Revision >= revision {
 					if key := fmt.Sprintf("%d|%s|%s|%d|%v", m.State, m.Reason, m.Incarnation, m.Revision, m.Meta); key != last {
 						if !send(ctx, out, m) {
 							return
@@ -301,20 +308,13 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 func (b *Backend) Changes(owner string) <-chan struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ch := b.owners[owner]
-	if ch == nil {
-		ch = make(chan struct{})
-		b.owners[owner] = ch
-	}
-	return ch
+	return waitOn(b.owners, owner)
 }
 
-func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e := b.entries[id]
-	if e == nil {
-		return machines.Endpoint{}, machines.ErrNotFound
+func (b *Backend) Address(ctx context.Context, id string) (machines.Endpoint, error) {
+	e, err := b.stored(ctx, id)
+	if err != nil {
+		return machines.Endpoint{}, err
 	}
 	if state, _ := e.state(); state != machines.StateRunning {
 		return machines.Endpoint{}, &machines.NotRunningError{State: state}
@@ -348,14 +348,14 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 	case claiming:
 		return fmt.Errorf("machine %s is being claimed: %w", id, machines.ErrConflict)
 	}
-	sandbox, node, err := b.sandboxOf(ctx, id)
+	e, node, err := b.sandboxOf(ctx, id)
 	if unclaimed && errors.Is(err, machines.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err = node.verb(ctx, sandbox, "release", nil); err != nil {
+	if err = node.verb(ctx, e.row.ID, "release", nil); err != nil {
 		return err
 	}
 	_, err = b.drop(ctx, id, func(*entry) bool { return true })
@@ -366,38 +366,32 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	if !metaKey.MatchString(key) {
 		return fmt.Errorf("meta key %q must match %s", key, metaKey)
 	}
-	sandbox, node, err := b.sandboxOf(ctx, id)
+	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err = node.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
+	if err = node.patchEnv(ctx, e.row.ID, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
 		return fmt.Errorf("set meta %s: %w", key, err)
 	}
-	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 		if e == nil || e.meta[key] == value {
 			return e, false
 		}
 		e.meta[key] = value
 		return e, true
-	}); err != nil {
-		return err
-	}
-	b.notify(id)
-	return nil
+	})
+	return err
 }
 
 func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
-	sandbox, node, err := b.sandboxOf(ctx, id)
+	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
-	m, err := b.cached(id)
-	if err != nil {
-		return err
+	if state, _ := e.state(); state != machines.StateRunning {
+		return &machines.NotRunningError{State: state}
 	}
-	if m.State != machines.StateRunning {
-		return &machines.NotRunningError{State: m.State}
-	}
+	sandbox := e.row.ID
 	if len(keys) > 0 {
 		vars := make(map[string]*envVar, len(keys))
 		for name, sec := range keys {
@@ -426,7 +420,7 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 }
 
 func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
-	sandbox, node, err := b.sandboxOf(ctx, id)
+	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -434,7 +428,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	if upstream != "" {
 		v = &envVar{Value: upstream, Guest: new(false)}
 	}
-	if err = node.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
+	if err = node.patchEnv(ctx, e.row.ID, map[string]*envVar{envUpstream: v}); err != nil {
 		return fmt.Errorf("set egress upstream: %w", err)
 	}
 	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -448,15 +442,9 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 }
 
 func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Credentials) error {
-	sandbox, node, err := b.sandboxOf(ctx, id)
+	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
-	}
-	b.mu.Lock()
-	e := b.entries[id]
-	if e == nil {
-		b.mu.Unlock()
-		return machines.ErrNotFound
 	}
 	changes, sums, had := map[string]*envVar{}, map[string]string{}, map[string]string{}
 	add := func(name string, v *envVar) {
@@ -486,11 +474,10 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 			add(name, v)
 		}
 	}
-	b.mu.Unlock()
 	if len(changes) == 0 {
 		return nil
 	}
-	err = node.patchEnv(ctx, sandbox, changes)
+	err = node.patchEnv(ctx, e.row.ID, changes)
 	if err != nil && !errors.Is(err, machines.ErrRefused) {
 		return fmt.Errorf("set credentials: %w", err)
 	}
@@ -523,33 +510,19 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	return nil
 }
 
-// Verify returns the machines whose cached record differs from the shared table and reloads them.
-func (b *Backend) Verify(ctx context.Context) ([]string, error) {
-	differ, err := b.differences(ctx)
-	for _, id := range differ {
-		b.notified(ctx, id)
-	}
-	return differ, err
-}
-
-// SyncOwner reads owner's machines from the shared table into the cache, for a start that must not act on a stale one.
-func (b *Backend) SyncOwner(ctx context.Context, owner string) error {
-	return b.reload(ctx, owner)
-}
-
-func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*entry, bool)) (machines.Machine, error) {
-	// A write that committed must reach the cache even when the caller left.
+func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*entry, bool)) (*entry, error) {
+	// An op whose begin commits must reach run even when the caller left.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 	defer cancel()
 	var kept *entry
+	wrote := false
 	rec, err := b.opts.Store.UpdateMachine(ctx, id, func(m *cluster.Machine, found bool) (bool, error) {
 		var cur *entry
 		if found {
-			cur = &entry{id: id}
-			cur.load(*m)
+			cur = loadEntry(*m)
 		}
 		next, changed := fn(cur)
-		kept = next
+		kept, wrote = next, false
 		if next == nil || !changed {
 			return false, nil
 		}
@@ -557,40 +530,34 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 		if rec.Equal(*m) {
 			return false, nil
 		}
-		*m = rec
+		*m, wrote = rec, true
 		return true, nil
 	})
-	if err != nil {
-		return machines.Machine{}, err
+	if err != nil || kept == nil {
+		return nil, err
 	}
-	if kept == nil {
-		return machines.Machine{}, nil
+	if wrote {
+		b.publish(id, rec.Owner)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e := b.loadLocked(rec)
-	b.publishLocked()
-	return e.machine(b.opts.DiskGiB), nil
+	return loadEntry(rec), nil
 }
 
 // drop removes machine id while cond holds for its entry and reports whether it did.
 func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 	defer cancel()
+	owner := ""
 	removed, err := b.opts.Store.DeleteMachineIf(ctx, id, func(m cluster.Machine) bool {
-		e := &entry{id: id}
-		e.load(m)
-		return cond(e)
+		owner = m.Owner
+		return cond(loadEntry(m))
 	})
-	if (err != nil && !errors.Is(err, cluster.ErrNotFound)) || (err == nil && !removed) {
-		return false, err
+	if errors.Is(err, cluster.ErrNotFound) {
+		return false, nil
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	_, cached := b.entries[id]
-	delete(b.entries, id)
-	b.publishLocked()
-	return removed || cached, nil
+	if removed {
+		b.publish(id, owner)
+	}
+	return removed, err
 }
 
 // run runs fn as op of machine id, begun at revision, off the caller's request, and ends the op when fn returns.
@@ -622,7 +589,6 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 		}); err != nil {
 			logger.Errorf(ctx, err, "end %s", op)
 		}
-		b.notify(id)
 	}()
 }
 
@@ -717,7 +683,7 @@ func (b *Backend) claimAt(ctx context.Context, addr, tenant string, req claimReq
 	return resp, err
 }
 
-func (b *Backend) wake(ctx context.Context, id, addr, sandbox string) error {
+func (b *Backend) wake(ctx context.Context, id, addr, sandbox string, wakes int) error {
 	addr, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "wake", nil) })
 	if err != nil {
 		return err
@@ -726,12 +692,6 @@ func (b *Backend) wake(ctx context.Context, id, addr, sandbox string) error {
 	if err != nil {
 		return err
 	}
-	b.mu.Lock()
-	wakes := 1
-	if e := b.entries[id]; e != nil {
-		wakes = e.wakes + 1
-	}
-	b.mu.Unlock()
 	if err := node.patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
 		return fmt.Errorf("record wake: %w", err)
 	}
@@ -814,12 +774,7 @@ func (b *Backend) moved(addr string, err error) bool {
 
 // follow asks the nodes at addrs which one owns sandbox, machine id's claim, with the claim's token, which lets a node adopt an archived claim.
 func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string) (string, bool) {
-	b.mu.Lock()
-	var token string
-	if e := b.entries[id]; e != nil && e.sandbox() == sandbox {
-		token = e.token
-	}
-	b.mu.Unlock()
+	token := b.token(id, sandbox)
 	if token == "" {
 		return "", false
 	}
@@ -856,47 +811,58 @@ func (b *Backend) keepToken(id, sandbox, token string) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil && e.sandbox() == sandbox {
-		e.token = token
+	if b.seen[id].sandbox != sandbox {
+		b.seen[id] = seenClaim{sandbox: sandbox, token: token, kept: time.Now()}
+		return
 	}
+	s := b.seen[id]
+	s.token = token
+	b.seen[id] = s
 }
 
-// lookup refreshes id's row from sandboxd, finding it by metadata when the index lacks it.
-func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, error) {
+func (b *Backend) token(id, sandbox string) string {
 	b.mu.Lock()
-	e := b.entries[id]
-	var sandbox, addr string
-	var held bool
-	if e != nil && e.row != nil {
-		sandbox, addr, held = e.row.ID, e.ownerAddr, e.token != ""
+	defer b.mu.Unlock()
+	if s := b.seen[id]; s.sandbox == sandbox {
+		return s.token
 	}
-	b.mu.Unlock()
+	return ""
+}
+
+// lookup refreshes id's row from sandboxd, finding it by metadata when the row names no node, and returns the row.
+func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
+	e, err := b.stored(ctx, id)
+	if err != nil && !errors.Is(err, machines.ErrNotFound) {
+		return nil, err
+	}
+	sandbox := e.sandbox()
 	if e != nil && sandbox == "" {
-		return b.cached(id)
+		return e, nil
 	}
 	var r row
-	var err error
-	if sandbox != "" && addr != "" {
-		r, addr, err = b.read(ctx, id, addr, sandbox)
+	var addr string
+	if sandbox != "" && e.ownerAddr != "" {
+		r, addr, err = b.read(ctx, id, e.ownerAddr, sandbox)
 	} else {
 		r, addr, err = b.find(ctx, id)
 	}
 	if errors.Is(err, machines.ErrNotFound) {
-		if sandbox != "" && !held {
-			return machines.Machine{}, machines.ErrNotFound
+		if sandbox != "" && b.token(id, sandbox) == "" {
+			return nil, machines.ErrNotFound
 		}
 		if err = b.forget(ctx, id, sandbox); err != nil {
-			return machines.Machine{}, err
+			return nil, err
 		}
-		return machines.Machine{}, machines.ErrNotFound
+		return nil, machines.ErrNotFound
 	}
 	if err != nil {
-		return machines.Machine{}, err
+		return nil, err
 	}
-	if err := b.index(ctx, addr, []row{r}); err != nil {
-		return machines.Machine{}, err
+	known := map[string]*entry{id: e}
+	if err := b.index(ctx, addr, []row{r}, known); err != nil {
+		return nil, err
 	}
-	return b.cached(id)
+	return known[id], nil
 }
 
 // find looks machine id up on the entry node, then on the peers of the last refresh; it is ErrNotFound only when every node answered.
@@ -924,54 +890,59 @@ func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
 	return row{}, "", machines.ErrNotFound
 }
 
-func (b *Backend) cached(id string) (machines.Machine, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e := b.entries[id]
-	if e == nil {
-		return machines.Machine{}, machines.ErrNotFound
+func (b *Backend) stored(ctx context.Context, id string) (*entry, error) {
+	rec, err := b.opts.Store.Machine(ctx, id)
+	if errors.Is(err, cluster.ErrNotFound) {
+		return nil, machines.ErrNotFound
 	}
-	return b.machineLocked(e), nil
+	if err != nil {
+		return nil, err
+	}
+	return loadEntry(rec), nil
 }
 
-func (b *Backend) machineLocked(e *entry) machines.Machine {
+func (b *Backend) machine(e *entry) machines.Machine {
 	m := e.machine(b.opts.DiskGiB)
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	m.Squeezed = b.full[cmp.Or(e.ownerAddr, b.entryAddr)]
 	return m
-}
-
-func (b *Backend) notify(id string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil {
-		e.notifyLocked()
-	}
 }
 
 func (b *Backend) changes(id string) <-chan struct{} {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	e := b.entries[id]
-	if e == nil {
-		return nil
-	}
-	if e.changed == nil {
-		e.changed = make(chan struct{})
-	}
-	return e.changed
+	return waitOn(b.watchers, id)
 }
 
-func (b *Backend) sandboxOf(ctx context.Context, id string) (string, *client, error) {
-	if _, err := b.lookup(ctx, id); err != nil {
-		return "", nil, err
-	}
+func (b *Backend) publish(id, owner string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil && e.row != nil {
-		node, err := b.node(e.ownerAddr)
-		return e.row.ID, node, err
+	wakeOn(b.watchers, id)
+	wakeOn(b.owners, owner)
+}
+
+func (b *Backend) publishAll() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, waits := range []map[string]chan struct{}{b.watchers, b.owners} {
+		for _, ch := range waits {
+			close(ch)
+		}
+		clear(waits)
 	}
-	return "", nil, machines.ErrNotFound
+}
+
+func (b *Backend) sandboxOf(ctx context.Context, id string) (*entry, *client, error) {
+	e, err := b.lookup(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if e.row == nil {
+		return nil, nil, machines.ErrNotFound
+	}
+	node, err := b.node(e.ownerAddr)
+	return e, node, err
 }
 
 // forget drops id unless an operation still owns it.
@@ -983,45 +954,64 @@ func (b *Backend) forget(ctx context.Context, id, sandbox string) error {
 
 // refresh re-reads every claim of the mesh, drops machines whose claim is gone and probes agents not yet seen.
 func (b *Backend) refresh(ctx context.Context) error {
-	listed := time.Now()
-	lists, err := b.listMesh(ctx)
+	known, err := b.snapshot(ctx)
 	if err != nil {
 		return err
 	}
+	addrs := b.mesh(ctx)
+	lists, err := b.listMesh(ctx, addrs)
+	if err != nil {
+		return err
+	}
+	b.trackAway(addrs, lists, known)
 	for addr, rows := range lists {
-		if err := b.index(ctx, addr, rows); err != nil {
+		if err := b.index(ctx, addr, rows, known); err != nil {
 			return err
 		}
 	}
-	if err := b.dropUnlisted(ctx, lists, listed); err != nil {
+	if err := b.dropUnlisted(ctx, lists, known); err != nil {
 		return err
 	}
 	now := time.Now()
-	b.mu.Lock()
-	var unready []string
-	for id, e := range b.entries {
-		if state, _ := e.state(); state == machines.StateStarting && !e.busy(now) && e.row != nil {
-			unready = append(unready, id)
-		}
-	}
-	b.mu.Unlock()
 	var g errgroup.Group
 	g.SetLimit(probeFanout)
-	for _, id := range unready {
-		g.Go(func() error {
-			b.probe(ctx, id)
-			return nil
-		})
+	for _, e := range known {
+		if state, _ := e.state(); state == machines.StateStarting && !e.busy(now) && e.row != nil {
+			g.Go(func() error {
+				b.probe(ctx, e)
+				return nil
+			})
+		}
 	}
 	_ = g.Wait()
-	b.mu.Lock()
-	b.publishLocked()
-	b.mu.Unlock()
 	return nil
 }
 
-// index merges the rows of node addr, reading the env of unseen claims and the token of claims whose token this process lacks.
-func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
+func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {
+	read := time.Now()
+	recs, err := b.opts.Store.Machines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]*entry, len(recs))
+	for _, rec := range recs {
+		known[rec.ID] = loadEntry(rec)
+	}
+	b.forgetTokens(known, read)
+	return known, nil
+}
+
+func (b *Backend) forgetTokens(known map[string]*entry, read time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	maps.DeleteFunc(b.seen, func(id string, s seenClaim) bool {
+		_, ok := known[id]
+		return !ok && s.kept.Before(read)
+	})
+}
+
+// index merges the rows of node addr into known, reading the env of unseen claims and the token of claims whose token this process lacks.
+func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry) error {
 	node, err := b.node(addr)
 	if err != nil {
 		return err
@@ -1033,14 +1023,11 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 		}
 		token := r.Token
 		r.Token = ""
-		b.mu.Lock()
-		e := b.entries[id]
-		known := e != nil && e.row != nil && e.row.ID == r.ID
-		unchanged := known && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
+		e := known[id]
+		same := e.sandbox() == r.ID
+		unchanged := same && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
 			e.ownerAddr == addr
-		held := known && e.token != ""
-		b.mu.Unlock()
-		if token == "" && !held {
+		if token == "" && (!same || b.token(id, r.ID) == "") {
 			if full, getErr := node.get(ctx, r.ID); getErr == nil {
 				token = full.Token
 			}
@@ -1050,12 +1037,12 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 			continue
 		}
 		var env map[string]envVar
-		if !known {
+		if !same {
 			if env, err = node.env(ctx, r.ID); err != nil {
 				return fmt.Errorf("read env of %s: %w", r.ID, err)
 			}
 		}
-		if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 			e = cmp.Or(e, &entry{id: id, owner: r.Metadata[metaOwner]})
 			// The tenant stamp is sandboxd's own, so it outranks the owner metadata the api wrote.
 			e.owner = cmp.Or(r.Tenant, e.owner)
@@ -1065,16 +1052,18 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 			cur := r
 			e.row, e.image, e.ownerAddr = &cur, r.Key.Template, addr
 			return e, true
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
+		known[id] = next
 		b.keepToken(id, r.ID, token)
 	}
 	return nil
 }
 
-// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
-func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, listed time.Time) error {
+// dropUnlisted drops the machines of known that lists lack while their node answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
+func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
 	present := map[string]bool{}
 	for _, rows := range lists {
 		for _, r := range rows {
@@ -1084,8 +1073,8 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	now := time.Now()
 	b.mu.Lock()
 	missing := map[string]string{}
-	for id, e := range b.entries {
-		if present[id] || e.busy(now) || e.row == nil || !e.rowAt.Before(listed) {
+	for id, e := range known {
+		if present[id] || e.busy(now) || e.row == nil {
 			continue
 		}
 		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
@@ -1094,8 +1083,12 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	}
 	b.mu.Unlock()
 	for id, sandbox := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
-		if _, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox }); err != nil {
+		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox })
+		if err != nil {
 			return err
+		}
+		if dropped {
+			delete(known, id)
 		}
 	}
 	return nil
@@ -1122,10 +1115,9 @@ func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[str
 	return out
 }
 
-// listMesh lists the claims of every node of the mesh, keyed by node; a node that fails is left out, and the list fails only when every node does.
-func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
+// listMesh lists the claims of every node at addrs, keyed by node; a node that fails is left out, and the list fails only when every node does.
+func (b *Backend) listMesh(ctx context.Context, addrs []string) (map[string][]row, error) {
 	logger := log.WithFunc("sandboxd.Backend.listMesh")
-	addrs := b.mesh(ctx)
 	lists := make([][]row, len(addrs))
 	errs := make([]error, len(addrs))
 	var wg sync.WaitGroup
@@ -1150,7 +1142,6 @@ func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
 	if len(out) == 0 {
 		return nil, errors.Join(errs...)
 	}
-	b.trackAway(addrs, out)
 	return out, nil
 }
 
@@ -1202,13 +1193,13 @@ func (b *Backend) mesh(ctx context.Context) []string {
 	return slices.Concat([]string{b.entryAddr}, peers)
 }
 
-// trackAway notes when a node that claims name stopped being in the mesh and answering the list, and forgets nodes no claim names.
-func (b *Backend) trackAway(nodes []string, lists map[string][]row) {
+// trackAway notes when a node that the claims of known name stopped being in the mesh and answering the list, and forgets nodes no claim names.
+func (b *Backend) trackAway(nodes []string, lists map[string][]row, known map[string]*entry) {
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	named := map[string]bool{}
-	for _, e := range b.entries {
+	for _, e := range known {
 		if _, answered := lists[e.ownerAddr]; e.row == nil || answered || slices.Contains(nodes, e.ownerAddr) {
 			continue
 		}
@@ -1243,74 +1234,49 @@ func (b *Backend) node(addr string) (*client, error) {
 	return c, nil
 }
 
-// publishLocked wakes the owners of the machines whose state, image, flavor, incarnation or meta changed since the last call, or that went away.
-func (b *Backend) publishLocked() {
-	views := make(map[string]view, len(b.entries))
-	for id, e := range b.entries {
-		m := e.machine(b.opts.DiskGiB)
-		views[id] = view{owner: m.Owner, key: fmt.Sprintf("%d|%s|%s|%v|%s|%v", m.State, m.Reason, m.Image, m.Flavor, m.Incarnation, m.Meta)}
-		if b.views[id] != views[id] {
-			b.wakeLocked(m.Owner)
-		}
-	}
-	for id, v := range b.views {
-		if _, ok := views[id]; !ok {
-			b.wakeLocked(v.owner)
-		}
-	}
-	b.views = views
-}
-
-func (b *Backend) wakeLocked(owner string) {
-	if ch := b.owners[owner]; ch != nil {
-		close(ch)
-		delete(b.owners, owner)
-	}
-}
-
-// probe marks id ready once its agent answers through the relay.
-func (b *Backend) probe(ctx context.Context, id string) {
-	b.mu.Lock()
-	e := b.entries[id]
-	if e == nil || e.row == nil || e.busy(time.Now()) || e.row.Hibernated || e.row.Archived || e.row.Failed != "" ||
+// probe marks e ready once its agent answers through the relay, and returns e as it then stands.
+func (b *Backend) probe(ctx context.Context, e *entry) *entry {
+	if e.row == nil || e.busy(time.Now()) || e.row.Hibernated || e.row.Archived || e.row.Failed != "" ||
 		(e.ready && e.readyRestarts == e.row.Restarts) {
-		b.mu.Unlock()
-		return
+		return e
 	}
-	sandbox, restarts, addr := e.row.ID, e.row.Restarts, e.ownerAddr
-	b.mu.Unlock()
-	node, err := b.node(addr)
+	sandbox, restarts := e.row.ID, e.row.Restarts
+	node, err := b.node(e.ownerAddr)
 	if err != nil {
-		return
+		return e
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	conn, err := node.dialPort(ctx, sandbox, b.opts.AgentPort)
 	if err != nil {
-		return
+		return e
 	}
 	_ = conn.Close()
-	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+	next, err := b.mutate(ctx, e.id, func(e *entry) (*entry, bool) {
 		if e == nil || e.row == nil || e.row.ID != sandbox || e.row.Restarts != restarts {
 			return e, false
 		}
 		e.ready, e.readyRestarts = true, restarts
 		return e, true
-	}); err != nil {
-		log.WithFunc("sandboxd.Backend.probe").WithField("machine", id).Warnf(ctx, "record the agent ready: %v", err)
+	})
+	if err != nil {
+		log.WithFunc("sandboxd.Backend.probe").WithField("machine", e.id).Warnf(ctx, "record the agent ready: %v", err)
 	}
+	return cmp.Or(next, e)
 }
 
 // renew extends the lease of every claim that is not archived, on its node.
 func (b *Backend) renew(ctx context.Context) error {
-	b.mu.Lock()
+	known, err := b.snapshot(ctx)
+	if err != nil {
+		return err
+	}
 	leases := map[string]string{}
-	for _, e := range b.entries {
+	for _, e := range known {
 		if e.row != nil && !e.row.Archived {
 			leases[e.row.ID] = e.ownerAddr
 		}
 	}
-	b.mu.Unlock()
 	var errs []error
 	for sandbox, addr := range leases {
 		node, err := b.node(addr)
@@ -1322,128 +1288,6 @@ func (b *Backend) renew(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// reload reads the shared table into the cache, only owner's machines unless owner is empty.
-func (b *Backend) reload(ctx context.Context, owner string) error {
-	b.mu.Lock()
-	since := b.loads
-	b.mu.Unlock()
-	var recs []cluster.Machine
-	var err error
-	if owner == "" {
-		recs, err = b.opts.Store.Machines(ctx)
-	} else {
-		recs, err = b.opts.Store.MachinesOf(ctx, owner)
-	}
-	if err != nil {
-		return err
-	}
-	b.takeMachines(recs, owner, since)
-	return nil
-}
-
-func (b *Backend) takeMachines(recs []cluster.Machine, owner string, since uint64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	present := make(map[string]bool, len(recs))
-	for _, rec := range recs {
-		present[rec.ID] = true
-		b.loadLocked(rec)
-	}
-	maps.DeleteFunc(b.entries, func(id string, e *entry) bool {
-		return (owner == "" || e.owner == owner) && !present[id] && e.loaded <= since
-	})
-	b.publishLocked()
-}
-
-func (b *Backend) changed(ctx context.Context, payload string) {
-	c, err := cluster.ParseChange(payload)
-	if err != nil {
-		log.WithFunc("sandboxd.Backend.changed").Warnf(ctx, "take a machines notify: %v", err)
-		return
-	}
-	b.mu.Lock()
-	e := b.entries[c.ID]
-	current := e != nil && c.Version != 0 && e.version >= c.Version
-	b.mu.Unlock()
-	if !current {
-		b.notified(ctx, c.ID)
-	}
-}
-
-// notified takes the shared row of machine id into the cache after a notify.
-func (b *Backend) notified(ctx context.Context, id string) {
-	rec, err := b.opts.Store.Machine(ctx, id)
-	if err != nil && !errors.Is(err, cluster.ErrNotFound) {
-		log.WithFunc("sandboxd.Backend.notified").WithField("machine", id).Warnf(ctx, "read the shared machine: %v", err)
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if err != nil {
-		delete(b.entries, id)
-	} else {
-		b.loadLocked(rec)
-	}
-	b.publishLocked()
-}
-
-// loadLocked takes rec into the cache unless the cache holds a newer version, and returns the cached entry.
-func (b *Backend) loadLocked(rec cluster.Machine) *entry {
-	e := b.entries[rec.ID]
-	if e == nil {
-		e = &entry{id: rec.ID}
-		b.entries[rec.ID] = e
-	}
-	if rec.Version >= e.version {
-		b.loads++
-		e.loaded = b.loads
-		busy, opErr, meta, sandbox := e.op != "", e.opErr, e.meta, e.sandbox()
-		e.load(rec)
-		if e.sandbox() != sandbox {
-			e.rowAt, e.token = time.Now(), ""
-		}
-		// Only an op end, a failure or a meta change wakes the watchers before their next poll.
-		if (busy && e.op == "") || opErr != e.opErr || !maps.Equal(meta, e.meta) {
-			e.notifyLocked()
-		}
-	}
-	return e
-}
-
-// differences returns the ids whose table row differs from the entry.
-func (b *Backend) differences(ctx context.Context) ([]string, error) {
-	b.mu.Lock()
-	want := make(map[string]cluster.Machine, len(b.entries))
-	for _, e := range b.entries {
-		want[e.id] = e.record()
-	}
-	b.mu.Unlock()
-	rows, err := b.opts.Store.Machines(ctx)
-	if err != nil {
-		return nil, err
-	}
-	have := make(map[string]cluster.Machine, len(rows))
-	for _, r := range rows {
-		have[r.ID] = r
-	}
-	ids := slices.Collect(maps.Keys(want))
-	for id := range have {
-		if _, ok := want[id]; !ok {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	var differ []string
-	for _, id := range ids {
-		w, inMemory := want[id]
-		h, inTable := have[id]
-		if inMemory != inTable || (inMemory && !w.Equal(h)) {
-			differ = append(differ, id)
-		}
-	}
-	return differ, nil
 }
 
 func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(context.Context) error) {
@@ -1490,4 +1334,20 @@ func fingerprint(v *envVar) string {
 	}
 	raw, _ := json.Marshal(v, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	return utils.HashHex(string(raw))
+}
+
+func waitOn(waits map[string]chan struct{}, key string) chan struct{} {
+	ch := waits[key]
+	if ch == nil {
+		ch = make(chan struct{})
+		waits[key] = ch
+	}
+	return ch
+}
+
+func wakeOn(waits map[string]chan struct{}, key string) {
+	if ch := waits[key]; ch != nil {
+		close(ch)
+		delete(waits, key)
+	}
 }

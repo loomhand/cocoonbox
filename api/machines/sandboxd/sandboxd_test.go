@@ -2,6 +2,7 @@ package sandboxd
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -28,6 +31,8 @@ const (
 	boxID     = "cb-0123456789ab"
 	owner     = "alice"
 	template  = "cbdesk:v8"
+
+	reconnectWithin = 10 * time.Second
 )
 
 var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
@@ -648,7 +653,11 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	if _, err := b.Hibernate(t.Context(), boxID); err != nil {
 		t.Fatalf("Hibernate: %v", err)
 	}
-	if m := <-watch; m.State != machines.StateHibernated {
+	m := <-watch
+	for m.State == machines.StateHibernating {
+		m = <-watch
+	}
+	if m.State != machines.StateHibernated {
 		t.Fatalf("watch state after Hibernate = %+v", m)
 	}
 	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
@@ -664,11 +673,13 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 
 func TestChangesWakesTheOwnerWhenARefreshSeesAChangeOrARemoval(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	b := newTestBackend(t, fake)
+	db, dsn := clustertest.OpenDSN(t)
+	b := newSharedBackend(t, fake, db)
 	claimRunning(t, b)
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
+	fenceListener(t, b, dsn)
 	mine, others := b.Changes(owner), b.Changes("bob")
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -728,10 +739,9 @@ func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T)
 	if err := b.SetMeta(t.Context(), boxID, "slept", "7"); err != nil {
 		t.Fatalf("SetMeta: %v", err)
 	}
-	clustertest.WaitFor(t, "a sees b's meta", func() bool {
-		m, err := a.cached(boxID)
-		return err == nil && m.Meta["slept"] == "7"
-	})
+	if m, err := rowOf(t, a, boxID); err != nil || m.Meta["slept"] != "7" {
+		t.Fatalf("a reads %+v, %v, want b's meta", m, err)
+	}
 	m, err := a.Hibernate(t.Context(), boxID)
 	if err != nil {
 		t.Fatalf("Hibernate: %v", err)
@@ -742,35 +752,9 @@ func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T)
 	}
 	running := waitState(t, a, boxID, m.Revision+1, machines.StateRunning)
 	c := newSharedBackend(t, fake, db)
-	got, err := c.cached(boxID)
+	got, err := rowOf(t, c, boxID)
 	if err != nil || got.Incarnation != running.Incarnation || got.Meta["slept"] != "7" || got.Revision != running.Revision {
 		t.Errorf("a third backend reads %+v, %v, want %+v", got, err, running)
-	}
-}
-
-func TestVerifyOnASharedTableReloadsTheCacheAndNeverWritesTheTable(t *testing.T) {
-	fake := newFakeSandboxd(t)
-	db := clustertest.Open(t)
-	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
-	m := claimRunning(t, a)
-	waitState(t, b, boxID, m.Revision, machines.StateRunning)
-	before, err := db.Machine(t.Context(), boxID)
-	if err != nil {
-		t.Fatalf("Machine: %v", err)
-	}
-	b.mu.Lock()
-	b.entries[boxID].meta = map[string]string{"slept": "9"}
-	b.entries["cb-ghost"] = &entry{id: "cb-ghost", owner: owner}
-	b.mu.Unlock()
-	if differ, err := b.Verify(t.Context()); err != nil || !slices.Equal(differ, []string{boxID, "cb-ghost"}) {
-		t.Fatalf("Verify over a stale cache = %v, %v, want the box and the ghost", differ, err)
-	}
-	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
-		t.Errorf("Verify after the reload = %v, %v, want no difference", differ, err)
-	}
-	rows, err := db.Machines(t.Context())
-	if err != nil || len(rows) != 1 || rows[0].Version != before.Version || rows[0].Meta["slept"] != before.Meta["slept"] {
-		t.Errorf("table after Verify = %+v, %v, want the row at version %d untouched", rows, err, before.Version)
 	}
 }
 
@@ -783,15 +767,6 @@ func TestAKeyOneBackendWroteIsPrunedByTheOther(t *testing.T) {
 	if err := a.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"CBV_k": key}, Prune: "CBV_"}); err != nil {
 		t.Fatalf("SetCredentials on a: %v", err)
 	}
-	clustertest.WaitFor(t, "b knows the key name", func() bool {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		if e := b.entries[boxID]; e != nil {
-			_, ok := e.env["CBV_k"]
-			return ok
-		}
-		return false
-	})
 	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Prune: "CBV_"}); err != nil {
 		t.Fatalf("SetCredentials on b: %v", err)
 	}
@@ -800,7 +775,7 @@ func TestAKeyOneBackendWroteIsPrunedByTheOther(t *testing.T) {
 	}
 }
 
-func TestARecreatedMachineReachesABackendThatCachedTheOldOne(t *testing.T) {
+func TestAWatchOnAnotherBackendSeesAMachineRecreatedUnderItsID(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
 	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
@@ -852,33 +827,6 @@ func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 	}
 }
 
-func TestSyncOwnerReadsTheOwnersRowsIntoTheCache(t *testing.T) {
-	fake := newFakeSandboxd(t)
-	db := clustertest.Open(t)
-	b := newSharedBackend(t, fake, db)
-	if _, err := db.UpdateMachine(t.Context(), "cb-other", func(m *cluster.Machine, _ bool) (bool, error) {
-		m.Owner, m.CreatedAt = owner, time.Now()
-		return true, nil
-	}); err != nil {
-		t.Fatalf("UpdateMachine: %v", err)
-	}
-	if err := b.SyncOwner(t.Context(), owner); err != nil {
-		t.Fatalf("SyncOwner: %v", err)
-	}
-	if _, err := b.cached("cb-other"); err != nil {
-		t.Fatalf("a row of the owner is not cached after SyncOwner: %v", err)
-	}
-	if removed, err := db.DeleteMachineIf(t.Context(), "cb-other", func(cluster.Machine) bool { return true }); err != nil || !removed {
-		t.Fatalf("DeleteMachineIf = %t, %v", removed, err)
-	}
-	if err := b.SyncOwner(t.Context(), owner); err != nil {
-		t.Fatalf("SyncOwner: %v", err)
-	}
-	if _, err := b.cached("cb-other"); !errors.Is(err, machines.ErrNotFound) {
-		t.Errorf("a removed row of the owner is still cached after SyncOwner: %v", err)
-	}
-}
-
 func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
@@ -890,10 +838,9 @@ func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateMachine: %v", err)
 	}
-	clustertest.WaitFor(t, "a takes the dead op as ended", func() bool {
-		m, err := a.cached(boxID)
-		return err == nil && m.State == machines.StateRunning && m.Revision == 2
-	})
+	if m, err := rowOf(t, a, boxID); err != nil || m.State != machines.StateRunning || m.Revision != 2 {
+		t.Fatalf("a reads %+v, %v, want the dead op taken as ended", m, err)
+	}
 	if _, err := a.Hibernate(t.Context(), boxID); err != nil {
 		t.Fatalf("Hibernate over a dead op: %v", err)
 	}
@@ -926,14 +873,15 @@ func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 		t.Errorf("claim = %+v, want no redirect fields", fake.lastClaim())
 	}
 	clustertest.WaitFor(t, "a peers read only beside each full list", func() bool { return fake.count("peers") == fake.count("list") })
-	b.mu.Lock()
-	addr := b.entries[boxID].ownerAddr
-	b.mu.Unlock()
+	e, err := b.stored(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("stored: %v", err)
+	}
 	b.nodeMu.Lock()
 	nodes := len(b.nodes)
 	b.nodeMu.Unlock()
-	if addr != fake.addr() || nodes != 0 {
-		t.Errorf("owner %q, node clients %d, want the entry node only", addr, nodes)
+	if e.ownerAddr != fake.addr() || nodes != 0 {
+		t.Errorf("owner %q, node clients %d, want the entry node only", e.ownerAddr, nodes)
 	}
 	if fake.count("info") != 1 || fake.count("owner") != 0 {
 		t.Errorf("info reads %d, owner asks %d, want one info read at start and no owner ask", fake.count("info"), fake.count("owner"))
@@ -989,7 +937,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh with the peer down: %v", err)
 	}
-	if _, err := b.cached(boxID); err != nil {
+	if _, err := rowOf(t, b, boxID); err != nil {
 		t.Fatalf("the machine of a peer that does not answer went at once: %v", err)
 	}
 	entry.mu.Lock()
@@ -998,7 +946,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the peer left: %v", err)
 	}
-	if _, err := b.cached(boxID); err != nil {
+	if _, err := rowOf(t, b, boxID); err != nil {
 		t.Fatalf("the machine went before its node stayed away: %v", err)
 	}
 	b.mu.Lock()
@@ -1009,7 +957,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the peer stayed away: %v", err)
 	}
-	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
+	if _, err := rowOf(t, b, boxID); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("the machine of a node away for good = %v, want it gone", err)
 	}
 }
@@ -1032,10 +980,10 @@ func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh with the entry down: %v", err)
 	}
-	if _, err := b.cached(boxID); err != nil {
+	if _, err := rowOf(t, b, boxID); err != nil {
 		t.Errorf("the machine of an entry whose list failed went: %v", err)
 	}
-	if got, err := b.cached("cb-peer"); err != nil || got.State != machines.StateHibernated {
+	if got, err := rowOf(t, b, "cb-peer"); err != nil || got.State != machines.StateHibernated {
 		t.Errorf("the machine of the peer = %+v, %v, want the hibernation the peer listed", got, err)
 	}
 }
@@ -1048,7 +996,7 @@ func TestARollingSwitchOfTheEntryNodeKeepsEveryMachineOnItsNode(t *testing.T) {
 	claimRunning(t, before)
 	a.setDown(true)
 	after := newSharedBackend(t, b, db)
-	if _, err := after.cached(boxID); err != nil {
+	if _, err := rowOf(t, after, boxID); err != nil {
 		t.Fatalf("an api entering through the other node dropped the machine of a node that did not answer: %v", err)
 	}
 	a.setDown(false)
@@ -1094,7 +1042,7 @@ func TestAStoredEmptyOwnerResolvesToTheNodeThatHoldsTheClaim(t *testing.T) {
 	}
 	a.setDown(true)
 	next := newSharedBackend(t, b, db)
-	if _, err := next.cached(boxID); err != nil {
+	if _, err := rowOf(t, next, boxID); err != nil {
 		t.Fatalf("a row an older api wrote went while its node did not answer: %v", err)
 	}
 	a.setDown(false)
@@ -1126,11 +1074,8 @@ func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 	if entry.count("owner") == 0 || entry.count("wake") != 1 || entry.count("claim") != 0 {
 		t.Errorf("on the adopter: owner asks %d, wakes %d, claims %d; want it adopted and woken, no new claim", entry.count("owner"), entry.count("wake"), entry.count("claim"))
 	}
-	b.mu.Lock()
-	addr := b.entries[boxID].ownerAddr
-	b.mu.Unlock()
-	if addr != entry.addr() {
-		t.Errorf("owner %q, want the adopter %q", addr, entry.addr())
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
+		t.Errorf("owner %+v, %v, want the adopter %q", e, err, entry.addr())
 	}
 }
 
@@ -1155,7 +1100,7 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the node stayed away: %v", err)
 	}
-	if got, err := b.cached(boxID); err != nil || got.State != machines.StateHibernated {
+	if got, err := rowOf(t, b, boxID); err != nil || got.State != machines.StateHibernated {
 		t.Fatalf("the machine of the lost node = %+v, %v, want it archived on the adopter", got, err)
 	}
 	if entry.count("owner") == 0 {
@@ -1201,51 +1146,21 @@ func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) 
 	other := openSharedBackend(t, entry, db)
 	a := newSharedBackend(t, entry, db)
 	claimRunning(t, a)
-	clustertest.WaitFor(t, "the other api sees the claim", func() bool {
-		m, err := other.cached(boxID)
-		return err == nil && m.State == machines.StateRunning
-	})
+	if m, err := rowOf(t, other, boxID); err != nil || m.State != machines.StateRunning {
+		t.Fatalf("the other api reads %+v, %v, want the running claim", m, err)
+	}
 	peer.handOver(entry)
 	if _, err := other.Get(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
 		t.Fatalf("Get on an api without the token = %v, want ErrNotFound", err)
 	}
-	if _, err := other.cached(boxID); err != nil {
+	if _, err := rowOf(t, other, boxID); err != nil {
 		t.Fatalf("the api without the token dropped the machine: %v", err)
 	}
 	if err := a.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if got, err := a.cached(boxID); err != nil || got.State != machines.StateHibernated {
+	if got, err := rowOf(t, a, boxID); err != nil || got.State != machines.StateHibernated {
 		t.Errorf("the handed-over machine = %+v, %v, want it adopted and hibernated", got, err)
-	}
-}
-
-func TestAReloadKeepsTheMachinesLoadedAfterItsSnapshot(t *testing.T) {
-	fake := newFakeSandboxd(t)
-	db := clustertest.Open(t)
-	b := newSharedBackend(t, fake, db)
-	b.mu.Lock()
-	since := b.loads
-	b.mu.Unlock()
-	recs, err := db.Machines(t.Context())
-	if err != nil {
-		t.Fatalf("Machines: %v", err)
-	}
-	claimRunning(t, b)
-	b.takeMachines(recs, "", since)
-	b.mu.Lock()
-	e := b.entries[boxID]
-	held := e != nil && e.token != ""
-	b.mu.Unlock()
-	if !held {
-		t.Fatalf("a snapshot older than the claim dropped it or its token: entry %+v", e)
-	}
-	b.mu.Lock()
-	since = b.loads
-	b.mu.Unlock()
-	b.takeMachines(nil, "", since)
-	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
-		t.Errorf("a snapshot newer than the claim that lacks it = %v, want it dropped", err)
 	}
 }
 
@@ -1258,14 +1173,69 @@ func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the hand-over: %v", err)
 	}
-	if got, err := b.cached(boxID); err != nil || got.State != machines.StateHibernated {
+	if got, err := rowOf(t, b, boxID); err != nil || got.State != machines.StateHibernated {
 		t.Fatalf("the machine its node handed over = %+v, %v, want it archived on the adopter", got, err)
 	}
-	b.mu.Lock()
-	addr := b.entries[boxID].ownerAddr
-	b.mu.Unlock()
-	if addr != entry.addr() {
-		t.Errorf("owner %q, want the adopter %q", addr, entry.addr())
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
+		t.Errorf("owner %+v, %v, want the adopter %q", e, err, entry.addr())
+	}
+}
+
+func TestASnapshotKeepsTheTokensKeptAfterItsRead(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := openSharedBackend(t, fake, clustertest.Open(t))
+	read := time.Now()
+	claimRunning(t, b)
+	b.forgetTokens(map[string]*entry{}, read)
+	if b.token(boxID, fake.only()) == "" {
+		t.Fatal("a snapshot read before the claim forgot its token")
+	}
+	b.forgetTokens(map[string]*entry{}, time.Now())
+	if b.token(boxID, fake.only()) != "" {
+		t.Error("a snapshot read after the claim that lacks it kept its token")
+	}
+}
+
+func TestARefreshKeepsAClaimThatLandsAfterItsSnapshot(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := openSharedBackend(t, fake, clustertest.Open(t))
+	known, err := b.snapshot(t.Context())
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	addrs := b.mesh(t.Context())
+	lists, err := b.listMesh(t.Context(), addrs)
+	if err != nil {
+		t.Fatalf("listMesh: %v", err)
+	}
+	claimRunning(t, b)
+	if err := b.dropUnlisted(t.Context(), lists, known); err != nil {
+		t.Fatalf("dropUnlisted: %v", err)
+	}
+	if _, err := rowOf(t, b, boxID); err != nil {
+		t.Errorf("a claim that landed after the list = %v, want it kept", err)
+	}
+}
+
+func TestAChangeWhileTheListenerIsDownWakesEveryOwnerOnTheReconnect(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db, dsn := clustertest.OpenDSN(t)
+	b := newSharedBackend(t, fake, db)
+	fenceListener(t, b, dsn)
+	mine, others := b.Changes(owner), b.Changes("bob")
+	execSQL(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'")
+	if _, err := db.UpdateMachine(t.Context(), "cb-missed", func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Owner, m.CreatedAt = owner, time.Now()
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
+	}
+	for name, ch := range map[string]<-chan struct{}{owner: mine, "bob": others} {
+		select {
+		case <-ch:
+		case <-time.After(reconnectWithin):
+			t.Errorf("%s was not woken within %s of the listener's reconnect", name, reconnectWithin)
+		}
 	}
 }
 
@@ -1277,7 +1247,7 @@ func TestARefreshDropsAMachineNoNodeAnswersFor(t *testing.T) {
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the release: %v", err)
 	}
-	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
+	if _, err := rowOf(t, b, boxID); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("a machine no node answers for = %v, want it gone", err)
 	}
 	if fake.count("owner") == 0 {
@@ -1738,6 +1708,39 @@ func waitState(t *testing.T, b *Backend, id string, revision int64, want machine
 	}
 	t.Fatalf("machine %s never reached state %d; last %+v", id, want, last)
 	return last
+}
+
+func rowOf(t *testing.T, b *Backend, id string) (machines.Machine, error) {
+	t.Helper()
+	e, err := b.stored(t.Context(), id)
+	if err != nil {
+		return machines.Machine{}, err
+	}
+	return b.machine(e), nil
+}
+
+func fenceListener(t *testing.T, b *Backend, dsn string) {
+	t.Helper()
+	id := "fence-" + strings.ToLower(rand.Text())
+	fenced := b.changes(id)
+	execSQL(t, dsn, fmt.Sprintf(`SELECT pg_notify('%s', '{"ID":"%s"}')`, cluster.ChannelMachines, id))
+	select {
+	case <-fenced:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the listener took no notify within 5 s")
+	}
+}
+
+func execSQL(t *testing.T, dsn, sql string) {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(t.Context(), sql); err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
 }
 
 func addrs(nodes []*fakeSandboxd) []string {
