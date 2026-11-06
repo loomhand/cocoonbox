@@ -99,10 +99,11 @@ setup_mise() {
 		curl -fsSL "$MISE_URL" -o "$tmp/$MISE_TARBALL"
 		echo "$MISE_SHA256  $tmp/$MISE_TARBALL" | sha256sum -c --quiet -
 		install -d "$dir"
-		tar -xzf "$tmp/$MISE_TARBALL" -C "$dir" --strip-components=1
+		tar -xzf "$tmp/$MISE_TARBALL" -C "$dir" --strip-components=1 --no-same-owner
 		rm -rf "$tmp"
 	fi
 	ln -sfn "$dir/bin/mise" /usr/local/bin/mise
+	find /opt/mise -mindepth 1 -maxdepth 1 ! -name "$MISE_VERSION" -exec rm -rf {} +
 }
 
 setup_node() {
