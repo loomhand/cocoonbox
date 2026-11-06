@@ -96,19 +96,9 @@ function card(entry, c) {
 }
 
 async function load() {
-  let state;
-  try {
-    state = await api("GET", "connect");
-  } catch (e) {
-    if (e.status !== 401) notice(e.message, true);
-    $("signed-out").hidden = false;
-    $("connect").hidden = true;
-    return;
-  }
-  const me = await api("GET", "me").catch(() => null);
-  if (me) $("whoami").textContent = me.user.name;
-  $("signed-out").hidden = true;
-  $("connect").hidden = false;
+  const page = await signedInPage("connect", "connect");
+  if (!page) return;
+  const state = page.data;
 
   const cards = $("cards");
   cards.replaceChildren();

@@ -25,23 +25,10 @@ function chooser(g, boxes) {
 }
 
 async function load() {
-  let grants, boxes;
-  try {
-    ({ grants, boxes } = await api("GET", "agents"));
-  } catch (e) {
-    if (e.status !== 401) notice(e.message, true);
-    $("signed-out").hidden = false;
-    $("agents-section").hidden = true;
-    return;
-  }
-  const me = await api("GET", "me").catch(() => null);
-  const names = new Map();
-  if (me) {
-    $("whoami").textContent = me.user.name;
-    for (const b of me.boxes) names.set(b.id, b.name);
-  }
-  $("signed-out").hidden = true;
-  $("agents-section").hidden = false;
+  const page = await signedInPage("agents", "agents-section");
+  if (!page) return;
+  const { grants, boxes } = page.data;
+  const names = new Map(page.me ? page.me.boxes.map((b) => [b.id, b.name]) : []);
   const body = $("agents");
   body.replaceChildren();
   const now = Date.now();

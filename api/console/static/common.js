@@ -27,6 +27,23 @@ function notice(text, isError) {
   el.hidden = !text;
 }
 
+async function signedInPage(path, section) {
+  let data;
+  try {
+    data = await api("GET", path);
+  } catch (e) {
+    if (e.status !== 401) notice(e.message, true);
+    $("signed-out").hidden = false;
+    $(section).hidden = true;
+    return null;
+  }
+  const me = await api("GET", "me").catch(() => null);
+  if (me) $("whoami").textContent = me.user.name;
+  $("signed-out").hidden = true;
+  $(section).hidden = false;
+  return { data, me };
+}
+
 function cell(row, text) {
   const td = document.createElement("td");
   td.textContent = text;
