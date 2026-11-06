@@ -17,7 +17,7 @@ func RefusePrivate(_, address string, _ syscall.RawConn) error {
 		return err
 	}
 	ip := addrPort.Addr().Unmap()
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || sharedAddressSpace.Contains(ip) {
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || sharedAddressSpace.Contains(ip) {
 		return fmt.Errorf("refusing %s: not a public address", ip)
 	}
 	return nil
