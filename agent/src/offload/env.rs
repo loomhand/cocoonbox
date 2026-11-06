@@ -123,28 +123,6 @@ pub struct Fetch {
     pub ms: u64,
 }
 
-/// The Mac's version, else the declared one, else the newest patch of the Mac's minor.
-pub fn select(
-    wanted: &str,
-    available: &[String],
-    declared: Option<&str>,
-) -> Option<(String, Source)> {
-    if available.iter().any(|v| v == wanted) {
-        return Some((wanted.to_owned(), Source::Mac));
-    }
-    if let Some(d) = declared {
-        if available.iter().any(|v| v == d) {
-            return Some((d.to_owned(), Source::File));
-        }
-        if let Some(v) = newest(available, d) {
-            return Some((v, Source::File));
-        }
-    }
-    let mut parts = wanted.split('.');
-    let minor = format!("{}.{}", parts.next()?, parts.next()?);
-    newest(available, &minor).map(|v| (v, Source::SameMinor))
-}
-
 /// Selects every tool's version and records the selection; installs nothing.
 pub async fn plan(layout: &Layout, repo: &str, dir: &Path, spec: &Spec) -> Report {
     let wanted: Vec<(&String, &String)> = spec
@@ -280,7 +258,7 @@ pub fn render(report: Option<&Report>) -> String {
 }
 
 /// The version a declarative file in `dir` names for `tool`.
-pub async fn declared(dir: &Path, tool: &str) -> Option<String> {
+async fn declared(dir: &Path, tool: &str) -> Option<String> {
     let read = |name: &str| {
         let path = dir.join(name);
         async move { tokio::fs::read_to_string(path).await.ok() }
@@ -323,6 +301,24 @@ pub async fn declared(dir: &Path, tool: &str) -> Option<String> {
         },
         _ => None,
     }
+}
+
+/// The Mac's version, else the declared one, else the newest patch of the Mac's minor.
+fn select(wanted: &str, available: &[String], declared: Option<&str>) -> Option<(String, Source)> {
+    if available.iter().any(|v| v == wanted) {
+        return Some((wanted.to_owned(), Source::Mac));
+    }
+    if let Some(d) = declared {
+        if available.iter().any(|v| v == d) {
+            return Some((d.to_owned(), Source::File));
+        }
+        if let Some(v) = newest(available, d) {
+            return Some((v, Source::File));
+        }
+    }
+    let mut parts = wanted.split('.');
+    let minor = format!("{}.{}", parts.next()?, parts.next()?);
+    newest(available, &minor).map(|v| (v, Source::SameMinor))
 }
 
 fn tool_versions(s: &str, tool: &str) -> Option<String> {
