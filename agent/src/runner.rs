@@ -526,7 +526,7 @@ impl Runtime {
             state: Mutex::new(SlotState::default()),
         });
         slots.insert(agent_id.to_owned(), Arc::clone(&slot));
-        // detached worker: runs this agent's turns in order for the life of the process
+        // detached worker: runs this agent's turns in order until the agent is deleted
         tokio::spawn(worker(
             Arc::clone(self),
             agent_id.to_owned(),

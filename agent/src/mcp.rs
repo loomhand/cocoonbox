@@ -153,7 +153,6 @@ impl Mcp {
     pub fn spawn_reaper(self: &Arc<Self>) {
         let mcp = Arc::clone(self);
         let period = (self.idle / 2).min(MAX_REAP_PERIOD);
-        // detached: runs for the life of the process
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(period);
             loop {

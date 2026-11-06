@@ -53,7 +53,6 @@ struct PlanArgs {
     max_edge: Option<u32>,
 }
 
-/// A script to run: module source, or a file.
 enum Script {
     Code(String),
     File(PathBuf),
@@ -166,14 +165,12 @@ async fn finish_plan(
     Ok(out)
 }
 
-/// The run timeout of `timeout_s`, 90 s by default, from 1 to 110 s.
 fn timeout_of(timeout_s: Option<u64>) -> Duration {
     timeout_s
         .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
         .clamp(Duration::from_secs(1), MAX_TIMEOUT)
 }
 
-/// The report of shuttle's run of `script` as tool `tool`.
 async fn run_report(
     shuttle: &Client,
     tool: &str,
@@ -205,7 +202,6 @@ async fn run_report(
     Ok(report)
 }
 
-/// shuttle's answer to a run of `tool` with `args` and `timeout`.
 async fn relay(
     shuttle: &Client,
     tool: &str,

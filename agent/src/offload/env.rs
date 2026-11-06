@@ -123,8 +123,7 @@ pub struct Fetch {
     pub ms: u64,
 }
 
-/// Picks the version to install: the Mac's exact one, else the one a declarative file names,
-/// else the newest release with the Mac's major and minor.
+/// The Mac's version, else the declared one, else the newest patch of the Mac's minor.
 pub fn select(
     wanted: &str,
     available: &[String],

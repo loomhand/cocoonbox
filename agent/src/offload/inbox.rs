@@ -1160,7 +1160,6 @@ async fn turn_ended(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The last `TRANSCRIPT_TAIL` bytes of a transcript.
 async fn transcript_tail(path: &Path) -> Option<String> {
     let mut f = tokio::fs::File::open(path).await.ok()?;
     let len = f.metadata().await.ok()?.len();

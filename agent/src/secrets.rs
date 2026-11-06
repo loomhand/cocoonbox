@@ -62,7 +62,6 @@ impl Secrets {
 
     /// The next part of streamed model text `text`, of which the first `sent` bytes went out, scrubbed
     /// like [`Secrets::scrub_prose`]; a trailing number that more text could extend is held until `end`.
-    /// With none registered it holds nothing back and scrubs nothing.
     pub fn stream(&self, text: &str, sent: &mut usize, end: bool) -> String {
         let values = self.values.read().unwrap_or_else(PoisonError::into_inner);
         let from = *sent;

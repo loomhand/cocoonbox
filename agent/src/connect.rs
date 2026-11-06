@@ -315,7 +315,6 @@ struct State {
 /// The door no longer knows the session.
 struct Gone;
 
-/// The result of a JSON-RPC answer, or its error as text.
 async fn answer(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
     if status == StatusCode::UNAUTHORIZED {

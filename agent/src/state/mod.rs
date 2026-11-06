@@ -1519,7 +1519,6 @@ fn logical_path<'a>(_roots: &'a [Root], _rest: &str) -> Option<(&'a Root, String
     None
 }
 
-/// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
 fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
     let plain = serde_json::to_vec(manifest).map_err(|e| format!("encode manifest: {e}"))?;
     if plain.len() as u64 > MANIFEST_LIMIT {
@@ -1531,6 +1530,7 @@ fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
     Ok(plain)
 }
 
+/// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
 fn referenced(m: &Manifest) -> Vec<String> {
     let mut seen = HashSet::new();
     m.files
