@@ -76,6 +76,33 @@ final class Script: Sendable {
         #expect(await until { cancelled.withLock { $0 } == 3 })
     }
 
+    @Test func aResyncCutShortRunsAgainAfterTheCursorMoved() async {
+        let started = Mutex(0)
+        let script = Script([
+            { _, deliver in
+                #expect(await until { started.withLock { $0 } == 1 })
+                await deliver(Tick(offset: 5))
+                throw RPCError(code: .unavailable, message: "down")
+            },
+            { from, _ in
+                #expect(from == 5)
+                #expect(await until { started.withLock { $0 } == 2 })
+                throw RPCError(code: .unavailable, message: "down")
+            },
+        ])
+        await follower(script).run(
+            from: 0,
+            subscribe: script.subscribe,
+            onEvent: { _ in },
+            onResync: {
+                started.withLock { $0 += 1 }
+                do { try await pause(.seconds(3600)) } catch {}
+            },
+            onDisconnect: { _ in }
+        )
+        #expect(started.withLock { $0 } >= 2)
+    }
+
     func follower(_ script: Script) -> EventFollower<Tick> {
         EventFollower<Tick>(
             backoff: Backoff(initial: .milliseconds(100), max: .milliseconds(400), multiplier: 2),
@@ -114,7 +141,7 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [0, 3])
         #expect(seen.withLock { $0 } == [1, 2, 3, 4, 5])
-        let resynced = await until { resyncs.withLock { $0 } == 1 }
+        let resynced = await until { resyncs.withLock { $0 } >= 1 }
         #expect(resynced)
     }
 
@@ -166,7 +193,7 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [42, 0])
         #expect(seen.withLock { $0 } == [1])
-        let resynced = await until { resyncs.withLock { $0 } == 1 }
+        let resynced = await until { resyncs.withLock { $0 } >= 1 }
         #expect(resynced)
     }
 }
