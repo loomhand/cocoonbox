@@ -9,6 +9,8 @@ on:
     paths: &paths
       - "image/android/**"
       - "image/desk/shuttle.sh"
+      - "image/desk/rootfs/usr/local/bin/desk"
+      - "image/desk/rootfs/usr/local/lib/cocoonbox/shuttle-config"
       - "image/desk/service/cocoonbox.json"
       - ".github/workflows/android-base.yml"
   pull_request:
