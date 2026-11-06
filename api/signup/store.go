@@ -130,17 +130,15 @@ func (s *store) hasUser(ctx context.Context, tx pgx.Tx, id string) (bool, error)
 }
 
 func (s *store) admittedUser(ctx context.Context, id string) (string, error) {
-	var user *string
+	var user string
 	err := s.pool.QueryRow(ctx, "SELECT user_id FROM signup_queue WHERE id = $1 AND status = 'admitted'", id).Scan(&user)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		return "", nil
 	case err != nil:
 		return "", fmt.Errorf("read queue entry: %w", err)
-	case user == nil:
-		return "", nil
 	}
-	return *user, nil
+	return user, nil
 }
 
 // requeue gives the entry of an identity a new secret while it waits and returns its status, empty when it has none.
