@@ -36,13 +36,13 @@ const (
 // Share. The link is `<endpoint>/cb/s/#<secret>`.
 type SharesClient interface {
 	// Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
-	Create(ctx context.Context, in *CreateShareRequest, opts ...grpc.CallOption) (*ShareSecret, error)
+	Create(ctx context.Context, in *CreateShareRequest, opts ...grpc.CallOption) (*Share, error)
 	// List returns the live shares of the caller's boxes.
 	List(ctx context.Context, in *ListSharesRequest, opts ...grpc.CallOption) (*ListSharesResponse, error)
 	// SetWrite turns write on or off; it applies to the next call of every guest.
 	SetWrite(ctx context.Context, in *SetShareWriteRequest, opts ...grpc.CallOption) (*Share, error)
 	// Regenerate gives the share a new secret and ends every session of the old one.
-	Regenerate(ctx context.Context, in *ShareRef, opts ...grpc.CallOption) (*ShareSecret, error)
+	Regenerate(ctx context.Context, in *ShareRef, opts ...grpc.CallOption) (*Share, error)
 	// Revoke ends the share and every session of it.
 	Revoke(ctx context.Context, in *ShareRef, opts ...grpc.CallOption) (*RevokeShareResponse, error)
 }
@@ -55,9 +55,9 @@ func NewSharesClient(cc grpc.ClientConnInterface) SharesClient {
 	return &sharesClient{cc}
 }
 
-func (c *sharesClient) Create(ctx context.Context, in *CreateShareRequest, opts ...grpc.CallOption) (*ShareSecret, error) {
+func (c *sharesClient) Create(ctx context.Context, in *CreateShareRequest, opts ...grpc.CallOption) (*Share, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ShareSecret)
+	out := new(Share)
 	err := c.cc.Invoke(ctx, Shares_Create_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -85,9 +85,9 @@ func (c *sharesClient) SetWrite(ctx context.Context, in *SetShareWriteRequest, o
 	return out, nil
 }
 
-func (c *sharesClient) Regenerate(ctx context.Context, in *ShareRef, opts ...grpc.CallOption) (*ShareSecret, error) {
+func (c *sharesClient) Regenerate(ctx context.Context, in *ShareRef, opts ...grpc.CallOption) (*Share, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ShareSecret)
+	out := new(Share)
 	err := c.cc.Invoke(ctx, Shares_Regenerate_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -115,13 +115,13 @@ func (c *sharesClient) Revoke(ctx context.Context, in *ShareRef, opts ...grpc.Ca
 // Share. The link is `<endpoint>/cb/s/#<secret>`.
 type SharesServer interface {
 	// Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
-	Create(context.Context, *CreateShareRequest) (*ShareSecret, error)
+	Create(context.Context, *CreateShareRequest) (*Share, error)
 	// List returns the live shares of the caller's boxes.
 	List(context.Context, *ListSharesRequest) (*ListSharesResponse, error)
 	// SetWrite turns write on or off; it applies to the next call of every guest.
 	SetWrite(context.Context, *SetShareWriteRequest) (*Share, error)
 	// Regenerate gives the share a new secret and ends every session of the old one.
-	Regenerate(context.Context, *ShareRef) (*ShareSecret, error)
+	Regenerate(context.Context, *ShareRef) (*Share, error)
 	// Revoke ends the share and every session of it.
 	Revoke(context.Context, *ShareRef) (*RevokeShareResponse, error)
 	mustEmbedUnimplementedSharesServer()
@@ -134,7 +134,7 @@ type SharesServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSharesServer struct{}
 
-func (UnimplementedSharesServer) Create(context.Context, *CreateShareRequest) (*ShareSecret, error) {
+func (UnimplementedSharesServer) Create(context.Context, *CreateShareRequest) (*Share, error) {
 	return nil, status.Error(codes.Unimplemented, "method Create not implemented")
 }
 func (UnimplementedSharesServer) List(context.Context, *ListSharesRequest) (*ListSharesResponse, error) {
@@ -143,7 +143,7 @@ func (UnimplementedSharesServer) List(context.Context, *ListSharesRequest) (*Lis
 func (UnimplementedSharesServer) SetWrite(context.Context, *SetShareWriteRequest) (*Share, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetWrite not implemented")
 }
-func (UnimplementedSharesServer) Regenerate(context.Context, *ShareRef) (*ShareSecret, error) {
+func (UnimplementedSharesServer) Regenerate(context.Context, *ShareRef) (*Share, error) {
 	return nil, status.Error(codes.Unimplemented, "method Regenerate not implemented")
 }
 func (UnimplementedSharesServer) Revoke(context.Context, *ShareRef) (*RevokeShareResponse, error) {

@@ -824,7 +824,7 @@ actor MockWorld {
         if openSessions.contains(id) { closeExternal(agent: id, reason: "deleted by the client") }
     }
 
-    func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
+    func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Share {
         guard box(request.boxID)?.id == request.boxID else { throw MockWorld.noBox }
         if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
         guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
@@ -856,7 +856,7 @@ actor MockWorld {
         return live
     }
 
-    func regenerateShare(id: String) throws -> Cocoonbox_Control_V1_ShareSecret {
+    func regenerateShare(id: String) throws -> Share {
         guard let live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
         endSessions(share: id, reason: "the share link was regenerated")
         return issue(live)
@@ -887,14 +887,11 @@ actor MockWorld {
     }
 
     // issue gives the share a new secret and keeps it, so List returns the link as the api does.
-    private func issue(_ live: Share) -> Cocoonbox_Control_V1_ShareSecret {
+    private func issue(_ live: Share) -> Share {
         var issued = live
         issued.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         share = issued
-        return .with {
-            $0.share = issued
-            $0.secret = issued.secret
-        }
+        return issued
     }
 
     // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.

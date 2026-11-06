@@ -25,7 +25,7 @@ func TestCreateSharesOnlyTheCallersBox(t *testing.T) {
 		t.Errorf("Create on bob's box: %v", err)
 	}
 	got, err := srv.Create(alice, &controlv1.CreateShareRequest{BoxId: boxes.BoxID("alice"), TtlSeconds: 600, UserNames: []string{"bob"}, Write: true})
-	if err != nil || got.GetSecret() != "cbs_x" || got.GetShare().GetSecret() != "cbs_x" || got.GetShare().GetUsers()[0].GetName() != "bob" {
+	if err != nil || got.GetSecret() != "cbs_x" || got.GetUsers()[0].GetName() != "bob" {
 		t.Fatalf("Create = %v, %v", got, err)
 	}
 	if store.created.Owner != "alice" || store.created.TTL != 10*time.Minute || !store.created.Write {
@@ -46,7 +46,7 @@ func TestListGivesTheLinkToItsOwnerOnly(t *testing.T) {
 		t.Errorf("bob's List = %v, %v", got, err)
 	}
 	regenerated, err := srv.Regenerate(auth.WithUser(t.Context(), "alice"), &controlv1.ShareRef{ShareId: "sh-1"})
-	if err != nil || regenerated.GetSecret() != "cbs_y" || regenerated.GetShare().GetSecret() != "cbs_y" {
+	if err != nil || regenerated.GetSecret() != "cbs_y" {
 		t.Errorf("Regenerate = %v, %v", regenerated, err)
 	}
 }

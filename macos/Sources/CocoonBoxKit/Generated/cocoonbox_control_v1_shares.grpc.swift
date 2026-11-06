@@ -25,7 +25,7 @@ public enum Cocoonbox_Control_V1_Shares: Sendable {
             /// Request type for "Create".
             public typealias Input = Cocoonbox_Control_V1_CreateShareRequest
             /// Response type for "Create".
-            public typealias Output = Cocoonbox_Control_V1_ShareSecret
+            public typealias Output = Cocoonbox_Control_V1_Share
             /// Descriptor for "Create".
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Shares"),
@@ -64,7 +64,7 @@ public enum Cocoonbox_Control_V1_Shares: Sendable {
             /// Request type for "Regenerate".
             public typealias Input = Cocoonbox_Control_V1_ShareRef
             /// Response type for "Regenerate".
-            public typealias Output = Cocoonbox_Control_V1_ShareSecret
+            public typealias Output = Cocoonbox_Control_V1_Share
             /// Descriptor for "Regenerate".
             public static let descriptor = GRPCCore.MethodDescriptor(
                 service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Shares"),
@@ -137,11 +137,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ShareSecret` messages.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Share` messages.
         func create(
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_CreateShareRequest>,
             context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ShareSecret>
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Share>
 
         /// Handle the "List" method.
         ///
@@ -191,11 +191,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ShareSecret` messages.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Share` messages.
         func regenerate(
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ShareRef>,
             context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ShareSecret>
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Share>
 
         /// Handle the "Revoke" method.
         ///
@@ -243,11 +243,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_ShareSecret` message.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Share` message.
         func create(
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_CreateShareRequest>,
             context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret>
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share>
 
         /// Handle the "List" method.
         ///
@@ -297,11 +297,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_ShareSecret` message.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Share` message.
         func regenerate(
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ShareRef>,
             context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret>
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share>
 
         /// Handle the "Revoke" method.
         ///
@@ -347,11 +347,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_ShareSecret` to respond with.
+        /// - Returns: A `Cocoonbox_Control_V1_Share` to respond with.
         func create(
             request: Cocoonbox_Control_V1_CreateShareRequest,
             context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_ShareSecret
+        ) async throws -> Cocoonbox_Control_V1_Share
 
         /// Handle the "List" method.
         ///
@@ -401,11 +401,11 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Throws: Any error which occurred during the processing of the request. Thrown errors
         ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
         ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_ShareSecret` to respond with.
+        /// - Returns: A `Cocoonbox_Control_V1_Share` to respond with.
         func regenerate(
             request: Cocoonbox_Control_V1_ShareRef,
             context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_ShareSecret
+        ) async throws -> Cocoonbox_Control_V1_Share
 
         /// Handle the "Revoke" method.
         ///
@@ -434,7 +434,7 @@ extension Cocoonbox_Control_V1_Shares.StreamingServiceProtocol {
         router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Shares.Method.Create.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_CreateShareRequest>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ShareSecret>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Share>(),
             handler: { request, context in
                 try await self.create(
                     request: request,
@@ -467,7 +467,7 @@ extension Cocoonbox_Control_V1_Shares.StreamingServiceProtocol {
         router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Shares.Method.Regenerate.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ShareRef>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ShareSecret>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Share>(),
             handler: { request, context in
                 try await self.regenerate(
                     request: request,
@@ -495,7 +495,7 @@ extension Cocoonbox_Control_V1_Shares.ServiceProtocol {
     public func create(
         request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_CreateShareRequest>,
         context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ShareSecret> {
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Share> {
         let response = try await self.create(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
@@ -528,7 +528,7 @@ extension Cocoonbox_Control_V1_Shares.ServiceProtocol {
     public func regenerate(
         request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ShareRef>,
         context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ShareSecret> {
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Share> {
         let response = try await self.regenerate(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
@@ -554,8 +554,8 @@ extension Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
     public func create(
         request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_CreateShareRequest>,
         context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret>(
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share>(
             message: try await self.create(
                 request: request.message,
                 context: context
@@ -593,8 +593,8 @@ extension Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
     public func regenerate(
         request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ShareRef>,
         context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ShareSecret>(
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Share>(
             message: try await self.regenerate(
                 request: request.message,
                 context: context
@@ -642,7 +642,7 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateShareRequest` message.
         ///   - serializer: A serializer for `Cocoonbox_Control_V1_CreateShareRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ShareSecret` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Share` messages.
         ///   - options: Options to apply to this RPC.
         ///   - handleResponse: A closure which handles the response and returns its result to
         ///       the caller. Returning from the closure will cancel the RPC if it hasn't
@@ -651,9 +651,9 @@ extension Cocoonbox_Control_V1_Shares {
         func create<Result>(
             request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateShareRequest>,
             serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_CreateShareRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ShareSecret>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Share>,
             options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "List" method.
@@ -711,7 +711,7 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_ShareRef` message.
         ///   - serializer: A serializer for `Cocoonbox_Control_V1_ShareRef` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ShareSecret` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Share` messages.
         ///   - options: Options to apply to this RPC.
         ///   - handleResponse: A closure which handles the response and returns its result to
         ///       the caller. Returning from the closure will cancel the RPC if it hasn't
@@ -720,9 +720,9 @@ extension Cocoonbox_Control_V1_Shares {
         func regenerate<Result>(
             request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ShareRef>,
             serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ShareRef>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ShareSecret>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Share>,
             options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "Revoke" method.
@@ -781,7 +781,7 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateShareRequest` message.
         ///   - serializer: A serializer for `Cocoonbox_Control_V1_CreateShareRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ShareSecret` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Share` messages.
         ///   - options: Options to apply to this RPC.
         ///   - handleResponse: A closure which handles the response and returns its result to
         ///       the caller. Returning from the closure will cancel the RPC if it hasn't
@@ -790,9 +790,9 @@ extension Cocoonbox_Control_V1_Shares {
         public func create<Result>(
             request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateShareRequest>,
             serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_CreateShareRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ShareSecret>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Share>,
             options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
                 try response.message
             }
         ) async throws -> Result where Result: Sendable {
@@ -883,7 +883,7 @@ extension Cocoonbox_Control_V1_Shares {
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_ShareRef` message.
         ///   - serializer: A serializer for `Cocoonbox_Control_V1_ShareRef` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ShareSecret` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Share` messages.
         ///   - options: Options to apply to this RPC.
         ///   - handleResponse: A closure which handles the response and returns its result to
         ///       the caller. Returning from the closure will cancel the RPC if it hasn't
@@ -892,9 +892,9 @@ extension Cocoonbox_Control_V1_Shares {
         public func regenerate<Result>(
             request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ShareRef>,
             serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ShareRef>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ShareSecret>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Share>,
             options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
                 try response.message
             }
         ) async throws -> Result where Result: Sendable {
@@ -963,14 +963,14 @@ extension Cocoonbox_Control_V1_Shares.ClientProtocol {
     public func create<Result>(
         request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateShareRequest>,
         options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
             try response.message
         }
     ) async throws -> Result where Result: Sendable {
         try await self.create(
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_CreateShareRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ShareSecret>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Share>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1050,14 +1050,14 @@ extension Cocoonbox_Control_V1_Shares.ClientProtocol {
     public func regenerate<Result>(
         request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ShareRef>,
         options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
             try response.message
         }
     ) async throws -> Result where Result: Sendable {
         try await self.regenerate(
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ShareRef>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ShareSecret>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Share>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1114,7 +1114,7 @@ extension Cocoonbox_Control_V1_Shares.ClientProtocol {
         _ message: Cocoonbox_Control_V1_CreateShareRequest,
         metadata: GRPCCore.Metadata = [:],
         options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
             try response.message
         }
     ) async throws -> Result where Result: Sendable {
@@ -1213,7 +1213,7 @@ extension Cocoonbox_Control_V1_Shares.ClientProtocol {
         _ message: Cocoonbox_Control_V1_ShareRef,
         metadata: GRPCCore.Metadata = [:],
         options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ShareSecret>) async throws -> Result = { response in
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Share>) async throws -> Result = { response in
             try response.message
         }
     ) async throws -> Result where Result: Sendable {

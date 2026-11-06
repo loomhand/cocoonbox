@@ -701,13 +701,12 @@ func shareCommand() async {
                 guard let text = value(of: "--ttl"), let parsed = seconds(text) else { fail("--ttl is a duration such as 30m, 24h or 7d") }
                 ttl = Int64(parsed)
             }
-            let created: Cocoonbox_Control_V1_ShareSecret
+            let share: Cocoonbox_Control_V1_Share
             do {
-                created = try await connection.createShare(boxID: target.id, ttlSeconds: ttl, userNames: [], write: false)
+                share = try await connection.createShare(boxID: target.id, ttlSeconds: ttl, userNames: [], write: false)
             } catch let error as RPCError where error.code == .alreadyExists {
                 fail("\(target.name) already has a live share; `cocoonbox share ls` shows it, and `cocoonbox share revoke ID` ends it")
             }
-            let share = created.share
             if json { return printJSON(shareObject(share, name: target.name, endpoint: connection.endpoint)) }
             print(ShareSetup.link(endpoint: connection.endpoint, secret: share.secret))
             print("read-only share \(share.id) of \(target.name), expires \(iso(share.expiresAtMs))")

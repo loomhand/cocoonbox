@@ -550,7 +550,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, toShare(created.GetShare()))
+	writeJSON(w, toShare(created))
 }
 
 func (s *Server) setShareWrite(w http.ResponseWriter, r *http.Request) {
@@ -574,7 +574,7 @@ func (s *Server) regenerateShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, toShare(regenerated.GetShare()))
+	writeJSON(w, toShare(regenerated))
 }
 
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {

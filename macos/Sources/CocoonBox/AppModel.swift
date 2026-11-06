@@ -391,8 +391,7 @@ final class AppModel {
     func createShare(ttlSeconds: Int64, userNames: [String], write: Bool) async {
         guard let connection, let box else { return }
         do {
-            let created = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
-            share = created.share
+            share = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
             markShare("created")
         } catch {
             report("share", error)
@@ -413,8 +412,7 @@ final class AppModel {
     func regenerateShare() async {
         guard let connection, let current = share else { return }
         do {
-            let fresh = try await connection.regenerateShare(shareID: current.id)
-            share = fresh.share
+            share = try await connection.regenerateShare(shareID: current.id)
             markShare("regenerated")
         } catch {
             report("regenerate share", error)

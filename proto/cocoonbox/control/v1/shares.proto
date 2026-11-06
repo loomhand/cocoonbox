@@ -10,13 +10,13 @@ option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;
 // Share. The link is `<endpoint>/cb/s/#<secret>`.
 service Shares {
   // Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
-  rpc Create(CreateShareRequest) returns (ShareSecret);
+  rpc Create(CreateShareRequest) returns (Share);
   // List returns the live shares of the caller's boxes.
   rpc List(ListSharesRequest) returns (ListSharesResponse);
   // SetWrite turns write on or off; it applies to the next call of every guest.
   rpc SetWrite(SetShareWriteRequest) returns (Share);
   // Regenerate gives the share a new secret and ends every session of the old one.
-  rpc Regenerate(ShareRef) returns (ShareSecret);
+  rpc Regenerate(ShareRef) returns (Share);
   // Revoke ends the share and every session of it.
   rpc Revoke(ShareRef) returns (RevokeShareResponse);
 }
@@ -40,12 +40,6 @@ message ShareUser {
 
 message ShareRef {
   string share_id = 1;
-}
-
-message ShareSecret {
-  Share share = 1;
-  // The same as share.secret.
-  string secret = 2;
 }
 
 message CreateShareRequest {

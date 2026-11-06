@@ -38,7 +38,7 @@ func New(store Store) *Server {
 	return &Server{store: store}
 }
 
-func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) (*controlv1.ShareSecret, error) {
+func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) (*controlv1.Share, error) {
 	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 	}
 	log.WithFunc("shares.Server.Create").Infof(ctx, "user %s shared box %s as %s: %d named users, write %t, until %s",
 		user, sh.Box, sh.ID, len(sh.Users), sh.Write, sh.ExpiresAt.UTC().Format(time.RFC3339))
-	return &controlv1.ShareSecret{Share: toShare(sh), Secret: sh.Secret}, nil
+	return toShare(sh), nil
 }
 
 func (s *Server) List(ctx context.Context, _ *controlv1.ListSharesRequest) (*controlv1.ListSharesResponse, error) {
@@ -83,7 +83,7 @@ func (s *Server) SetWrite(ctx context.Context, req *controlv1.SetShareWriteReque
 	return toShare(sh), nil
 }
 
-func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.ShareSecret, error) {
+func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.Share, error) {
 	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
@@ -93,7 +93,7 @@ func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*cont
 		return nil, storeError(ctx, err, "regenerate share")
 	}
 	log.WithFunc("shares.Server.Regenerate").Infof(ctx, "user %s regenerated share %s", user, sh.ID)
-	return &controlv1.ShareSecret{Share: toShare(sh), Secret: sh.Secret}, nil
+	return toShare(sh), nil
 }
 
 func (s *Server) Revoke(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.RevokeShareResponse, error) {

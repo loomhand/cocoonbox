@@ -232,7 +232,7 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_Share {
         try await shares.create(.with {
             $0.boxID = boxID
             $0.ttlSeconds = ttlSeconds
@@ -252,7 +252,7 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    public func regenerateShare(shareID: String) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    public func regenerateShare(shareID: String) async throws -> Cocoonbox_Control_V1_Share {
         try await shares.regenerate(.with { $0.shareID = shareID })
     }
 

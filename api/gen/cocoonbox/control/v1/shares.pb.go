@@ -211,59 +211,6 @@ func (x *ShareRef) GetShareId() string {
 	return ""
 }
 
-type ShareSecret struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	Share *Share                 `protobuf:"bytes,1,opt,name=share,proto3" json:"share,omitempty"`
-	// The same as share.secret.
-	Secret        string `protobuf:"bytes,2,opt,name=secret,proto3" json:"secret,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *ShareSecret) Reset() {
-	*x = ShareSecret{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[3]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *ShareSecret) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*ShareSecret) ProtoMessage() {}
-
-func (x *ShareSecret) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[3]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use ShareSecret.ProtoReflect.Descriptor instead.
-func (*ShareSecret) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *ShareSecret) GetShare() *Share {
-	if x != nil {
-		return x.Share
-	}
-	return nil
-}
-
-func (x *ShareSecret) GetSecret() string {
-	if x != nil {
-		return x.Secret
-	}
-	return ""
-}
-
 type CreateShareRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	BoxId string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
@@ -278,7 +225,7 @@ type CreateShareRequest struct {
 
 func (x *CreateShareRequest) Reset() {
 	*x = CreateShareRequest{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[4]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -290,7 +237,7 @@ func (x *CreateShareRequest) String() string {
 func (*CreateShareRequest) ProtoMessage() {}
 
 func (x *CreateShareRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[4]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -303,7 +250,7 @@ func (x *CreateShareRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateShareRequest.ProtoReflect.Descriptor instead.
 func (*CreateShareRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{4}
+	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CreateShareRequest) GetBoxId() string {
@@ -342,7 +289,7 @@ type ListSharesRequest struct {
 
 func (x *ListSharesRequest) Reset() {
 	*x = ListSharesRequest{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[5]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -354,7 +301,7 @@ func (x *ListSharesRequest) String() string {
 func (*ListSharesRequest) ProtoMessage() {}
 
 func (x *ListSharesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[5]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -367,7 +314,7 @@ func (x *ListSharesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharesRequest.ProtoReflect.Descriptor instead.
 func (*ListSharesRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{5}
+	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{4}
 }
 
 type ListSharesResponse struct {
@@ -379,7 +326,7 @@ type ListSharesResponse struct {
 
 func (x *ListSharesResponse) Reset() {
 	*x = ListSharesResponse{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[6]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -391,7 +338,7 @@ func (x *ListSharesResponse) String() string {
 func (*ListSharesResponse) ProtoMessage() {}
 
 func (x *ListSharesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[6]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -404,7 +351,7 @@ func (x *ListSharesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharesResponse.ProtoReflect.Descriptor instead.
 func (*ListSharesResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{6}
+	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListSharesResponse) GetShares() []*Share {
@@ -424,7 +371,7 @@ type SetShareWriteRequest struct {
 
 func (x *SetShareWriteRequest) Reset() {
 	*x = SetShareWriteRequest{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[7]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -436,7 +383,7 @@ func (x *SetShareWriteRequest) String() string {
 func (*SetShareWriteRequest) ProtoMessage() {}
 
 func (x *SetShareWriteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[7]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -449,7 +396,7 @@ func (x *SetShareWriteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetShareWriteRequest.ProtoReflect.Descriptor instead.
 func (*SetShareWriteRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{7}
+	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *SetShareWriteRequest) GetShareId() string {
@@ -474,7 +421,7 @@ type RevokeShareResponse struct {
 
 func (x *RevokeShareResponse) Reset() {
 	*x = RevokeShareResponse{}
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[8]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -486,7 +433,7 @@ func (x *RevokeShareResponse) String() string {
 func (*RevokeShareResponse) ProtoMessage() {}
 
 func (x *RevokeShareResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[8]
+	mi := &file_cocoonbox_control_v1_shares_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -499,7 +446,7 @@ func (x *RevokeShareResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeShareResponse.ProtoReflect.Descriptor instead.
 func (*RevokeShareResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{8}
+	return file_cocoonbox_control_v1_shares_proto_rawDescGZIP(), []int{7}
 }
 
 var File_cocoonbox_control_v1_shares_proto protoreflect.FileDescriptor
@@ -519,10 +466,7 @@ const file_cocoonbox_control_v1_shares_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"%\n" +
 	"\bShareRef\x12\x19\n" +
-	"\bshare_id\x18\x01 \x01(\tR\ashareId\"X\n" +
-	"\vShareSecret\x121\n" +
-	"\x05share\x18\x01 \x01(\v2\x1b.cocoonbox.control.v1.ShareR\x05share\x12\x16\n" +
-	"\x06secret\x18\x02 \x01(\tR\x06secret\"\x81\x01\n" +
+	"\bshare_id\x18\x01 \x01(\tR\ashareId\"\x81\x01\n" +
 	"\x12CreateShareRequest\x12\x15\n" +
 	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x1f\n" +
 	"\vttl_seconds\x18\x02 \x01(\x03R\n" +
@@ -536,13 +480,13 @@ const file_cocoonbox_control_v1_shares_proto_rawDesc = "" +
 	"\x14SetShareWriteRequest\x12\x19\n" +
 	"\bshare_id\x18\x01 \x01(\tR\ashareId\x12\x14\n" +
 	"\x05write\x18\x02 \x01(\bR\x05write\"\x15\n" +
-	"\x13RevokeShareResponse2\xb5\x03\n" +
-	"\x06Shares\x12U\n" +
-	"\x06Create\x12(.cocoonbox.control.v1.CreateShareRequest\x1a!.cocoonbox.control.v1.ShareSecret\x12Y\n" +
+	"\x13RevokeShareResponse2\xa9\x03\n" +
+	"\x06Shares\x12O\n" +
+	"\x06Create\x12(.cocoonbox.control.v1.CreateShareRequest\x1a\x1b.cocoonbox.control.v1.Share\x12Y\n" +
 	"\x04List\x12'.cocoonbox.control.v1.ListSharesRequest\x1a(.cocoonbox.control.v1.ListSharesResponse\x12S\n" +
-	"\bSetWrite\x12*.cocoonbox.control.v1.SetShareWriteRequest\x1a\x1b.cocoonbox.control.v1.Share\x12O\n" +
+	"\bSetWrite\x12*.cocoonbox.control.v1.SetShareWriteRequest\x1a\x1b.cocoonbox.control.v1.Share\x12I\n" +
 	"\n" +
-	"Regenerate\x12\x1e.cocoonbox.control.v1.ShareRef\x1a!.cocoonbox.control.v1.ShareSecret\x12S\n" +
+	"Regenerate\x12\x1e.cocoonbox.control.v1.ShareRef\x1a\x1b.cocoonbox.control.v1.Share\x12S\n" +
 	"\x06Revoke\x12\x1e.cocoonbox.control.v1.ShareRef\x1a).cocoonbox.control.v1.RevokeShareResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
@@ -557,37 +501,35 @@ func file_cocoonbox_control_v1_shares_proto_rawDescGZIP() []byte {
 	return file_cocoonbox_control_v1_shares_proto_rawDescData
 }
 
-var file_cocoonbox_control_v1_shares_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_cocoonbox_control_v1_shares_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_cocoonbox_control_v1_shares_proto_goTypes = []any{
 	(*Share)(nil),                // 0: cocoonbox.control.v1.Share
 	(*ShareUser)(nil),            // 1: cocoonbox.control.v1.ShareUser
 	(*ShareRef)(nil),             // 2: cocoonbox.control.v1.ShareRef
-	(*ShareSecret)(nil),          // 3: cocoonbox.control.v1.ShareSecret
-	(*CreateShareRequest)(nil),   // 4: cocoonbox.control.v1.CreateShareRequest
-	(*ListSharesRequest)(nil),    // 5: cocoonbox.control.v1.ListSharesRequest
-	(*ListSharesResponse)(nil),   // 6: cocoonbox.control.v1.ListSharesResponse
-	(*SetShareWriteRequest)(nil), // 7: cocoonbox.control.v1.SetShareWriteRequest
-	(*RevokeShareResponse)(nil),  // 8: cocoonbox.control.v1.RevokeShareResponse
+	(*CreateShareRequest)(nil),   // 3: cocoonbox.control.v1.CreateShareRequest
+	(*ListSharesRequest)(nil),    // 4: cocoonbox.control.v1.ListSharesRequest
+	(*ListSharesResponse)(nil),   // 5: cocoonbox.control.v1.ListSharesResponse
+	(*SetShareWriteRequest)(nil), // 6: cocoonbox.control.v1.SetShareWriteRequest
+	(*RevokeShareResponse)(nil),  // 7: cocoonbox.control.v1.RevokeShareResponse
 }
 var file_cocoonbox_control_v1_shares_proto_depIdxs = []int32{
 	1, // 0: cocoonbox.control.v1.Share.users:type_name -> cocoonbox.control.v1.ShareUser
-	0, // 1: cocoonbox.control.v1.ShareSecret.share:type_name -> cocoonbox.control.v1.Share
-	0, // 2: cocoonbox.control.v1.ListSharesResponse.shares:type_name -> cocoonbox.control.v1.Share
-	4, // 3: cocoonbox.control.v1.Shares.Create:input_type -> cocoonbox.control.v1.CreateShareRequest
-	5, // 4: cocoonbox.control.v1.Shares.List:input_type -> cocoonbox.control.v1.ListSharesRequest
-	7, // 5: cocoonbox.control.v1.Shares.SetWrite:input_type -> cocoonbox.control.v1.SetShareWriteRequest
-	2, // 6: cocoonbox.control.v1.Shares.Regenerate:input_type -> cocoonbox.control.v1.ShareRef
-	2, // 7: cocoonbox.control.v1.Shares.Revoke:input_type -> cocoonbox.control.v1.ShareRef
-	3, // 8: cocoonbox.control.v1.Shares.Create:output_type -> cocoonbox.control.v1.ShareSecret
-	6, // 9: cocoonbox.control.v1.Shares.List:output_type -> cocoonbox.control.v1.ListSharesResponse
-	0, // 10: cocoonbox.control.v1.Shares.SetWrite:output_type -> cocoonbox.control.v1.Share
-	3, // 11: cocoonbox.control.v1.Shares.Regenerate:output_type -> cocoonbox.control.v1.ShareSecret
-	8, // 12: cocoonbox.control.v1.Shares.Revoke:output_type -> cocoonbox.control.v1.RevokeShareResponse
-	8, // [8:13] is the sub-list for method output_type
-	3, // [3:8] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0, // 1: cocoonbox.control.v1.ListSharesResponse.shares:type_name -> cocoonbox.control.v1.Share
+	3, // 2: cocoonbox.control.v1.Shares.Create:input_type -> cocoonbox.control.v1.CreateShareRequest
+	4, // 3: cocoonbox.control.v1.Shares.List:input_type -> cocoonbox.control.v1.ListSharesRequest
+	6, // 4: cocoonbox.control.v1.Shares.SetWrite:input_type -> cocoonbox.control.v1.SetShareWriteRequest
+	2, // 5: cocoonbox.control.v1.Shares.Regenerate:input_type -> cocoonbox.control.v1.ShareRef
+	2, // 6: cocoonbox.control.v1.Shares.Revoke:input_type -> cocoonbox.control.v1.ShareRef
+	0, // 7: cocoonbox.control.v1.Shares.Create:output_type -> cocoonbox.control.v1.Share
+	5, // 8: cocoonbox.control.v1.Shares.List:output_type -> cocoonbox.control.v1.ListSharesResponse
+	0, // 9: cocoonbox.control.v1.Shares.SetWrite:output_type -> cocoonbox.control.v1.Share
+	0, // 10: cocoonbox.control.v1.Shares.Regenerate:output_type -> cocoonbox.control.v1.Share
+	7, // 11: cocoonbox.control.v1.Shares.Revoke:output_type -> cocoonbox.control.v1.RevokeShareResponse
+	7, // [7:12] is the sub-list for method output_type
+	2, // [2:7] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_shares_proto_init() }
@@ -601,7 +543,7 @@ func file_cocoonbox_control_v1_shares_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_shares_proto_rawDesc), len(file_cocoonbox_control_v1_shares_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   9,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

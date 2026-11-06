@@ -181,7 +181,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
 struct SharesService: Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
     let world: MockWorld
 
-    func create(request: Cocoonbox_Control_V1_CreateShareRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    func create(request: Cocoonbox_Control_V1_CreateShareRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Share {
         try await world.createShare(request)
     }
 
@@ -194,7 +194,7 @@ struct SharesService: Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
         try await world.setShareWrite(id: request.shareID, write: request.write)
     }
 
-    func regenerate(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    func regenerate(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Share {
         try await world.regenerateShare(id: request.shareID)
     }
 
