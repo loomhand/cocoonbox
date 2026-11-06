@@ -796,11 +796,21 @@ impl Browser {
     /// The visible tab titled as the X active window, when exactly one matches.
     async fn shown(&self, targets: &[Target]) -> Option<Cdp> {
         let title = active_title().await?;
-        let mut found = None;
-        for t in targets
+        let infos = self
+            .browser()
+            .await
+            .ok()?
+            .call("Target.getTargets", json!({}))
+            .await
+            .ok()?;
+        let ids: Vec<&str> = infos["targetInfos"]
+            .as_array()?
             .iter()
-            .filter(|t| t.kind == "page" && t.title == title)
-        {
+            .filter(|i| i["type"] == "page" && i["title"] == title.as_str())
+            .filter_map(|i| i["targetId"].as_str())
+            .collect();
+        let mut found = None;
+        for t in targets.iter().filter(|t| ids.contains(&t.id.as_str())) {
             let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
                 continue;
             };
@@ -1068,8 +1078,6 @@ struct Target {
     #[serde(rename = "type")]
     kind: String,
     url: String,
-    #[serde(default)]
-    title: String,
     #[serde(rename = "webSocketDebuggerUrl", default)]
     ws_url: String,
 }
