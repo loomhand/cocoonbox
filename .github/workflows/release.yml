@@ -1,5 +1,3 @@
-# A v* tag runs GoReleaser: cocoonbox-api (linux amd64, arm64) and the changelog, with cocoonbox-agent (linux amd64, arm64),
-# the image recipe with its pins and, when the repository variable CB_ENDPOINT names an api origin, CocoonBox.app (ad hoc signed).
 name: release
 
 on:

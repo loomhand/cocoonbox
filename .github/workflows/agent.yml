@@ -1,4 +1,3 @@
-# The agent runs in a Linux guest and in a macOS guest, and builds for a Windows guest; the offload tests need rsync and tmux, the script tests Node 24 (NODE_BIN), the Chrome tests skip with CB_NO_BROWSER=1.
 name: agent
 
 on:

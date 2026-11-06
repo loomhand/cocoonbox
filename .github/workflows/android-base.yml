@@ -1,6 +1,4 @@
-# Builds the Android box base (AOSP redroid only) for amd64 and arm64 and publishes it as ghcr.io/<repo>/android-base:
-# a <sha> tag, and latest from main; a pull request only builds it. Booting it needs binder and ashmem, so its acceptance
-# runs on a host after a cut, as for base:vN.
+# booting the base needs binder and ashmem, so its acceptance runs on a host after a cut
 name: android-base
 
 on:
