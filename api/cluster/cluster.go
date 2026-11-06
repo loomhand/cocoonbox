@@ -30,6 +30,7 @@ const (
 	migrationLock = 0x6362636c // "cbcl"
 	listenRetry   = 5 * time.Second
 	lockConns     = 4
+	longLockConns = 8
 )
 
 var (
@@ -57,8 +58,9 @@ type Change struct {
 type Store struct {
 	pool *pgxpool.Pool
 	// locks holds the connections of the user locks apart, with keepalives so the server frees the locks of a host that died.
-	locks  *pgxpool.Pool
-	leader *pgx.ConnConfig
+	locks     *pgxpool.Pool
+	longLocks *pgxpool.Pool
+	leader    *pgx.ConnConfig
 }
 
 // Open connects to dsn and applies the cluster migrations.
@@ -79,12 +81,21 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("open the lock pool: %w", err)
 	}
-	return &Store{pool: pool, locks: locks, leader: cfg.ConnConfig.Copy()}, nil
+	longCfg := cfg.Copy()
+	longCfg.MaxConns = longLockConns
+	longLocks, err := pgxpool.NewWithConfig(ctx, longCfg)
+	if err != nil {
+		locks.Close()
+		pool.Close()
+		return nil, fmt.Errorf("open the long lock pool: %w", err)
+	}
+	return &Store{pool: pool, locks: locks, longLocks: longLocks, leader: cfg.ConnConfig.Copy()}, nil
 }
 
 // Close closes the store; closing a nil store does nothing.
 func (s *Store) Close() {
 	if s != nil {
+		s.longLocks.Close()
 		s.locks.Close()
 		s.pool.Close()
 	}
