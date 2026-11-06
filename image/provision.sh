@@ -31,14 +31,6 @@ setup_packages() {
 	log "packages"
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends "${PACKAGES[@]}" >/dev/null
-	systemctl disable --now xrdp.service xrdp-sesman.service >/dev/null 2>&1 || true
-	pkill -x xrdp || true
-	pkill -x xrdp-sesman || true
-	systemctl disable --now cocoonbox-vnc.service >/dev/null 2>&1 || true
-	rm -f /etc/systemd/system/cocoonbox-vnc.service
-	systemctl daemon-reload
-	systemctl reset-failed cocoonbox-vnc.service >/dev/null 2>&1 || true
-	rm -f /etc/ssh/sshd_config.d/10-cocoonbox.conf /etc/systemd/system/cocoonbox-hostkeys.service /etc/systemd/system/multi-user.target.wants/cocoonbox-hostkeys.service
 	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data x11vnc openssh-server openssh-sftp-server >/dev/null 2>&1 || true
 	local deb
 	deb=$(mktemp --suffix=.deb)
@@ -64,10 +56,6 @@ setup_users() {
 	passwd -l user >/dev/null
 
 	id cbagent >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/lib/cocoonbox --shell /usr/sbin/nologin cbagent
-	if id deploy >/dev/null 2>&1; then
-		userdel -r deploy
-	fi
-	rm -f /etc/sudoers.d/90-cocoonbox-deploy /home/user/.ssh/authorized_keys
 	printf 'Defaults:user env_keep += "http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY"\nuser ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-user
 	chmod 0440 /etc/sudoers.d/90-cocoonbox-user
 	visudo -cqf /etc/sudoers.d/90-cocoonbox-user
@@ -81,7 +69,6 @@ setup_users() {
 
 install_rootfs() {
 	log "rootfs files"
-	rm -f /usr/local/lib/cocoonbox/set-agent-env
 	(cd "$SRC/rootfs" && find . -type f ! -path './etc/skel-cocoonbox/*') | while read -r f; do
 		case "$f" in
 		./usr/local/lib/cocoonbox/* | ./usr/local/bin/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
