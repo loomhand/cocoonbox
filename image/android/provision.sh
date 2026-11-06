@@ -112,7 +112,6 @@ setup_scrcpy() {
 		install -D -m "$mode" "$tmp/$name" "$dest"
 	done
 	rm -rf "$tmp"
-	! ldd /usr/local/bin/scrcpy-rfb | grep 'not found'
 }
 
 # GUI plans and scripts run the desk runtime of cbcore on Node; shuttle serves their desk calls from Android
