@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
@@ -107,19 +109,26 @@ func (s *Service) Unlink(ctx context.Context, user, idp string) error {
 }
 
 func (s *Service) link(ctx context.Context, user string, id identity) (Outcome, error) {
-	taken, err := s.store.addIdentity(ctx, s.store.pool, user, GitHub, id)
-	switch {
-	case err != nil:
-		return Outcome{}, err
-	case taken == takenSubject:
-		return Outcome{Kind: Refused, Reason: reasonTaken}, nil
-	case taken == takenUser:
-		return Outcome{Kind: Refused, Reason: reasonLinked}, nil
-	}
-	if err := s.store.dropWaiting(ctx, GitHub, id.subject); err != nil {
-		return Outcome{}, err
-	}
-	return Outcome{Kind: Linked, User: user}, nil
+	var outcome Outcome
+	err := pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {
+		if _, err := s.store.lockSettings(ctx, tx); err != nil {
+			return err
+		}
+		taken, err := s.store.addIdentity(ctx, tx, user, GitHub, id)
+		switch {
+		case err != nil:
+			return err
+		case taken == takenSubject:
+			outcome = Outcome{Kind: Refused, Reason: reasonTaken}
+		case taken == takenUser:
+			outcome = Outcome{Kind: Refused, Reason: reasonLinked}
+		default:
+			outcome = Outcome{Kind: Linked, User: user}
+			return s.store.dropWaiting(ctx, tx, GitHub, id.subject)
+		}
+		return nil
+	})
+	return outcome, err
 }
 
 // signup queues a new identity, at the front with an invite, and admits; a seat signs the person in, and a waiting person gets a new secret.
