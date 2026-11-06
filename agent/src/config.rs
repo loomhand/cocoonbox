@@ -9,6 +9,11 @@ use crate::plugins::{self, Plugin};
 use crate::toolhost::state::Root;
 
 #[cfg(unix)]
+pub(crate) const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
+#[cfg(windows)]
+pub(crate) const DESK_GUIDE: &str = r"C:\ProgramData\cocoonbox\desk\AGENTS.md";
+
+#[cfg(unix)]
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 #[cfg(windows)]
 const DEFAULT_STATE_DIR: &str = r"C:\ProgramData\cocoonbox\state";
@@ -35,10 +40,6 @@ const DESKTOP_UNIT: Option<&str> = Some("cocoonbox-session.service");
 #[cfg(not(target_os = "linux"))]
 const DESKTOP_UNIT: Option<&str> = None;
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
-#[cfg(unix)]
-const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
-#[cfg(windows)]
-const DESK_GUIDE: &str = r"C:\ProgramData\cocoonbox\desk\AGENTS.md";
 const ANDROID_GUIDE: &str = "/opt/android/AGENTS.md";
 #[cfg(unix)]
 const TOOLS_DIR: &str = "/etc/cocoonbox/tools.d";

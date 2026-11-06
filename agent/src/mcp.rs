@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tonic::Status;
 
-use crate::config::Automation;
+use crate::config::{Automation, DESK_GUIDE};
 use crate::dispatch::{Caller, ToolOutput, uses_driver};
 use crate::identity::{CREDENTIAL_HEADER, Denied, Gate, Principal};
 use crate::llm::{b64, image_mime};
@@ -70,7 +70,7 @@ const MAX_SHARE_SESSIONS: usize = 4;
 const SHARE_SESSIONS_FULL: &str = "a share user holds at most 4 open MCP sessions: close one first";
 const DESK_RESOURCES: [Resource; 1] = [Resource {
     uri: Cow::Borrowed("cocoonbox://desk/AGENTS.md"),
-    path: Cow::Borrowed("/opt/desk/AGENTS.md"),
+    path: Cow::Borrowed(DESK_GUIDE),
     mime: Cow::Borrowed("text/markdown"),
     description: Cow::Borrowed(
         "How to write, run and replay desk scripts on this box, with the desk API",
@@ -1115,6 +1115,19 @@ fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_desk_resource_uses_the_platform_guide_path() {
+        assert_eq!(DESK_RESOURCES[0].uri, "cocoonbox://desk/AGENTS.md");
+        assert_eq!(
+            DESK_RESOURCES[0].path,
+            if cfg!(windows) {
+                r"C:\ProgramData\cocoonbox\desk\AGENTS.md"
+            } else {
+                "/opt/desk/AGENTS.md"
+            }
+        );
+    }
 
     #[test]
     fn routing_extra_joins_the_instructions_until_the_cap() {
