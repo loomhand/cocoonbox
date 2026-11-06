@@ -61,7 +61,8 @@ impl Client {
             state: Mutex::new(State {
                 session: None,
                 tools: Arc::default(),
-                stale: true,
+                changes: 1,
+                listed: 0,
                 retry_at: None,
             }),
         })
@@ -87,7 +88,7 @@ impl Client {
                     }
                     Err(e) => eprintln!("connect: list_changed stream: {e}"),
                 }
-                client.state().stale = true;
+                client.state().changes += 1;
                 if start.elapsed() >= RETRY {
                     delay = RETRY_MIN;
                 }
@@ -102,24 +103,24 @@ impl Client {
 
     /// The connector tools, listed again after a change; a failed list keeps the last one and waits before the next.
     pub async fn tools(&self) -> Arc<Vec<ToolSpec>> {
-        {
-            let mut st = self.state();
-            if !st.stale || st.retry_at.is_some_and(|at| Instant::now() < at) {
+        let changes = {
+            let st = self.state();
+            if st.listed == st.changes || st.retry_at.is_some_and(|at| Instant::now() < at) {
                 return Arc::clone(&st.tools);
             }
-            st.stale = false;
-        }
+            st.changes
+        };
         match self.list().await {
             Ok(tools) => {
                 let mut st = self.state();
                 st.tools = Arc::new(tools);
+                st.listed = changes;
                 st.retry_at = None;
                 Arc::clone(&st.tools)
             }
             Err(e) => {
                 eprintln!("connect: list tools: {e}");
                 let mut st = self.state();
-                st.stale = true;
                 st.retry_at = Some(Instant::now() + RETRY);
                 Arc::clone(&st.tools)
             }
@@ -257,7 +258,7 @@ impl Client {
             }
             return Err(format!("the door answered {}", resp.status()));
         }
-        self.state().stale = true;
+        self.state().changes += 1;
         Ok(resp)
     }
 
@@ -278,7 +279,7 @@ impl Client {
                 if let Some(data) = line.strip_prefix(b"data:") {
                     let data = String::from_utf8_lossy(data);
                     if data.contains(LIST_CHANGED) {
-                        self.state().stale = true;
+                        self.state().changes += 1;
                     } else if let Some((id, approve)) = approval_answer(&data) {
                         answered(&id, approve);
                     }
@@ -304,7 +305,8 @@ impl Client {
 struct State {
     session: Option<String>,
     tools: Arc<Vec<ToolSpec>>,
-    stale: bool,
+    changes: u64,
+    listed: u64,
     retry_at: Option<Instant>,
 }
 
