@@ -119,14 +119,12 @@ impl Mcp {
             Automation::Minimal | Automation::Android => Vec::new(),
             Automation::Desk => DESK_RESOURCES.to_vec(),
         };
-        if automation.plans() {
-            resources.extend(plugins.iter().flat_map(|p| &p.resources).map(|r| Resource {
-                uri: Cow::Owned(r.uri.clone()),
-                path: Cow::Owned(r.path.display().to_string()),
-                mime: Cow::Owned(r.mime.clone()),
-                description: Cow::Owned(r.description.clone()),
-            }));
-        }
+        resources.extend(plugins.iter().flat_map(|p| &p.resources).map(|r| Resource {
+            uri: Cow::Owned(r.uri.clone()),
+            path: Cow::Owned(r.path.display().to_string()),
+            mime: Cow::Owned(r.mime.clone()),
+            description: Cow::Owned(r.description.clone()),
+        }));
         Arc::new(Self {
             rt,
             gate,
