@@ -248,11 +248,10 @@ func TestScreenRelaysPerBoxAreCapped(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		if err := stream.Send(&agentv1.ScreenClientFrame{Body: &agentv1.ScreenClientFrame_Open{Open: &agentv1.ScreenOpen{}}}); err != nil {
-			return nil, err
-		}
-		if err := stream.Send(screenData([]byte("x"))); err != nil {
-			return nil, err
+		for _, frame := range []*agentv1.ScreenClientFrame{{Body: &agentv1.ScreenClientFrame_Open{Open: &agentv1.ScreenOpen{}}}, screenData([]byte("x"))} {
+			if err := stream.Send(frame); err != nil && !errors.Is(err, io.EOF) {
+				return nil, err
+			}
 		}
 		_, err = stream.Recv()
 		return stream, err
