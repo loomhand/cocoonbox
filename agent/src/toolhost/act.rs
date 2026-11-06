@@ -115,15 +115,12 @@ fn is_chrome(app: &str) -> bool {
 }
 
 fn card_roots() -> Vec<PathBuf> {
-    let tmp = if cfg!(windows) {
-        std::env::temp_dir()
-    } else {
-        PathBuf::from("/tmp")
-    };
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    std::iter::once(tmp).chain(home).collect()
+    std::iter::once(super::scratch_dir(""))
+        .chain(home)
+        .collect()
 }
 
 fn native_path(path: &str) -> PathBuf {
