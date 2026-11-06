@@ -96,10 +96,7 @@ func (l *Library) EnableShared(shared *cluster.Store) {
 
 // List returns user's library rev and flows, newest first.
 func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error) {
-	unlock, err := l.lock(ctx, user)
-	if err != nil {
-		return 0, nil, err
-	}
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -115,10 +112,7 @@ func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error
 
 // Get returns one flow and its content.
 func (l *Library) Get(ctx context.Context, user, name string) (Entry, []byte, error) {
-	unlock, err := l.lock(ctx, user)
-	if err != nil {
-		return Entry{}, nil, err
-	}
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
