@@ -13,8 +13,6 @@ service Account {
   // RevokeDevice signs one device out; NOT_FOUND for another user's device or
   // one already gone.
   rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
-  // RevokeToken drops the personal token; device tokens stay.
-  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
   // SignOutEverywhere ends every sign-in of the caller, the calling one too:
   // console sessions, the personal token, device tokens and agents' OAuth
   // grants. Boxes, shares and connected accounts stay.
@@ -46,10 +44,6 @@ message RevokeDeviceRequest {
 }
 
 message RevokeDeviceResponse {}
-
-message RevokeTokenRequest {}
-
-message RevokeTokenResponse {}
 
 message SignOutEverywhereRequest {}
 

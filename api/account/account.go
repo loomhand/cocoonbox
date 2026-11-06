@@ -19,7 +19,6 @@ type Users interface {
 	Devices(ctx context.Context, id string) ([]users.Device, error)
 	TokenDevice(sum string) string
 	RevokeDevice(ctx context.Context, id, device string) error
-	RevokeToken(ctx context.Context, id string) error
 	SignOut(ctx context.Context, id string) error
 }
 
@@ -80,18 +79,6 @@ func (s *Server) RevokeDevice(ctx context.Context, req *controlv1.RevokeDeviceRe
 	}
 	log.WithFunc("account.Server.RevokeDevice").Infof(ctx, "user %s revoked device %s", user, req.GetDeviceId())
 	return &controlv1.RevokeDeviceResponse{}, nil
-}
-
-func (s *Server) RevokeToken(ctx context.Context, _ *controlv1.RevokeTokenRequest) (*controlv1.RevokeTokenResponse, error) {
-	user, err := auth.Caller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.users.RevokeToken(ctx, user); err != nil {
-		return nil, internal(ctx, err, "revoke token")
-	}
-	log.WithFunc("account.Server.RevokeToken").Infof(ctx, "user %s revoked the personal token", user)
-	return &controlv1.RevokeTokenResponse{}, nil
 }
 
 func (s *Server) SignOutEverywhere(ctx context.Context, _ *controlv1.SignOutEverywhereRequest) (*controlv1.SignOutEverywhereResponse, error) {
