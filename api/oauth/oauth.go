@@ -1,5 +1,4 @@
-// Package oauth makes the control MCP an OAuth 2.1 protected resource (MCP authorization 2025-11-25): it registers
-// clients, issues a code once the user consents in the console, and issues tokens that reach only the boxes their grant creates or the user chooses for it.
+// Package oauth makes the control MCP an OAuth 2.1 protected resource (MCP authorization 2025-11-25) whose tokens reach only their grant's boxes.
 package oauth
 
 import (

@@ -200,7 +200,6 @@ func agentScope(scope string) (connect, ok bool) {
 	return slices.Contains(fields, ConnectScope), len(fields) == 0 || slices.Contains(fields, Scope)
 }
 
-// grantedScope is the scope a token of a grant reports: ConnectScope too once the user ticked an account for it.
 func grantedScope(connectors bool) string {
 	if connectors {
 		return agentScopes

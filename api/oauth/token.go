@@ -154,7 +154,6 @@ func (s *Service) serveDevice(w http.ResponseWriter, r *http.Request, c code) {
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "Bearer", scopeParam: AccountScope})
 }
 
-// verifies checks a PKCE S256 verifier against its challenge.
 func verifies(verifier, challenge string) bool {
 	if len(verifier) < minVerifierLen || len(verifier) > maxVerifierLen {
 		return false

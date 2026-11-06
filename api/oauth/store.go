@@ -42,7 +42,6 @@ type code struct {
 	codeSHA256   string
 }
 
-// querier reads within a transaction or from the pool.
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
@@ -272,7 +271,6 @@ func (s *store) markSeen(ctx context.Context, user string) error {
 	return err
 }
 
-// setChosen replaces the boxes user chose for grant id.
 func (s *store) setChosen(ctx context.Context, user, id string, boxes []string) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, "SELECT id FROM oauth_grants WHERE id = $1 AND user_id = $2 FOR UPDATE", id, user)

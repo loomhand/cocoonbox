@@ -63,7 +63,6 @@ type registration struct {
 	Redirects []string `json:"r"`
 }
 
-// metadataDocument is the part of a client ID metadata document the server reads.
 type metadataDocument struct {
 	ClientID     string   `json:"client_id"`
 	ClientName   string   `json:"client_name"`

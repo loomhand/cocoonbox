@@ -1057,7 +1057,6 @@ func (e *env) connectConsent(t *testing.T, q url.Values) connectConsent {
 	return consent
 }
 
-// connectGrant consents with the connect scope, ticking boxes and connectors, and returns the access and refresh tokens and the scope the token endpoint reports.
 func (e *env) connectGrant(t *testing.T, clientID string, boxes []string, connectors ...string) (string, string, string) {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
@@ -1101,7 +1100,6 @@ func (e *env) rootRPC(t *testing.T, token, session, method string, params any) *
 	return resp
 }
 
-// rootTools returns the unified MCP's tools by name, each with its annotations.
 func (e *env) rootTools(t *testing.T, token string) map[string]string {
 	t.Helper()
 	var out struct {
