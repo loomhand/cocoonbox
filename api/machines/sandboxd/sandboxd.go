@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"slices"
@@ -876,7 +877,7 @@ func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
 		node, err := b.node(addr)
 		var rows []row
 		if err == nil {
-			rows, err = node.find(ctx, metaMachine, id)
+			rows, err = node.sandboxes(ctx, url.Values{"metadata": {metaMachine + "=" + id}})
 		}
 		switch {
 		case err != nil:
@@ -1143,7 +1144,7 @@ func (b *Backend) listMesh(ctx context.Context, addrs []string) (map[string][]ro
 		wg.Go(func() {
 			node, err := b.node(addr)
 			if err == nil {
-				lists[i], err = node.list(ctx)
+				lists[i], err = node.sandboxes(ctx, nil)
 			}
 			errs[i] = err
 		})
@@ -1301,7 +1302,7 @@ func (b *Backend) renew(ctx context.Context) error {
 		if err == nil {
 			err = node.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire})
 		}
-		if err != nil && !isStatus(err, http.StatusConflict) {
+		if err != nil && !errors.Is(err, machines.ErrConflict) {
 			errs = append(errs, err)
 		}
 	}
