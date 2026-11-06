@@ -61,6 +61,12 @@ type boxTransport struct {
 	transport *http.Transport
 }
 
+type jsonRPCError struct {
+	JSONRPC string        `json:"jsonrpc"`
+	ID      any           `json:"id"`
+	Error   mcpwire.Error `json:"error"`
+}
+
 // MCP proxies MCP Streamable HTTP exchanges to the agent of the caller's box.
 type MCP struct {
 	resolver Resolver
@@ -292,12 +298,6 @@ func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.C
 		DialContext:     dial,
 		IdleConnTimeout: agentIdleTimeout,
 	}
-}
-
-type jsonRPCError struct {
-	JSONRPC string        `json:"jsonrpc"`
-	ID      any           `json:"id"`
-	Error   mcpwire.Error `json:"error"`
 }
 
 func writeJSONRPCError(w http.ResponseWriter, err error) {

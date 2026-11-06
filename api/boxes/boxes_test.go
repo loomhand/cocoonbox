@@ -25,6 +25,7 @@ import (
 const (
 	alice    = "alice"
 	aliceBox = "cb-2bd806c97f0e"
+	bob      = "bob"
 
 	refreshEvent = -1
 )

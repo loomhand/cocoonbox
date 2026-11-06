@@ -46,12 +46,12 @@ func (a *AccessLog) write(ctx context.Context, method, box string, err error, st
 	log.WithFunc("boxes.AccessLog.write").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
 }
 
-func accessLine(method, user, box string, code codes.Code, took time.Duration) string {
-	return fmt.Sprintf("%s user=%s box=%q code=%s in %s", strings.TrimPrefix(method, boxesServicePrefix), user, box, code, took.Round(time.Millisecond))
-}
-
 type boxRequest interface {
 	GetBoxId() string
+}
+
+func accessLine(method, user, box string, code codes.Code, took time.Duration) string {
+	return fmt.Sprintf("%s user=%s box=%q code=%s in %s", strings.TrimPrefix(method, boxesServicePrefix), user, box, code, took.Round(time.Millisecond))
 }
 
 func boxOf(req any) string {

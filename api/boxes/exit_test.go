@@ -8,10 +8,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
-const (
-	bob         = "bob"
-	residential = "http://10.203.1.2:8823"
-)
+const residential = "http://10.203.1.2:8823"
 
 func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	fake := newFakeMachines()
