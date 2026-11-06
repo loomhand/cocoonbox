@@ -484,9 +484,6 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 	if g == nil && ref == "" {
 		return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{})
 	}
-	if g != nil {
-		defer s.locks.Lock(g.ID)()
-	}
 	box, err := s.box(ctx, ref)
 	switch {
 	case err != nil:
@@ -494,14 +491,8 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 	case box == nil:
 		return nil, errNoGrantBox
 	}
-	if g != nil && !holdsMemory(box) && !slices.Contains(g.Chosen, box.GetId()) {
-		list, err := s.created(ctx, g)
-		if err != nil {
-			return nil, err
-		}
-		if err = checkRunning(g, list); err != nil {
-			return nil, err
-		}
+	if g != nil {
+		ctx = boxes.WithStartCheck(ctx, func(ctx context.Context) error { return s.checkStart(ctx, g, box.GetId()) })
 	}
 	return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{BoxId: box.GetId()})
 }
@@ -512,19 +503,34 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 	if g == nil {
 		return s.boxes.Create(ctx, req)
 	}
-	defer s.locks.Lock(g.ID)()
-	list, err := s.created(ctx, g)
-	if err != nil {
-		return nil, err
-	}
-	if len(list) >= g.MaxBoxes {
-		return nil, toolError(fmt.Sprintf("This client may keep %s at most; delete one of its boxes first.", countBoxes(g.MaxBoxes)))
-	}
-	if err = checkRunning(g, list); err != nil {
-		return nil, err
-	}
+	ctx = boxes.WithStartCheck(ctx, func(ctx context.Context) error { return s.checkStart(ctx, g, "") })
 	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
 	return s.boxes.Create(boxes.WithAgent(ctx, record), req)
+}
+
+func (s *Server) checkStart(ctx context.Context, g *oauth.Grant, id string) error {
+	if s.accounts != nil {
+		if err := s.accounts.Load(ctx); err != nil {
+			return status.Error(codes.Unavailable, "reading the user's boxes failed")
+		}
+	}
+	if id != "" {
+		box, err := s.box(ctx, id)
+		if err != nil {
+			return err
+		}
+		if holdsMemory(box) || slices.Contains(g.Chosen, id) {
+			return nil
+		}
+	}
+	list, err := s.grantBoxes(ctx, g, nil)
+	if err != nil {
+		return err
+	}
+	if id == "" && len(list) >= g.MaxBoxes {
+		return toolError(fmt.Sprintf("This client may keep %s at most; delete one of its boxes first.", countBoxes(g.MaxBoxes)))
+	}
+	return checkRunning(g, list)
 }
 
 // visible returns the caller's boxes, oldest first: for a grant, those it created and those the user chose for it.
@@ -535,11 +541,6 @@ func (s *Server) visible(ctx context.Context) ([]*controlv1.Box, error) {
 		return resp.GetBoxes(), err
 	}
 	return s.grantBoxes(ctx, g, g.Chosen)
-}
-
-// created returns the boxes grant g created, oldest first, which alone count toward its caps.
-func (s *Server) created(ctx context.Context, g *oauth.Grant) ([]*controlv1.Box, error) {
-	return s.grantBoxes(ctx, g, nil)
 }
 
 // grantBoxes returns the boxes grant g created and those of chosen, oldest first.

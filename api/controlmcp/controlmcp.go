@@ -25,7 +25,6 @@ import (
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
-	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -105,7 +104,7 @@ type Server struct {
 	agents Agents
 	lists  ToolLists
 
-	locks utils.Locks
+	accounts *users.Service
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -120,6 +119,10 @@ func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
 // EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps, and those the user chose for it.
 func (s *Server) EnableGrants(grants Grants) {
 	s.grants = grants
+}
+
+func (s *Server) EnableShared(accounts *users.Service) {
+	s.accounts = accounts
 }
 
 // EnableBoxTools serves RootPath: the control tools and the tools of the default box, which agents reach and lists keep while the box sleeps.
