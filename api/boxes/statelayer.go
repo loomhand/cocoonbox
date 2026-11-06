@@ -281,14 +281,14 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 			if err != nil {
 				return err
 			}
-			req.Puts = append(req.Puts, &agentv1.PresignedPut{ChunkId: c.ID, Url: put.URL, Headers: put.Headers})
+			req.Puts = append(req.Puts, &agentv1.PresignedPut{ChunkId: c.ID, Url: put.URL})
 		}
 		if last {
 			manifest, err := l.store.PresignPut(ctx, p.manifest(rec.ID))
 			if err != nil {
 				return err
 			}
-			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
+			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL}
 		}
 		offset, size := sent, batchBytes(batch)
 		final, err := l.agents.Upload(auth(ctx), p.box, ep, req, plaintextProgress(size, func(tp *agentv1.TransferProgress) {
