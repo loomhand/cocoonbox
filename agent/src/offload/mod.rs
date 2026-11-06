@@ -551,11 +551,11 @@ fn read_index_file(path: &Path) -> Result<Index, String> {
 
 async fn stdin_text() -> Result<String, Fail> {
     tokio::task::spawn_blocking(|| {
-        let mut s = String::new();
+        let mut raw = Vec::new();
         std::io::stdin()
             .take(handover::MAX_BODY as u64 + 1)
-            .read_to_string(&mut s)
-            .map(|_| s)
+            .read_to_end(&mut raw)
+            .map(|_| String::from_utf8_lossy(&raw).into_owned())
             .map_err(|e| Fail::Usage(format!("read stdin: {e}")))
     })
     .await
