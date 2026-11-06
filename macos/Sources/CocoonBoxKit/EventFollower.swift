@@ -58,12 +58,20 @@ public struct EventFollower<Event: Sendable>: Sendable {
         onDisconnect: @escaping @Sendable (any Error) async -> Void
     ) async {
         let cursor = Mutex(offset)
+        let resynced = Mutex(offset != 0)
         let progressed = Mutex(false)
         var attempt = 0
         let clock = ContinuousClock()
         while !Task.isCancelled {
             let from = cursor.withLock { $0 }
-            let resync = from == 0 ? Task { await onResync() } : nil
+            var resync: Task<Void, Never>?
+            if from == 0 || !resynced.withLock({ $0 }) {
+                resynced.withLock { $0 = false }
+                resync = Task { @Sendable in
+                    await onResync()
+                    if !Task.isCancelled { resynced.withLock { $0 = true } }
+                }
+            }
             defer { resync?.cancel() }
             progressed.withLock { $0 = false }
             let started = clock.now
