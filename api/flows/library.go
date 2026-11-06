@@ -16,6 +16,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/utils"
@@ -80,7 +81,8 @@ type Library struct {
 	store store.Store
 	seal  keyring.Sealer
 
-	users utils.Locks
+	users  utils.Locks
+	shared *cluster.Store
 }
 
 // NewLibrary keeps flows in st under each user's prefix.
@@ -88,9 +90,16 @@ func NewLibrary(st store.Store, keys keyring.Keyring) *Library {
 	return &Library{store: st, seal: keyring.Sealer{Keys: keys, Info: sealInfo}}
 }
 
+func (l *Library) EnableShared(shared *cluster.Store) {
+	l.shared = shared
+}
+
 // List returns user's library rev and flows, newest first.
 func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error) {
-	unlock := l.users.Lock(user)
+	unlock, err := l.lock(ctx, user)
+	if err != nil {
+		return 0, nil, err
+	}
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -106,7 +115,10 @@ func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error
 
 // Get returns one flow and its content.
 func (l *Library) Get(ctx context.Context, user, name string) (Entry, []byte, error) {
-	unlock := l.users.Lock(user)
+	unlock, err := l.lock(ctx, user)
+	if err != nil {
+		return Entry{}, nil, err
+	}
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -133,7 +145,10 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 	if err := Check(name, content); err != nil {
 		return Entry{}, err
 	}
-	unlock := l.users.Lock(user)
+	unlock, err := l.lock(ctx, user)
+	if err != nil {
+		return Entry{}, err
+	}
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -185,7 +200,10 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 
 // Delete removes the named flows and returns the names the library held.
 func (l *Library) Delete(ctx context.Context, user string, names []string) ([]string, error) {
-	unlock := l.users.Lock(user)
+	unlock, err := l.lock(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -208,6 +226,13 @@ func (l *Library) Delete(ctx context.Context, user string, names []string) ([]st
 	}
 	l.dropObjects(ctx, user, objects)
 	return deleted, nil
+}
+
+func (l *Library) lock(ctx context.Context, user string) (func(), error) {
+	if l.shared != nil {
+		return l.shared.Lock(ctx, "flows:"+user)
+	}
+	return l.users.Lock(user), nil
 }
 
 func (l *Library) index(ctx context.Context, user string) (*index, error) {
