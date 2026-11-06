@@ -147,6 +147,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	defer unlock()
 	if s.ops.activeFor(op.boxID) != op || err == nil && !s.ops.claim(op.ctx, op) {
 		logger.Infof(op.ctx, "a client took %s over; it stays", m.ID)
+		op.fail("superseded; the machine stays")
 		return
 	}
 	if err == nil {

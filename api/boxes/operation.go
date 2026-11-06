@@ -35,7 +35,6 @@ type eventRecord struct {
 	Phase      int32  `json:"phase"`
 	Detail     string `json:"detail,omitempty"`
 	OffsetKey  string `json:"offset_key"`
-	AtMs       int64  `json:"at_ms"`
 	BoxState   int32  `json:"box_state,omitzero"`
 	DoneBytes  uint64 `json:"done_bytes,omitzero"`
 	TotalBytes uint64 `json:"total_bytes,omitzero"`
@@ -165,7 +164,6 @@ func (o *operation) appendBytesLocked(phase controlv1.Phase, detail string, stat
 		Phase:       phase,
 		Detail:      detail,
 		OffsetKey:   strconv.Itoa(next),
-		AtMs:        time.Now().UnixMilli(),
 		BoxState:    state,
 		DoneBytes:   done,
 		TotalBytes:  total,
@@ -241,7 +239,6 @@ func newOperations() *operations {
 	return &operations{watchers: &watchers{next: map[string]chan struct{}{}}, byID: map[string]*operation{}, active: map[string]*operation{}}
 }
 
-// start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one of user whose context derives from base.
 func (r *operations) start(base context.Context, user, boxID string, phase controlv1.Phase, gen int64, timeout time.Duration) (*operation, bool) {
 	return r.begin(base, &operation{user: user, boxID: boxID, phase: phase, gen: gen}, timeout)
 }
@@ -444,7 +441,7 @@ func (r *operations) end(ctx context.Context, id, detail string) bool {
 			state, next = events[n-1].BoxState, offsetOf(events[n-1].OffsetKey)+1
 		}
 		events = append(events, eventRecord{
-			Phase: int32(controlv1.Phase_PHASE_FAILED), Detail: detail, OffsetKey: strconv.Itoa(next), AtMs: time.Now().UnixMilli(), BoxState: state,
+			Phase: int32(controlv1.Phase_PHASE_FAILED), Detail: detail, OffsetKey: strconv.Itoa(next), BoxState: state,
 		})
 		return json.Marshal(events)
 	})
@@ -558,7 +555,7 @@ func fromEventRecords(id string, raw []byte) []*controlv1.OperationEvent {
 	events := make([]*controlv1.OperationEvent, len(recs))
 	for i, e := range recs {
 		events[i] = &controlv1.OperationEvent{
-			OperationId: id, Phase: controlv1.Phase(e.Phase), Detail: e.Detail, OffsetKey: e.OffsetKey, AtMs: e.AtMs,
+			OperationId: id, Phase: controlv1.Phase(e.Phase), Detail: e.Detail, OffsetKey: e.OffsetKey,
 			BoxState: controlv1.BoxState(e.BoxState), DoneBytes: e.DoneBytes, TotalBytes: e.TotalBytes,
 		}
 	}
@@ -569,7 +566,7 @@ func eventRecords(events []*controlv1.OperationEvent) []byte {
 	recs := make([]eventRecord, len(events))
 	for i, ev := range events {
 		recs[i] = eventRecord{
-			Phase: int32(ev.GetPhase()), Detail: ev.GetDetail(), OffsetKey: ev.GetOffsetKey(), AtMs: ev.GetAtMs(),
+			Phase: int32(ev.GetPhase()), Detail: ev.GetDetail(), OffsetKey: ev.GetOffsetKey(),
 			BoxState: int32(ev.GetBoxState()), DoneBytes: ev.GetDoneBytes(), TotalBytes: ev.GetTotalBytes(),
 		}
 	}

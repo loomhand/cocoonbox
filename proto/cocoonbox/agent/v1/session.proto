@@ -81,17 +81,17 @@ message ExecServerFrame {
 }
 
 message HelloRequest {
-  string client_version = 1;
+  reserved 1;
+  reserved "client_version";
 }
 
 message HelloResponse {
+  reserved 4, 5;
+  reserved "models", "default_main_model";
   string agent_version = 1;
-  // The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
-  // Android. A later change in the box, such as `wm size`, is not reflected.
+  // The screen size the image boots at; a later change such as `wm size` is not reflected.
   uint32 screen_width = 2;
   uint32 screen_height = 3;
-  repeated string models = 4;
-  string default_main_model = 5;
   Automation automation = 6;
 }
 

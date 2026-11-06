@@ -53,7 +53,6 @@ final class MCPUpstream: Sendable {
         return answer.isEmpty ? nil : answer
     }
 
-    // listen holds the server stream and hands each message on it to `notify` until the stream ends.
     func listen(_ notify: @Sendable (Data) async -> Void) async throws {
         let (bytes, _) = try await open(request("GET", accept: "text/event-stream", timeout: 90))
         for try await line in bytes.lines {
@@ -71,7 +70,6 @@ final class MCPUpstream: Sendable {
         return request
     }
 
-    // open sends request and keeps the session id the server issues; a status other than 200 or 202 throws.
     private func open(_ request: URLRequest) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         guard let http = response as? HTTPURLResponse else { throw Failure.http(0) }
@@ -100,7 +98,6 @@ final class MCPUpstream: Sendable {
         _ = try? await URLSession.shared.data(for: request)
     }
 
-    // eventData extracts the payload of one SSE `data:` line.
     static func eventData(_ line: String) -> Data? {
         guard line.hasPrefix("data:") else { return nil }
         let payload = line.dropFirst(5).drop { $0 == " " }

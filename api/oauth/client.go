@@ -63,7 +63,6 @@ type registration struct {
 	Redirects []string `json:"r"`
 }
 
-// metadataDocument is the part of a client ID metadata document the server reads.
 type metadataDocument struct {
 	ClientID     string   `json:"client_id"`
 	ClientName   string   `json:"client_name"`
@@ -167,14 +166,10 @@ func (s *Service) document(ctx context.Context, id string) (client, error) {
 	return c, nil
 }
 
-// register signs a client id that carries the client's name and redirect URIs.
-func (s *Service) register(name string, redirects []string) (string, error) {
-	payload, err := json.Marshal(registration{Name: name, Redirects: redirects})
-	if err != nil {
-		return "", err
-	}
+func (s *Service) register(name string, redirects []string) string {
+	payload, _ := json.Marshal(registration{Name: name, Redirects: redirects})
 	encoded := base64.RawURLEncoding.EncodeToString(payload)
-	return dcrPrefix + encoded + "." + base64.RawURLEncoding.EncodeToString(s.mac(encoded)), nil
+	return dcrPrefix + encoded + "." + base64.RawURLEncoding.EncodeToString(s.mac(encoded))
 }
 
 func (s *Service) registered(id string) (client, error) {

@@ -64,17 +64,17 @@ final class ControlMCP: Sendable {
     private func call(_ name: String, _ arguments: [String: Any], id: Any, token: Any?) async -> HTTPResponse {
         let ref = arguments["box"] as? String ?? ""
         if name == "box_list" {
-            let boxes = await world.boxes.map { ["box_id": $0.id, "name": $0.name, "state": Self.state($0.state), "image": $0.image, "last_saved_at_ms": $0.lastSavedAtMs] as [String: Any] }
+            let boxes = await world.boxes.map { ["box_id": $0.id, "name": $0.name, "state": $0.state.name, "image": $0.image, "last_saved_at_ms": $0.lastSavedAtMs] as [String: Any] }
             return .rpcResult(id, Self.success(["boxes": boxes]))
         }
         if name == "box_create" {
             do {
                 let response = try await world.create(name: arguments["name"] as? String ?? "", image: arguments["image"] as? String ?? "")
                 guard arguments["wait"] as? Bool ?? true else {
-                    return .rpcResult(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
+                    return .rpcResult(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": response.box.state.name, "operation_id": response.operation.id]))
                 }
                 return await wait(response.operation.id, box: response.box.id, id: id, token: token, verb: "Create") { box, op in
-                    ["box_id": box.id, "name": box.name, "state": Self.state(box.state), "operation_id": op]
+                    ["box_id": box.id, "name": box.name, "state": box.state.name, "operation_id": op]
                 }
             } catch let error as RPCError {
                 return .rpcResult(id, Self.failure(error.message))
@@ -104,18 +104,18 @@ final class ControlMCP: Sendable {
                 return .rpcError(id, -32603, "\(error)")
             }
             guard response.hasOperation, !response.operation.id.isEmpty, arguments["wait"] as? Bool ?? true else {
-                return .rpcResult(id, Self.success(["box_id": box.id, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
+                return .rpcResult(id, Self.success(["box_id": box.id, "state": response.box.state.name, "operation_id": response.operation.id]))
             }
             return await wait(response.operation.id, box: box.id, id: id, token: token, verb: "Ensure") { box, op in
-                ["box_id": box.id, "state": Self.state(box.state), "operation_id": op]
+                ["box_id": box.id, "state": box.state.name, "operation_id": op]
             }
         case "box_hibernate", "box_save":
-            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(Self.state(box.state)).")) }
+            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(box.state.name).")) }
             let hibernate = name == "box_hibernate"
             let op = hibernate ? await world.hibernate(box.id) : await world.saveState(box.id)
             return await wait(op.id, box: box.id, id: id, token: token, verb: hibernate ? "Hibernate" : "Save") { box, op in
                 hibernate
-                    ? ["box_id": box.id, "state": Self.state(box.state), "operation_id": op]
+                    ? ["box_id": box.id, "state": box.state.name, "operation_id": op]
                     : ["box_id": box.id, "last_saved_at_ms": box.lastSavedAtMs, "operation_id": op, "bytes": 48 << 20]
             }
         case "box_upgrade":
@@ -125,7 +125,7 @@ final class ControlMCP: Sendable {
             guard box.latestImage != box.image else { return .rpcResult(id, Self.failure("Already on the latest image.")) }
             let op = await world.rebase(box.id, image: box.latestImage)
             return await wait(op.id, box: box.id, id: id, token: token, verb: "Upgrade") { box, op in
-                ["box_id": box.id, "state": Self.state(box.state), "image": box.image, "operation_id": op]
+                ["box_id": box.id, "state": box.state.name, "image": box.image, "operation_id": op]
             }
         case "box_delete":
             guard arguments["confirm"] as? Bool == true else {
@@ -192,7 +192,7 @@ final class ControlMCP: Sendable {
 
     private func status(_ box: Box) -> [String: Any] {
         [
-            "box_id": box.id, "name": box.name, "state": Self.state(box.state), "image": box.image, "latest_image": box.latestImage,
+            "box_id": box.id, "name": box.name, "state": box.state.name, "image": box.image, "latest_image": box.latestImage,
             "upgrade_available": !box.latestImage.isEmpty && box.latestImage != box.image, "last_saved_at_ms": box.lastSavedAtMs,
         ]
     }
@@ -203,17 +203,6 @@ final class ControlMCP: Sendable {
 
     private static func failure(_ text: String) -> [String: Any] {
         ["isError": true, "content": [["type": "text", "text": text]]]
-    }
-
-    private static func state(_ state: Cocoonbox_Control_V1_BoxState) -> String {
-        switch state {
-        case .starting: "starting"
-        case .running: "running"
-        case .hibernating: "hibernating"
-        case .hibernated: "hibernated"
-        case .failed: "failed"
-        default: "absent"
-        }
     }
 
     private static func phase(_ phase: Cocoonbox_Control_V1_Phase) -> String {

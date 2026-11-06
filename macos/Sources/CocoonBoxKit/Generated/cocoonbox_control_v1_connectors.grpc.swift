@@ -46,32 +46,6 @@ public enum Cocoonbox_Control_V1_Connectors: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "Begin" metadata.
-        public enum Begin: Sendable {
-            /// Request type for "Begin".
-            public typealias Input = Cocoonbox_Control_V1_BeginConnectRequest
-            /// Response type for "Begin".
-            public typealias Output = Cocoonbox_Control_V1_BeginConnectResponse
-            /// Descriptor for "Begin".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Connectors"),
-                method: "Begin",
-                type: .unary
-            )
-        }
-        /// Namespace for "Disconnect" metadata.
-        public enum Disconnect: Sendable {
-            /// Request type for "Disconnect".
-            public typealias Input = Cocoonbox_Control_V1_ConnectorRef
-            /// Response type for "Disconnect".
-            public typealias Output = Cocoonbox_Control_V1_DisconnectResponse
-            /// Descriptor for "Disconnect".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Connectors"),
-                method: "Disconnect",
-                type: .unary
-            )
-        }
         /// Namespace for "SetPolicy" metadata.
         public enum SetPolicy: Sendable {
             /// Request type for "SetPolicy".
@@ -111,29 +85,13 @@ public enum Cocoonbox_Control_V1_Connectors: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "SpendRequests" metadata.
-        public enum SpendRequests: Sendable {
-            /// Request type for "SpendRequests".
-            public typealias Input = Cocoonbox_Control_V1_SpendRequestsRequest
-            /// Response type for "SpendRequests".
-            public typealias Output = Cocoonbox_Control_V1_SpendRequestsResponse
-            /// Descriptor for "SpendRequests".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Connectors"),
-                method: "SpendRequests",
-                type: .unary
-            )
-        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Connectors" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Catalog.descriptor,
             List.descriptor,
-            Begin.descriptor,
-            Disconnect.descriptor,
             SetPolicy.descriptor,
             Approve.descriptor,
-            Activity.descriptor,
-            SpendRequests.descriptor
+            Activity.descriptor
         ]
     }
 }
@@ -202,44 +160,6 @@ extension Cocoonbox_Control_V1_Connectors {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListConnectorsResponse>
 
-        /// Handle the "Begin" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Begin returns the console page that connects the account. The console
-        /// > binds the flow to its own session, so the app opens the URL in the browser.
-        ///
-        /// - Parameters:
-        ///   - request: A streaming request of `Cocoonbox_Control_V1_BeginConnectRequest` messages.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_BeginConnectResponse` messages.
-        func begin(
-            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_BeginConnectResponse>
-
-        /// Handle the "Disconnect" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Disconnect revokes the grant at the vendor where the vendor offers a
-        /// > revoke call, then deletes it; its tools leave every MCP session.
-        ///
-        /// - Parameters:
-        ///   - request: A streaming request of `Cocoonbox_Control_V1_ConnectorRef` messages.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_DisconnectResponse` messages.
-        func disconnect(
-            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ConnectorRef>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_DisconnectResponse>
-
         /// Handle the "SetPolicy" method.
         ///
         /// > Source IDL Documentation:
@@ -293,26 +213,6 @@ extension Cocoonbox_Control_V1_Connectors {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ActivityRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ActivityResponse>
-
-        /// Handle the "SpendRequests" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user. The api reads Link on this call when its last read is older than
-        /// > 30 seconds, and answers from that read in between.
-        ///
-        /// - Parameters:
-        ///   - request: A streaming request of `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
-        func spendRequests(
-            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Connectors" service.
@@ -364,44 +264,6 @@ extension Cocoonbox_Control_V1_Connectors {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ListConnectorsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListConnectorsResponse>
-
-        /// Handle the "Begin" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Begin returns the console page that connects the account. The console
-        /// > binds the flow to its own session, so the app opens the URL in the browser.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_BeginConnectRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_BeginConnectResponse` message.
-        func begin(
-            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_BeginConnectResponse>
-
-        /// Handle the "Disconnect" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Disconnect revokes the grant at the vendor where the vendor offers a
-        /// > revoke call, then deletes it; its tools leave every MCP session.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_ConnectorRef` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_DisconnectResponse` message.
-        func disconnect(
-            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ConnectorRef>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_DisconnectResponse>
 
         /// Handle the "SetPolicy" method.
         ///
@@ -456,26 +318,6 @@ extension Cocoonbox_Control_V1_Connectors {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ActivityRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse>
-
-        /// Handle the "SpendRequests" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user. The api reads Link on this call when its last read is older than
-        /// > 30 seconds, and answers from that read in between.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_SpendRequestsResponse` message.
-        func spendRequests(
-            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Connectors" service.
@@ -525,44 +367,6 @@ extension Cocoonbox_Control_V1_Connectors {
             request: Cocoonbox_Control_V1_ListConnectorsRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_ListConnectorsResponse
-
-        /// Handle the "Begin" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Begin returns the console page that connects the account. The console
-        /// > binds the flow to its own session, so the app opens the URL in the browser.
-        ///
-        /// - Parameters:
-        ///   - request: A `Cocoonbox_Control_V1_BeginConnectRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_BeginConnectResponse` to respond with.
-        func begin(
-            request: Cocoonbox_Control_V1_BeginConnectRequest,
-            context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_BeginConnectResponse
-
-        /// Handle the "Disconnect" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Disconnect revokes the grant at the vendor where the vendor offers a
-        /// > revoke call, then deletes it; its tools leave every MCP session.
-        ///
-        /// - Parameters:
-        ///   - request: A `Cocoonbox_Control_V1_ConnectorRef` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_DisconnectResponse` to respond with.
-        func disconnect(
-            request: Cocoonbox_Control_V1_ConnectorRef,
-            context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_DisconnectResponse
 
         /// Handle the "SetPolicy" method.
         ///
@@ -617,26 +421,6 @@ extension Cocoonbox_Control_V1_Connectors {
             request: Cocoonbox_Control_V1_ActivityRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_ActivityResponse
-
-        /// Handle the "SpendRequests" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user. The api reads Link on this call when its last read is older than
-        /// > 30 seconds, and answers from that read in between.
-        ///
-        /// - Parameters:
-        ///   - request: A `Cocoonbox_Control_V1_SpendRequestsRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_SpendRequestsResponse` to respond with.
-        func spendRequests(
-            request: Cocoonbox_Control_V1_SpendRequestsRequest,
-            context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_SpendRequestsResponse
     }
 }
 
@@ -661,28 +445,6 @@ extension Cocoonbox_Control_V1_Connectors.StreamingServiceProtocol {
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListConnectorsResponse>(),
             handler: { request, context in
                 try await self.list(
-                    request: request,
-                    context: context
-                )
-            }
-        )
-        router.registerHandler(
-            forMethod: Cocoonbox_Control_V1_Connectors.Method.Begin.descriptor,
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BeginConnectRequest>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BeginConnectResponse>(),
-            handler: { request, context in
-                try await self.begin(
-                    request: request,
-                    context: context
-                )
-            }
-        )
-        router.registerHandler(
-            forMethod: Cocoonbox_Control_V1_Connectors.Method.Disconnect.descriptor,
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ConnectorRef>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_DisconnectResponse>(),
-            handler: { request, context in
-                try await self.disconnect(
                     request: request,
                     context: context
                 )
@@ -721,17 +483,6 @@ extension Cocoonbox_Control_V1_Connectors.StreamingServiceProtocol {
                 )
             }
         )
-        router.registerHandler(
-            forMethod: Cocoonbox_Control_V1_Connectors.Method.SpendRequests.descriptor,
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SpendRequestsRequest>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SpendRequestsResponse>(),
-            handler: { request, context in
-                try await self.spendRequests(
-                    request: request,
-                    context: context
-                )
-            }
-        )
     }
 }
 
@@ -754,28 +505,6 @@ extension Cocoonbox_Control_V1_Connectors.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListConnectorsResponse> {
         let response = try await self.list(
-            request: GRPCCore.ServerRequest(stream: request),
-            context: context
-        )
-        return GRPCCore.StreamingServerResponse(single: response)
-    }
-
-    public func begin(
-        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_BeginConnectResponse> {
-        let response = try await self.begin(
-            request: GRPCCore.ServerRequest(stream: request),
-            context: context
-        )
-        return GRPCCore.StreamingServerResponse(single: response)
-    }
-
-    public func disconnect(
-        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ConnectorRef>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_DisconnectResponse> {
-        let response = try await self.disconnect(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -814,17 +543,6 @@ extension Cocoonbox_Control_V1_Connectors.ServiceProtocol {
         )
         return GRPCCore.StreamingServerResponse(single: response)
     }
-
-    public func spendRequests(
-        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse> {
-        let response = try await self.spendRequests(
-            request: GRPCCore.ServerRequest(stream: request),
-            context: context
-        )
-        return GRPCCore.StreamingServerResponse(single: response)
-    }
 }
 
 // Default implementation of methods from 'ServiceProtocol'.
@@ -849,32 +567,6 @@ extension Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListConnectorsResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListConnectorsResponse>(
             message: try await self.list(
-                request: request.message,
-                context: context
-            ),
-            metadata: [:]
-        )
-    }
-
-    public func begin(
-        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_BeginConnectResponse> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_BeginConnectResponse>(
-            message: try await self.begin(
-                request: request.message,
-                context: context
-            ),
-            metadata: [:]
-        )
-    }
-
-    public func disconnect(
-        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ConnectorRef>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_DisconnectResponse> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_DisconnectResponse>(
-            message: try await self.disconnect(
                 request: request.message,
                 context: context
             ),
@@ -914,19 +606,6 @@ extension Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse>(
             message: try await self.activity(
-                request: request.message,
-                context: context
-            ),
-            metadata: [:]
-        )
-    }
-
-    public func spendRequests(
-        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>(
-            message: try await self.spendRequests(
                 request: request.message,
                 context: context
             ),
@@ -996,54 +675,6 @@ extension Cocoonbox_Control_V1_Connectors {
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListConnectorsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
-        /// Call the "Begin" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Begin returns the console page that connects the account. The console
-        /// > binds the flow to its own session, so the app opens the URL in the browser.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_BeginConnectRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BeginConnectRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_BeginConnectResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func begin<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BeginConnectRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_BeginConnectResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BeginConnectResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "Disconnect" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Disconnect revokes the grant at the vendor where the vendor offers a
-        /// > revoke call, then deletes it; its tools leave every MCP session.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_ConnectorRef` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_ConnectorRef` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_DisconnectResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func disconnect<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ConnectorRef>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ConnectorRef>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_DisconnectResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_DisconnectResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
         /// Call the "SetPolicy" method.
         ///
         /// > Source IDL Documentation:
@@ -1111,31 +742,6 @@ extension Cocoonbox_Control_V1_Connectors {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ActivityResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ActivityResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "SpendRequests" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user. The api reads Link on this call when its last read is older than
-        /// > 30 seconds, and answers from that read in between.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func spendRequests<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -1222,76 +828,6 @@ extension Cocoonbox_Control_V1_Connectors {
             try await self.client.unary(
                 request: request,
                 descriptor: Cocoonbox_Control_V1_Connectors.Method.List.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "Begin" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Begin returns the console page that connects the account. The console
-        /// > binds the flow to its own session, so the app opens the URL in the browser.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_BeginConnectRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BeginConnectRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_BeginConnectResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func begin<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BeginConnectRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_BeginConnectResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BeginConnectResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Cocoonbox_Control_V1_Connectors.Method.Begin.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "Disconnect" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > Disconnect revokes the grant at the vendor where the vendor offers a
-        /// > revoke call, then deletes it; its tools leave every MCP session.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_ConnectorRef` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_ConnectorRef` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_DisconnectResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func disconnect<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ConnectorRef>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ConnectorRef>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_DisconnectResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_DisconnectResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Cocoonbox_Control_V1_Connectors.Method.Disconnect.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -1400,42 +936,6 @@ extension Cocoonbox_Control_V1_Connectors {
                 onResponse: handleResponse
             )
         }
-
-        /// Call the "SpendRequests" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user. The api reads Link on this call when its last read is older than
-        /// > 30 seconds, and answers from that read in between.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func spendRequests<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Cocoonbox_Control_V1_Connectors.Method.SpendRequests.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
     }
 }
 
@@ -1495,66 +995,6 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListConnectorsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListConnectorsResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Begin" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Begin returns the console page that connects the account. The console
-    /// > binds the flow to its own session, so the app opens the URL in the browser.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Cocoonbox_Control_V1_BeginConnectRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func begin<Result>(
-        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BeginConnectRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BeginConnectResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.begin(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BeginConnectRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BeginConnectResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Disconnect" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Disconnect revokes the grant at the vendor where the vendor offers a
-    /// > revoke call, then deletes it; its tools leave every MCP session.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Cocoonbox_Control_V1_ConnectorRef` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func disconnect<Result>(
-        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ConnectorRef>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_DisconnectResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.disconnect(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ConnectorRef>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_DisconnectResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1646,37 +1086,6 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             onResponse: handleResponse
         )
     }
-
-    /// Call the "SpendRequests" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > SpendRequests returns the caller's Link spend requests that wait for the
-    /// > user. The api reads Link on this call when its last read is older than
-    /// > 30 seconds, and answers from that read in between.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func spendRequests<Result>(
-        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.spendRequests(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
 }
 
 // Helpers providing sugared APIs for 'ClientProtocol' methods.
@@ -1742,74 +1151,6 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             metadata: metadata
         )
         return try await self.list(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Begin" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Begin returns the console page that connects the account. The console
-    /// > binds the flow to its own session, so the app opens the URL in the browser.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func begin<Result>(
-        _ message: Cocoonbox_Control_V1_BeginConnectRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BeginConnectResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BeginConnectRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.begin(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Disconnect" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > Disconnect revokes the grant at the vendor where the vendor offers a
-    /// > revoke call, then deletes it; its tools leave every MCP session.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func disconnect<Result>(
-        _ message: Cocoonbox_Control_V1_ConnectorRef,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_DisconnectResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_ConnectorRef>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.disconnect(
             request: request,
             options: options,
             onResponse: handleResponse
@@ -1909,41 +1250,6 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             metadata: metadata
         )
         return try await self.activity(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "SpendRequests" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > SpendRequests returns the caller's Link spend requests that wait for the
-    /// > user. The api reads Link on this call when its last read is older than
-    /// > 30 seconds, and answers from that read in between.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func spendRequests<Result>(
-        _ message: Cocoonbox_Control_V1_SpendRequestsRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.spendRequests(
             request: request,
             options: options,
             onResponse: handleResponse

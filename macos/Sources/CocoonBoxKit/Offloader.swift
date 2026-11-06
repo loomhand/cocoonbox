@@ -324,8 +324,9 @@ public struct Offloader: Sendable {
                 throw OffloadError.failed("the box agent has not handed the work back after \(Int(Self.backWait / 60)) min (status \(status)); BACK stays queued for its next idle. Run back again later, or back --interrupt to stop its current step")
             }
         }
+        let handover = back!.body
         let file = try store.back(key)
-        try Data(back!.body.utf8).write(to: file)
+        try Data(handover.utf8).write(to: file)
         guard let repo = GitRepo.open(URL(fileURLWithPath: record.top), environment: environment) else { throw OffloadError.failed("\(record.top) is no longer a git repository") }
         let ref = "refs/cocoonbox/back/\(record.id)"
         let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
@@ -334,7 +335,7 @@ public struct Offloader: Sendable {
         let landing = try repo.land(id: record.id, base: record.base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
         _ = try await verb(["end", "--repo", key])
         store.remove(key)
-        return BackOutcome(record: record, handover: back!.body, file: file, landing: landing)
+        return BackOutcome(record: record, handover: handover, file: file, landing: landing)
     }
 
     public func read(_ key: String, since: UInt64, wait: Int? = nil) async throws -> ([OutboxEntry], String) {

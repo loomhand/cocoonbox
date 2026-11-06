@@ -31,15 +31,10 @@ const (
 	idpErrorCode = "github_denied"
 )
 
-// tokenHandler serves a call of the invite-scoped token whose id it gets.
-type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
-
 // EnableSignup serves the GitHub sign-in, linking, self-delete, the queue page and the admin's signup calls over sig.
 func (s *Server) EnableSignup(sig *signup.Service) {
 	s.signup = sig
-	s.mux.HandleFunc("GET "+queuePage, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/queue.html")
-	})
+	s.mux.HandleFunc("GET "+queuePage, page("queue.html"))
 	s.mux.HandleFunc("GET "+Prefix+"api/auth/providers", s.providers)
 	s.mux.HandleFunc("POST "+Prefix+"api/auth/github/begin", s.beginLogin)
 	s.mux.HandleFunc("GET "+Prefix+"api/me/identities", s.signedIn(s.listIdentities))
@@ -169,7 +164,6 @@ func (s *Server) unlink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteMe deletes the caller's own account, which the caller confirms by its user name, and gives its seat to the queue.
 func (s *Server) deleteMe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
@@ -309,7 +303,6 @@ func (s *Server) listTokenInvites(w http.ResponseWriter, r *http.Request, token 
 	writeJSON(w, invites)
 }
 
-// createTokenInvite makes a one-use invite for an invite-scoped token; uses, when sent, must be 1.
 func (s *Server) createTokenInvite(w http.ResponseWriter, r *http.Request, token string) {
 	var req struct {
 		Uses int `json:"uses"`
@@ -365,8 +358,7 @@ func (s *Server) revokeInviteToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// inviter runs scoped for a request with an invite-scoped bearer token, which it resolves here, and admin for an admin session.
-func (s *Server) inviter(admin http.HandlerFunc, scoped tokenHandler) http.HandlerFunc {
+func (s *Server) inviter(admin http.HandlerFunc, scoped func(w http.ResponseWriter, r *http.Request, token string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := inviteBearer(r)
 		if !ok {
@@ -416,7 +408,6 @@ func InviteTokenGate(next http.Handler) http.Handler {
 	})
 }
 
-// inviteBearer returns the invite-scoped token of the request's Authorization header.
 func inviteBearer(r *http.Request) (string, bool) {
 	token, ok := auth.Bearer(r.Header.Get("Authorization"))
 	return token, ok && strings.HasPrefix(token, auth.InviteTokenPrefix)

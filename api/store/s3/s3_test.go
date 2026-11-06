@@ -110,15 +110,10 @@ func TestRefusesKeysOutsideTheirPath(t *testing.T) {
 	}
 }
 
-func TestListAndCopyStayUnderThePrefix(t *testing.T) {
-	var copySource, copyPath, listPrefix string
+func TestListStaysUnderThePrefix(t *testing.T) {
+	var listPrefix string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
-		if r.Method == http.MethodPut {
-			copySource, copyPath = r.Header.Get("X-Amz-Copy-Source"), r.URL.Path
-			_, _ = w.Write([]byte(`<CopyObjectResult><ETag>"e"</ETag><LastModified>2026-10-02T00:00:00.000Z</LastModified></CopyObjectResult>`))
-			return
-		}
 		listPrefix = r.URL.Query().Get("prefix")
 		_, _ = w.Write([]byte(`<ListBucketResult><Name>cocoonbox</Name><Prefix>state/cb-a/</Prefix><KeyCount>2</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>` +
 			`<Contents><Key>state/cb-a/chunks/c1</Key><Size>5</Size></Contents><Contents><Key>state/cb-a/head.json</Key><Size>1</Size></Contents></ListBucketResult>`))
@@ -128,12 +123,6 @@ func TestListAndCopyStayUnderThePrefix(t *testing.T) {
 	objects, err := s.List(t.Context(), "cb-a/")
 	if want := []store.Object{{Key: "cb-a/chunks/c1", Size: 5}, {Key: "cb-a/head.json", Size: 1}}; err != nil || listPrefix != "state/cb-a/" || !slices.Equal(objects, want) {
 		t.Errorf("List = %v, %v (prefix %q)", objects, err, listPrefix)
-	}
-	if err := s.Copy(t.Context(), "cb-a/chunks/c1", "alice/chunks/c1"); err != nil {
-		t.Fatalf("Copy: %v", err)
-	}
-	if copySource != "cocoonbox/state/cb-a/chunks/c1" || copyPath != "/cocoonbox/state/alice/chunks/c1" {
-		t.Errorf("copy from %q to %q", copySource, copyPath)
 	}
 	if _, err := s.List(t.Context(), "../cb-b/"); err == nil {
 		t.Error("List outside the prefix accepted")

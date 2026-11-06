@@ -187,10 +187,9 @@ actor MockWorld {
 
     static let offeredImages = ["cbdesk:v22", "cbcore:v1", "cbdroid:v1"]
 
-    // create adds a box within the quota and starts it, as Boxes.Create does; cbcore:v1 and cbdroid:v1, or their families, are the others offered.
+    // create adds a box within the quota and starts it, as Boxes.Create does, from an offered image or family.
     func create(name: String, image: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
-        let offered = ["cbcore": "cbcore:v1", "cbdroid": "cbdroid:v1"]
-        let target = offered[image] ?? (offered.values.contains(image) ? image : nil)
+        let target = Self.offeredImages.first { $0 == image || $0.hasPrefix(image + ":") }
         guard image.isEmpty || target != nil else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
         guard !name.isEmpty, name.count <= 32, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
             throw RPCError(code: .invalidArgument, message: "invalid request: a box name is 1 to 32 lowercase letters, digits, - or _")
@@ -313,8 +312,6 @@ actor MockWorld {
             .with {
                 $0.id = "snap-\(index)"
                 $0.savedAtMs = newest - Int64(index) * 3_600_000
-                $0.files = 1200
-                $0.logicalBytes = 96 << 20
                 $0.addedBytes = UInt64(3 - index) << 20
                 if index < 2 { $0.changedFiles = UInt64(index + 1) }
             }
@@ -453,7 +450,6 @@ actor MockWorld {
         event.phase = phase
         event.detail = detail
         event.offsetKey = String(format: "%04d", (operations[id]?.count ?? 0) + 1)
-        event.atMs = Self.now()
         event.boxState = state
         if state != .unspecified { setState(operationBoxes[id] ?? box.id, state) }
         if state == .running, let delay = externalDelay {
@@ -525,7 +521,7 @@ actor MockWorld {
         }
     }
 
-    func createAgent(name: String, nonce: String, model: String) -> Agent {
+    func createAgent(name: String, nonce: String) -> Agent {
         if !nonce.isEmpty, let id = nonces["create:\(nonce)"], let agent = agents[id] {
             return agent
         }
@@ -533,7 +529,7 @@ actor MockWorld {
         agent.id = Self.id("ag-", 8)
         agent.name = name.isEmpty ? "agent" : name
         agent.status = .idle
-        agent.mainModel = model.isEmpty ? "deepseek/deepseek-v4.1-flash" : model
+        agent.mainModel = "deepseek/deepseek-v4.1-flash"
         agent.createdAtMs = Self.now()
         agent.updatedAtMs = agent.createdAtMs
         agents[agent.id] = agent
@@ -828,7 +824,7 @@ actor MockWorld {
         if openSessions.contains(id) { closeExternal(agent: id, reason: "deleted by the client") }
     }
 
-    func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
+    func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Share {
         guard box(request.boxID)?.id == request.boxID else { throw MockWorld.noBox }
         if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
         guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
@@ -860,7 +856,7 @@ actor MockWorld {
         return live
     }
 
-    func regenerateShare(id: String) throws -> Cocoonbox_Control_V1_ShareSecret {
+    func regenerateShare(id: String) throws -> Share {
         guard let live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
         endSessions(share: id, reason: "the share link was regenerated")
         return issue(live)
@@ -891,19 +887,16 @@ actor MockWorld {
     }
 
     // issue gives the share a new secret and keeps it, so List returns the link as the api does.
-    private func issue(_ live: Share) -> Cocoonbox_Control_V1_ShareSecret {
+    private func issue(_ live: Share) -> Share {
         var issued = live
         issued.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         share = issued
-        return .with {
-            $0.share = issued
-            $0.secret = issued.secret
-        }
+        return issued
     }
 
     // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
     func openExternal(client: String, version: String) -> String {
-        let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
+        let id = createAgent(name: "mcp:\(client)", nonce: "").id
         openSessions.insert(id)
         setStatus(agent: id, .running)
         append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session opened by \(client) \(version)" }))

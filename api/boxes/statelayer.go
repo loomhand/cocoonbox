@@ -281,14 +281,14 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 			if err != nil {
 				return err
 			}
-			req.Puts = append(req.Puts, &agentv1.PresignedPut{ChunkId: c.ID, Url: put.URL, Headers: put.Headers})
+			req.Puts = append(req.Puts, &agentv1.PresignedPut{ChunkId: c.ID, Url: put.URL})
 		}
 		if last {
 			manifest, err := l.store.PresignPut(ctx, p.manifest(rec.ID))
 			if err != nil {
 				return err
 			}
-			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
+			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL}
 		}
 		offset, size := sent, batchBytes(batch)
 		final, err := l.agents.Upload(auth(ctx), p.box, ep, req, plaintextProgress(size, func(tp *agentv1.TransferProgress) {
@@ -311,20 +311,10 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 	return nil
 }
 
-// restore writes snapshot id of p's box (the latest when empty) into the agent at ep.
+// restore writes snapshot id of p's box into the agent at ep.
 func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
-	if id == "" {
-		h, err := l.head(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		if h.Latest == "" {
-			return nil, errors.New("box has no saved state")
-		}
-		id = h.Latest
-	}
 	if !objectID.MatchString(id) {
 		return nil, fmt.Errorf("invalid snapshot id %q", id)
 	}
@@ -623,7 +613,7 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	return h, nil
 }
 
-// keepHead caches p's head unless an invalidation came after dropped or a head is cached that is newer or, for a read, any, and mirrors what it cached without a shared table.
+// keepHead caches h unless an invalidation followed dropped or the cache holds a newer head, or any head for a read.
 func (l *stateLayer) keepHead(p statePath, h head, dropped uint64, read bool) {
 	l.mu.Lock()
 	cur, cached := l.heads[p]

@@ -510,7 +510,6 @@ public actor Bridge {
         cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).\(suffix)")
     }
 
-    // serverRoutes reads the routes once; a failed read is not kept, so the next call tries again.
     private func serverRoutes() async throws -> ServerRoutes {
         if let routes { return routes }
         let found = try await ServerRoutes.discover(endpoint)
@@ -545,7 +544,6 @@ public actor Bridge {
         return (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
     }
 
-    // entry is box's entry of the last box_list, else its box_status.
     private func entry(_ box: String) async -> [String: Any]? {
         if entries[box] == nil { entries[box] = try? await status(box) }
         return entries[box]
@@ -599,10 +597,10 @@ public actor Bridge {
 }
 
 extension Bridge {
-    // refuses says whether error may be the edge refusing a box id: a 403 or 404, or a box_status that names no box.
+    // refuses says whether error may be the edge refusing a box id: a 404, or a box_status that names no box.
     static func refuses(_ error: any Error) -> Bool {
         switch error {
-        case is ToolFailure, MCPUpstream.Failure.http(403), MCPUpstream.Failure.http(404): true
+        case is ToolFailure, MCPUpstream.Failure.http(404): true
         default: false
         }
     }
@@ -611,7 +609,7 @@ extension Bridge {
         switch error {
         case let failure as ToolFailure: failure.result
         case let gone as BoxGone: ToolFailure("The box \(gone.name) was deleted; box_list lists your boxes.").result
-        case MCPUpstream.Failure.http(403), MCPUpstream.Failure.http(404): ToolFailure("cocoonbox has no box \(box) for you; it may have been deleted. box_list lists your boxes.").result
+        case MCPUpstream.Failure.http(404): ToolFailure("cocoonbox has no box \(box) for you; it may have been deleted. box_list lists your boxes.").result
         default: ToolFailure("Could not reach the box: \(error)").result
         }
     }

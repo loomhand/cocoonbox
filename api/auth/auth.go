@@ -50,12 +50,6 @@ var (
 // Entry is the door of the api a bearer came through.
 type Entry string
 
-type (
-	userKey       struct{}
-	credentialKey struct{}
-	operatorKey   struct{}
-)
-
 // Identities resolves a bearer token to the enabled user it names, and gives the context that ends when that user is disabled or deleted or the credential ends.
 type Identities interface {
 	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
@@ -74,19 +68,9 @@ type Users interface {
 	Lifetime(user, credential string) (context.Context, func())
 }
 
-// Tokens is the Identities of cocoonbox's own API and device tokens, each bound to its sha256.
-func Tokens(users Users) Identities {
-	return tokens{users}
-}
-
 // Resolver resolves a bearer token as Identities does, for the users of another system.
 type Resolver interface {
 	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
-}
-
-// Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
-func Outside(local Identities, outside Resolver) Identities {
-	return split{Identities: local, outside: outside}
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -247,6 +231,12 @@ func (a *Authenticator) authenticate(ctx context.Context) (context.Context, erro
 	return context.WithValue(WithUser(ctx, id.User), credentialKey{}, id.Credential), nil
 }
 
+type (
+	userKey       struct{}
+	credentialKey struct{}
+	operatorKey   struct{}
+)
+
 type tokens struct {
 	Users
 }
@@ -278,6 +268,16 @@ type authedStream struct {
 }
 
 func (s *authedStream) Context() context.Context { return s.ctx }
+
+// Tokens is the Identities of cocoonbox's own API and device tokens, each bound to its sha256.
+func Tokens(users Users) Identities {
+	return tokens{users}
+}
+
+// Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
+func Outside(local Identities, outside Resolver) Identities {
+	return split{Identities: local, outside: outside}
+}
 
 // ShareSecret returns the share secret an Authorization header carries.
 func ShareSecret(header string) (string, bool) {

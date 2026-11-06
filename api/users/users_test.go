@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -437,7 +435,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 
 func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
-	queries := traceQueries(t, svc, dsn)
+	queries := trace(t, svc, dsn, &queryCounter{})
 	var calls atomic.Int64
 	var wg sync.WaitGroup
 	start := time.Now()
@@ -531,7 +529,7 @@ func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	}
 }
 
-func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
+func TestStateKeyIsSealedToItsUser(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	created, err := svc.StateKey(t.Context(), u.ID)
@@ -543,31 +541,7 @@ func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
 		t.Errorf("state key column holds the key in the clear or is unreadable: %v", err)
 	}
 
-	if err := exec(t, dsn, "UPDATE users SET state_key_id = NULL, state_key_sealed = NULL WHERE id = $1", u.ID); err != nil {
-		t.Fatalf("clear state key: %v", err)
-	}
-	migrated := openTestService(t, dsn, gw, tenants)
-	if _, err := migrated.StateKey(t.Context(), u.ID); err == nil {
-		t.Error("StateKey of a user without one succeeded")
-	}
-	boxKey := keyring.Key{ID: "file:cb-000000000000:1", Secret: bytes.Repeat([]byte{7}, keyring.KeySize)}
-	for range 2 {
-		if err := migrated.SetStateKey(t.Context(), u.ID, boxKey); err != nil {
-			t.Fatalf("SetStateKey: %v", err)
-		}
-	}
-	if err := migrated.SetStateKey(t.Context(), u.ID, keyring.Generate(u.ID)); !errors.Is(err, ErrExists) {
-		t.Errorf("SetStateKey over another key = %v, want ErrExists", err)
-	}
-	if err := migrated.SetStateKey(t.Context(), u.ID, keyring.Key{ID: "short", Secret: []byte{1}}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("SetStateKey of a short key = %v, want ErrInvalid", err)
-	}
-	reopened := openTestService(t, dsn, gw, tenants)
-	if got, err := reopened.StateKey(t.Context(), u.ID); err != nil || got.ID != boxKey.ID || !bytes.Equal(got.Secret, boxKey.Secret) {
-		t.Errorf("StateKey after reopen = %q, %v; want the box key", got.ID, err)
-	}
-
-	other := mustCreate(t, reopened, NewUser{Name: "qa2"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	if err := exec(t, dsn, "UPDATE users SET state_key_sealed = (SELECT state_key_sealed FROM users WHERE id = $1) WHERE id = $2", u.ID, other.ID); err != nil {
 		t.Fatalf("copy sealed state key: %v", err)
 	}
@@ -812,21 +786,20 @@ func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *fakeTenants) 
 	return svc
 }
 
-func traceQueries(t *testing.T, svc *Service, dsn string) *queryCounter {
+func trace[T pgx.QueryTracer](t *testing.T, svc *Service, dsn string, tracer T) T {
 	t.Helper()
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
 	}
-	counter := &queryCounter{}
-	cfg.ConnConfig.Tracer = counter
+	cfg.ConnConfig.Tracer = tracer
 	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("open traced pool: %v", err)
 	}
 	svc.store.pool.Close()
 	svc.store.pool = pool
-	return counter
+	return tracer
 }
 
 func masterKeyFile(t *testing.T) string {
@@ -874,6 +847,5 @@ func lifetime(svc *Service, id, credential string) context.Context {
 }
 
 func sum(token string) string {
-	s := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(s[:])
+	return utils.HashHex(token)
 }

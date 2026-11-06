@@ -250,18 +250,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	return s.withOperation(ctx, user, box, m, phase), nil
 }
 
-func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*controlv1.Box, error) {
-	user, err := s.ownerOf(ctx, req.GetBoxId())
-	if err != nil {
-		return nil, err
-	}
-	current, err := s.currentMachines(ctx, user)
-	if err != nil {
-		return nil, serviceError(ctx, log.WithFunc("boxes.Service.Get").WithField("box", req.GetBoxId()), err, "get box")
-	}
-	return s.toBox(ctx, user, req.GetBoxId(), current[req.GetBoxId()]), nil
-}
-
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
 	user, err := auth.Caller(ctx)
 	if err != nil {
@@ -377,6 +365,18 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
 		return none, "", status.Error(codes.Unavailable, "resolve box failed")
 	}
+}
+
+func (s *Service) get(ctx context.Context, box string) (*controlv1.Box, error) {
+	user, err := s.ownerOf(ctx, box)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.currentMachines(ctx, user)
+	if err != nil {
+		return nil, serviceError(ctx, log.WithFunc("boxes.Service.get").WithField("box", box), err, "get box")
+	}
+	return s.toBox(ctx, user, box, current[box]), nil
 }
 
 // current returns the serving machine of user's box: the oldest, which a rebase replaces only when it deletes it.

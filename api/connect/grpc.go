@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 
 	"github.com/projecteru2/core/log"
 	"golang.org/x/sync/errgroup"
@@ -51,7 +50,7 @@ func (s *Service) Catalog(context.Context, *controlv1.CatalogRequest) (*controlv
 		}
 		out.Entries = append(out.Entries, &controlv1.CatalogEntry{
 			Id: e.id, Name: e.name, Description: e.description, Available: e.available(), InstallUrl: e.installURL,
-			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "", McpUrl: e.mcpURL, Auth: string(e.auth), IconUrl: e.icon,
+			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "",
 		})
 	}
 	return out, nil
@@ -77,26 +76,6 @@ func (s *Service) List(ctx context.Context, req *controlv1.ListConnectorsRequest
 	}
 	_ = eg.Wait()
 	return out, nil
-}
-
-func (s *Service) Begin(ctx context.Context, req *controlv1.BeginConnectRequest) (*controlv1.BeginConnectResponse, error) {
-	if _, err := auth.Caller(ctx); err != nil {
-		return nil, err
-	}
-	e := s.entry(req.GetConnectorId())
-	if e == nil {
-		return nil, status.Errorf(codes.InvalidArgument, "unknown connector %q", req.GetConnectorId())
-	}
-	return &controlv1.BeginConnectResponse{Url: s.publicURL + ConsolePath + "?connect=" + url.QueryEscape(e.id)}, nil
-}
-
-func (s *Service) Disconnect(ctx context.Context, ref *controlv1.ConnectorRef) (*controlv1.DisconnectResponse, error) {
-	user, err := auth.Caller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	revoked, err := s.Remove(ctx, user, ref.GetConnectorId(), DoorApp)
-	return &controlv1.DisconnectResponse{Revoked: revoked}, err
 }
 
 func (s *Service) SetPolicy(ctx context.Context, req *controlv1.SetPolicyRequest) (*controlv1.Connector, error) {
@@ -171,29 +150,8 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 	return out, nil
 }
 
-func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsRequest) (*controlv1.SpendRequestsResponse, error) {
-	user, err := auth.Caller(ctx)
-	if err != nil {
-		return nil, err
-	}
-	switch _, err := s.linkGrant(ctx, user); {
-	case errors.Is(err, errNoGrant):
-		s.spendMu.Lock()
-		delete(s.spends, user)
-		s.spendMu.Unlock()
-		return &controlv1.SpendRequestsResponse{}, nil
-	case err != nil:
-		return nil, grantStatus(ctx, err, "read the spend requests")
-	}
-	p := s.spendRequests(ctx, user)
-	if p.polledAt.IsZero() {
-		return &controlv1.SpendRequestsResponse{}, nil
-	}
-	return &controlv1.SpendRequestsResponse{Requests: p.requests, PolledAtMs: p.polledAt.UnixMilli()}, nil
-}
-
 // Remove revokes user's grant of connector at the vendor where it can, deletes it, and reports whether the vendor revoked it.
-func (s *Service) Remove(ctx context.Context, user, connector, door string) (bool, error) {
+func (s *Service) Remove(ctx context.Context, user, connector string) (bool, error) {
 	g, err := s.store.grant(ctx, user, connector)
 	if err != nil {
 		return false, grantStatus(ctx, err, "disconnect")
@@ -205,7 +163,7 @@ func (s *Service) Remove(ctx context.Context, user, connector, door string) (boo
 	}
 	s.dropConn(g.id)
 	s.changed(ctx, g)
-	if err := s.store.audit(context.WithoutCancel(ctx), &record{user: user, connector: connector, door: door, caller: door, decision: decisionDisconn, outcome: outcomeOK}); err != nil {
+	if err := s.store.audit(context.WithoutCancel(ctx), &record{user: user, connector: connector, door: doorConsole, caller: doorConsole, decision: decisionDisconn, outcome: outcomeOK}); err != nil {
 		logger.Error(ctx, err, "write the audit record")
 	}
 	logger.Infof(ctx, "user %s disconnected %s (grant %s), revoked at the vendor: %t", user, connector, g.id, revoked)

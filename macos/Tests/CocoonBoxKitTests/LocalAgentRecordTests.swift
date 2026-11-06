@@ -21,27 +21,6 @@ import Testing
         #expect(LocalAgentStore.load(from: home.appendingPathComponent("missing.json")).isEmpty)
     }
 
-    @Test func aRecordWithAnAppOffloadStillReopens() throws {
-        let url = try temporaryHome().appendingPathComponent("local-agents.json")
-        try Data(#"[{"boxID":"cb-1","id":"BC293D2C-45E1-4A33-AF0C-352962DB4F57","kind":"claudeCode","offload":{"box":"cb-1","cli":"claude","id":"0a1b2c3d4e5f","repo":"agent-1234abcd","startedAt":"2026-10-02T00:00:00.000Z"},"sessionID":"s-1","startedAt":"2026-10-02T00:00:00.000Z","workspace":"/nonexistent"}]"#.utf8).write(to: url)
-        let loaded = try #require(LocalAgentStore.load(from: url).first)
-        #expect(loaded.sessionID == "s-1" && loaded.boxID == "cb-1")
-    }
-
-    @Test func recordsOfTheOldShapeReopenWithTheirBoxAsDefault() throws {
-        let home = try temporaryHome()
-        let url = home.appendingPathComponent("local-agents.json")
-        try Data(#"[{"boxID":"cb-mock00000000","id":"BC293D2C-45E1-4A33-AF0C-352962DB4F57","kind":"codex","sessionID":"01a0f8b2","startedAt":"2026-10-02T00:00:00.000Z","title":"Open Chrome","workspace":"/nonexistent"}]"#.utf8).write(to: url)
-        let loaded = try #require(LocalAgentStore.load(from: url).first)
-        #expect(loaded.id.uuidString == "BC293D2C-45E1-4A33-AF0C-352962DB4F57")
-        #expect(loaded.boxID == "cb-mock00000000")
-        #expect(loaded.sessionID == "01a0f8b2" && loaded.displayName == "Open Chrome")
-        var moved = loaded
-        moved.boxID = "cb-test"
-        try LocalAgentStore.save([moved], to: url)
-        #expect(LocalAgentStore.load(from: url) == [moved])
-    }
-
     @Test func codexClaimsTheFirstRolloutInItsWindow() throws {
         let home = try temporaryHome()
         try rollout(home, id: "before", at: start.addingTimeInterval(-5))
@@ -186,9 +165,7 @@ import Testing
     }
 
     private func temporaryHome() throws -> URL {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent("local-agent-record-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        return home
+        try Harness.temporary("local-agent-record")
     }
 
     private func rollout(_ home: URL, id: String, at date: Date, cwd: String? = nil, prompt: String? = "Fix the build") throws {

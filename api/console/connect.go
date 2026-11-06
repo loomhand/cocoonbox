@@ -57,9 +57,7 @@ type catalogEntry struct {
 // EnableConnect serves the Connect page and its calls over conn, and the OAuth callback through ConnectCallback.
 func (s *Server) EnableConnect(conn *connect.Service) {
 	s.connect = conn
-	s.mux.HandleFunc("GET "+connect.ConsolePath, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/connect.html")
-	})
+	s.mux.HandleFunc("GET "+connect.ConsolePath, page("connect.html"))
 	s.mux.HandleFunc("GET "+Prefix+"api/connect", s.signedIn(s.connectState))
 	s.mux.HandleFunc("POST "+Prefix+"api/connect/{connector}/begin", s.signedIn(s.beginConnect))
 	s.mux.HandleFunc("PUT "+Prefix+"api/connect/{connector}/policy", s.signedIn(s.setConnectPolicy))
@@ -195,7 +193,7 @@ func (s *Server) setConnectPolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
-	revoked, err := s.connect.Remove(r.Context(), caller(r).ID, r.PathValue("connector"), connect.DoorConsole)
+	revoked, err := s.connect.Remove(r.Context(), caller(r).ID, r.PathValue("connector"))
 	if err != nil {
 		s.fail(w, r, err)
 		return

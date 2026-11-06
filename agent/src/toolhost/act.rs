@@ -46,6 +46,22 @@ pub(super) async fn scale(shuttle: &Client, owner: &str, session: &Value) -> Res
         .ok_or_else(|| format!("no scale in {}", out.text))
 }
 
+/// Sends `tool` with `args` to shuttle as agent `owner`, waiting for each of `steps` actions as for one desk call.
+pub(super) async fn call(
+    shuttle: &Client,
+    owner: &str,
+    tool: &str,
+    args: Value,
+    steps: u32,
+) -> Result<Output, String> {
+    let call = Call {
+        agent_id: owner.to_owned(),
+        tool: tool.to_owned(),
+        args,
+    };
+    shuttle.desk(&call, DESK_DEADLINE * steps).await
+}
+
 /// Reads `field` of the card in a link-cli `--output-file` JSON file under /tmp or $HOME; no error carries a value.
 async fn card_field(path: &str, field: &str) -> Result<String, String> {
     let native = native_path(path);
@@ -99,15 +115,12 @@ fn is_chrome(app: &str) -> bool {
 }
 
 fn card_roots() -> Vec<PathBuf> {
-    let tmp = if cfg!(windows) {
-        std::env::temp_dir()
-    } else {
-        PathBuf::from("/tmp")
-    };
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    std::iter::once(tmp).chain(home).collect()
+    std::iter::once(super::scratch_dir(""))
+        .chain(home)
+        .collect()
 }
 
 fn native_path(path: &str) -> PathBuf {
@@ -298,22 +311,6 @@ async fn look(
         return Err(out.text);
     }
     Ok(out.image_b64)
-}
-
-/// Sends `tool` with `args` to shuttle as agent `owner`, waiting for each of `steps` actions as for one desk call.
-pub(super) async fn call(
-    shuttle: &Client,
-    owner: &str,
-    tool: &str,
-    args: Value,
-    steps: u32,
-) -> Result<Output, String> {
-    let call = Call {
-        agent_id: owner.to_owned(),
-        tool: tool.to_owned(),
-        args,
-    };
-    shuttle.desk(&call, DESK_DEADLINE * steps).await
 }
 
 /// Whether the toolhost runs action `a` itself: a card field typed from a file, or Chrome by any name.

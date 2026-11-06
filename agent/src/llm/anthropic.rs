@@ -4,9 +4,7 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
-use super::{
-    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse, stream_error,
-};
+use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, stream_error};
 
 /// Accumulates usage across `message_start` and `message_delta`.
 #[derive(Default)]
@@ -16,12 +14,9 @@ pub struct Parser {
 
 impl Parser {
     /// Converts one SSE event into deltas.
-    pub fn feed(&mut self, event: &sse::Event, out: &mut VecDeque<Delta>) -> Result<(), String> {
-        if event.data.is_empty() {
-            return Ok(());
-        }
-        let v: Value = serde_json::from_str(&event.data)
-            .map_err(|e| format!("decode messages event: {e}: {}", event.data))?;
+    pub fn feed(&mut self, data: &str, out: &mut VecDeque<Delta>) -> Result<(), String> {
+        let v: Value = serde_json::from_str(data)
+            .map_err(|e| format!("decode messages event: {e}: {data}"))?;
         match v["type"].as_str().unwrap_or_default() {
             "message_start" => {
                 let u = &v["message"]["usage"];
@@ -231,11 +226,7 @@ mod tests {
         let mut p = Parser::default();
         let mut out = VecDeque::new();
         for e in events {
-            let event = sse::Event {
-                event: String::new(),
-                data: e.into(),
-            };
-            p.feed(&event, &mut out).unwrap();
+            p.feed(e, &mut out).unwrap();
         }
         let got: Vec<Delta> = out.into_iter().collect();
         assert_eq!(
@@ -273,11 +264,7 @@ mod tests {
             r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":2048}}"#,
             r#"{"type":"message_stop"}"#,
         ] {
-            let event = sse::Event {
-                event: String::new(),
-                data: e.into(),
-            };
-            p.feed(&event, &mut out).unwrap();
+            p.feed(e, &mut out).unwrap();
         }
         assert_eq!(out.front(), Some(&Delta::Cut));
     }
@@ -285,13 +272,7 @@ mod tests {
     #[test]
     fn an_error_event_fails_and_gw_quota_says_the_model_credits_are_used_up() {
         let mut p = Parser::default();
-        let mut feed = |data: &str| {
-            let event = sse::Event {
-                event: "error".into(),
-                data: data.into(),
-            };
-            p.feed(&event, &mut VecDeque::new()).unwrap_err()
-        };
+        let mut feed = |data: &str| p.feed(data, &mut VecDeque::new()).unwrap_err();
         assert_eq!(
             feed(r#"{"type":"error","error":{"type":"overloaded_error"}}"#),
             r#"model error: {"type":"overloaded_error"}"#

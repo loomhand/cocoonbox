@@ -312,10 +312,10 @@ impl Stream {
         }
     }
 
-    fn feed(&mut self, event: &sse::Event) -> Result<(), String> {
+    fn feed(&mut self, data: &str) -> Result<(), String> {
         match &mut self.parser {
-            Parser::Chat(p) => p.feed(event, &mut self.pending),
-            Parser::Messages(p) => p.feed(event, &mut self.pending),
+            Parser::Chat(p) => p.feed(data, &mut self.pending),
+            Parser::Messages(p) => p.feed(data, &mut self.pending),
         }
     }
 }
@@ -391,7 +391,8 @@ fn early_transient(message: &str) -> bool {
 
 /// The error of a gw answer that is not a success; gw's quota class says the model credits are used up.
 fn refused(what: &str, status: reqwest::StatusCode, body: &str) -> String {
-    let error = serde_json::from_str::<Value>(body).unwrap_or_default()["error"].take();
+    let parsed = serde_json::from_str::<Value>(body).unwrap_or_default();
+    let error = &parsed["error"];
     if status != reqwest::StatusCode::BAD_REQUEST || error["code"] != QUOTA_EXCEEDED {
         return format!("{what} returned {status}: {body}");
     }
@@ -440,6 +441,16 @@ mod tests {
         assert!(early_transient(
             r#"model error: {"type":"overloaded_error","message":"Overloaded"}"#
         ));
+    }
+
+    #[test]
+    fn a_refusal_whose_body_is_a_json_scalar_or_array_keeps_the_body() {
+        for body in ["[]", "\"rate limited\"", "0"] {
+            assert_eq!(
+                refused("gw x", reqwest::StatusCode::BAD_REQUEST, body),
+                format!("gw x returned 400 Bad Request: {body}")
+            );
+        }
     }
 
     #[tokio::test(start_paused = true)]

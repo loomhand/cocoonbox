@@ -34,15 +34,12 @@ const aliceToken = "alice-secret"
 func TestUnaryRewritesHeaders(t *testing.T) {
 	env := newProxyEnv(t)
 	var header, trailer metadata.MD
-	resp, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{ClientVersion: "test"}, grpc.Header(&header), grpc.Trailer(&trailer))
+	resp, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}, grpc.Header(&header), grpc.Trailer(&trailer))
 	if err != nil {
 		t.Fatalf("Hello: %v", err)
 	}
-	if len(resp.GetModels()) != 0 {
-		t.Errorf("agent saw authorization %v, want none", resp.GetModels())
-	}
-	if resp.GetDefaultMainModel() != boxes.BoxID("alice") {
-		t.Errorf("agent saw box %q", resp.GetDefaultMainModel())
+	if resp.GetAgentVersion() != boxes.BoxID("alice") {
+		t.Errorf("agent saw %q, want the box and no authorization", resp.GetAgentVersion())
 	}
 	if got := header.Get("x-agent-header"); len(got) != 1 || got[0] != "h" {
 		t.Errorf("header x-agent-header = %v", got)
@@ -80,7 +77,7 @@ func TestSessionEventsDoNotKeepTheBoxUp(t *testing.T) {
 func TestDialsTheEndpointNotItsKey(t *testing.T) {
 	env := newProxyEnv(t)
 	env.resolver.opaque = true
-	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{ClientVersion: "test"}); err != nil {
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); err != nil {
 		t.Fatalf("Hello through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
@@ -94,8 +91,8 @@ func TestUnarySendsBoxCredential(t *testing.T) {
 		t.Fatalf("Hello: %v", err)
 	}
 	box := boxes.BoxID("alice")
-	if want := box + " cred:" + box + ":w1"; resp.GetDefaultMainModel() != want {
-		t.Errorf("agent saw %q, want %q", resp.GetDefaultMainModel(), want)
+	if want := box + " cred:" + box + ":w1"; resp.GetAgentVersion() != want {
+		t.Errorf("agent saw %q, want %q", resp.GetAgentVersion(), want)
 	}
 }
 
@@ -548,10 +545,8 @@ func (a *fakeAgent) Hello(ctx context.Context, _ *agentv1.HelloRequest) (*agentv
 	if err := grpc.SetTrailer(ctx, metadata.Pairs("x-agent-trailer", "t")); err != nil {
 		return nil, err
 	}
-	return &agentv1.HelloResponse{
-		Models:           md.Get(auth.HeaderAuthorization),
-		DefaultMainModel: strings.TrimSpace(cmp.Or(md.Get(HeaderBox)...) + " " + cmp.Or(md.Get(credential.Header)...)),
-	}, nil
+	seen := []string{cmp.Or(md.Get(HeaderBox)...), cmp.Or(md.Get(credential.Header)...), strings.Join(md.Get(auth.HeaderAuthorization), " ")}
+	return &agentv1.HelloResponse{AgentVersion: strings.TrimSpace(strings.Join(seen, " "))}, nil
 }
 
 func (a *fakeAgent) Exec(stream grpc.BidiStreamingServer[agentv1.ExecClientFrame, agentv1.ExecServerFrame]) error {

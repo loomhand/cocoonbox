@@ -49,7 +49,7 @@ make image           # syntax-check the image scripts, test cut.sh's dry run and
 make gate            # clean gate over the tracked files and the dependencies
 ```
 
-The agent targets Linux; on macOS run its gates in the pinned toolchain image, with the protoc, rsync and tmux the build and the offload tests need:
+CI runs `make agent` on Linux and macOS, and clippy, the build and the lib tests on Windows. Linux-gated behaviour is verified on Linux; on macOS run the gates in the pinned toolchain image, with the protoc, rsync and tmux the build and the offload tests need:
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w/agent -e CB_NO_BROWSER=1 rust:1.98.0 \

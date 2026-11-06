@@ -84,10 +84,9 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    // isStale says whether error may mean the held box id names no box of the user's: NotFound, or PermissionDenied from an older api.
+    // isStale says whether error may mean the held box id names no box of the user's: NotFound.
     public static func isStale(_ error: any Error) -> Bool {
-        guard let rpc = error as? RPCError else { return false }
-        return rpc.code == .notFound || rpc.code == .permissionDenied
+        (error as? RPCError)?.code == .notFound
     }
 
     public func close() {
@@ -233,7 +232,7 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_Share {
         try await shares.create(.with {
             $0.boxID = boxID
             $0.ttlSeconds = ttlSeconds
@@ -253,7 +252,7 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    public func regenerateShare(shareID: String) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    public func regenerateShare(shareID: String) async throws -> Cocoonbox_Control_V1_Share {
         try await shares.regenerate(.with { $0.shareID = shareID })
     }
 
@@ -332,8 +331,8 @@ public final class BoxConnection: Sendable {
         return found
     }
 
-    public func hello(clientVersion: String) async throws -> Cocoonbox_Agent_V1_HelloResponse {
-        try await session.hello(.with { $0.clientVersion = clientVersion })
+    public func hello() async throws -> Cocoonbox_Agent_V1_HelloResponse {
+        try await session.hello(Cocoonbox_Agent_V1_HelloRequest())
     }
 
     // followEvents runs Session.Events until cancelled; see EventFollower.
@@ -509,6 +508,19 @@ extension Cocoonbox_Control_V1_Box {
             if let again = list.first(where: { $0.name == box.name }) { renewed[box.id] = again }
         }
         return renewed
+    }
+}
+
+extension Cocoonbox_Control_V1_BoxState {
+    public var name: String {
+        switch self {
+        case .starting: "starting"
+        case .running: "running"
+        case .hibernating: "hibernating"
+        case .hibernated: "hibernated"
+        case .failed: "failed"
+        default: "absent"
+        }
     }
 }
 

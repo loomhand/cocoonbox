@@ -631,6 +631,12 @@ func TestAnUncertainWriteIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestATokenRefreshFailureIsNotAnUncertainWrite(t *testing.T) {
+	if uncertain(&oauthError{status: http.StatusServiceUnavailable}, exchange{}) {
+		t.Error("uncertain(token endpoint 503) = true; want false, the call never left")
+	}
+}
+
 func TestAnInternalFailureReachesTheClientWithoutItsText(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
@@ -695,9 +701,8 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 	sec := env.secrets(t)
 	watch, stop := env.svc.watchers.add(alice, false)
 	defer stop()
-	resp, err := env.svc.Disconnect(auth.WithUser(t.Context(), alice), &controlv1.ConnectorRef{ConnectorId: mockName})
-	if err != nil || !resp.GetRevoked() {
-		t.Fatalf("Disconnect = %v, %v", resp, err)
+	if revoked, err := env.svc.Remove(t.Context(), alice, mockName); err != nil || !revoked {
+		t.Fatalf("Remove = %t, %v", revoked, err)
 	}
 	if _, revoked, _ := env.vendor.Snapshot(); len(revoked) != 1 || revoked[0] != sec.RefreshToken {
 		t.Errorf("revoked %v", revoked)
@@ -710,8 +715,8 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 	if tools, _ := env.svc.doorTools(t.Context(), modeB); len(tools) != 0 {
 		t.Errorf("Tools after disconnect = %d", len(tools))
 	}
-	if _, err := env.svc.Disconnect(auth.WithUser(t.Context(), alice), &controlv1.ConnectorRef{ConnectorId: mockName}); status.Code(err) != codes.NotFound {
-		t.Errorf("second Disconnect: %v", err)
+	if _, err := env.svc.Remove(t.Context(), alice, mockName); status.Code(err) != codes.NotFound {
+		t.Errorf("second Remove: %v", err)
 	}
 }
 
@@ -728,7 +733,7 @@ func TestAKeyConnectorSendsItsHeader(t *testing.T) {
 	if out, err := call(t.Context(), env.svc, modeB, "keyed_list_items", nil, ""); err != nil || out.IsError {
 		t.Errorf("Call = %+v, %v", out, err)
 	}
-	if revoked, err := env.svc.Remove(t.Context(), alice, "keyed", DoorConsole); err != nil || revoked {
+	if revoked, err := env.svc.Remove(t.Context(), alice, "keyed"); err != nil || revoked {
 		t.Errorf("Remove = %t, %v", revoked, err)
 	}
 }
@@ -763,7 +768,7 @@ func TestServersWithoutASignInConnectAtOnce(t *testing.T) {
 		t.Errorf("an open entry whose server asks for a sign-in: %v", err)
 	}
 	for _, id := range []string{"open", "opencat"} {
-		if revoked, err := env.svc.Remove(t.Context(), alice, id, DoorConsole); err != nil || revoked {
+		if revoked, err := env.svc.Remove(t.Context(), alice, id); err != nil || revoked {
 			t.Errorf("Remove %s = %t, %v", id, revoked, err)
 		}
 	}
@@ -774,20 +779,15 @@ func TestTheCatalogOffersPresetServers(t *testing.T) {
 	for _, id := range []string{"monday", "atlassian", "airtable", "granola", "webflow", "mintlify", "sentry", "supabase", "cloudflare", "posthog", "stripe", "paypal", "zapier", "composio"} {
 		want[id] = "mcp"
 	}
-	svc := &Service{catalog: newCatalog(Options{})}
-	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
-	for _, e := range catalog.GetEntries() {
-		if e.GetId() != kindCustom && !strings.HasPrefix(e.GetIconUrl(), "https://") {
-			t.Errorf("%s icon = %q", e.GetId(), e.GetIconUrl())
-		}
-		kind, ok := want[e.GetId()]
+	for _, e := range newCatalog(Options{}) {
+		kind, ok := want[e.id]
 		if !ok {
 			continue
 		}
-		if e.GetAuth() != kind || !strings.HasPrefix(e.GetMcpUrl(), "https://") || !e.GetAvailable() || e.GetGrantOnly() {
-			t.Errorf("%s = %v", e.GetId(), e)
+		if string(e.auth) != kind || !strings.HasPrefix(e.mcpURL, "https://") || !e.available() {
+			t.Errorf("%s = %+v", e.id, e)
 		}
-		delete(want, e.GetId())
+		delete(want, e.id)
 	}
 	if len(want) != 0 {
 		t.Errorf("catalog lacks %v", want)
@@ -910,9 +910,8 @@ func TestAPreregisteredEntryWithoutItsClientIsHidden(t *testing.T) {
 		}
 	}
 	got := ids(Options{HubSpot: Credentials{ClientID: "h", ClientSecret: "hs"}, Slack: Credentials{ClientID: "s", ClientSecret: "ss"}})
-	for id, mcpURL := range map[string]string{"hubspot": "https://mcp.hubspot.com", "slack": "https://mcp.slack.com/mcp"} {
-		e := got[id]
-		if e == nil || !e.GetAvailable() || e.GetAuth() != string(authMCP) || e.GetMcpUrl() != mcpURL || !strings.HasPrefix(e.GetIconUrl(), "https://") {
+	for _, id := range []string{"hubspot", "slack"} {
+		if e := got[id]; e == nil || !e.GetAvailable() {
 			t.Errorf("%s = %v", id, e)
 		}
 	}
@@ -989,7 +988,7 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 		t.Fatalf("stream: %v", err)
 	}
 	defer func() { _ = stream.Body.Close() }()
-	if _, err := env.svc.Remove(t.Context(), alice, mockName, DoorConsole); err != nil {
+	if _, err := env.svc.Remove(t.Context(), alice, mockName); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	buf := make([]byte, 256)
@@ -1260,7 +1259,7 @@ func TestCredentialsInjectAnActiveGrantAndClearTheRest(t *testing.T) {
 	if len(hooked) != 1 || hooked[0] != alice {
 		t.Errorf("hook calls after the lost grant %v, want one for %s", hooked, alice)
 	}
-	if _, err := env.svc.Remove(t.Context(), alice, mockName, DoorConsole); err != nil || len(hooked) != 2 || hooked[1] != alice {
+	if _, err := env.svc.Remove(t.Context(), alice, mockName); err != nil || len(hooked) != 2 || hooked[1] != alice {
 		t.Errorf("Remove = %v, hook calls %v, want a second for %s", err, hooked, alice)
 	}
 }

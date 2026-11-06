@@ -1,6 +1,5 @@
 #!/bin/bash
-# Applies ~user/.android/data.tar to Android's /data once per verified tar; the old /data stays unless the whole tar
-# extracts and mounts, failures are logged, and only a failed rollback leaves Android stopped.
+# Applies ~user/.android/data.tar to /data once per verified tar; any failure leaves the old /data.
 set -uo pipefail
 TOP=/var/lib/cocoonbox-android/fs
 DIR=/home/user/.android

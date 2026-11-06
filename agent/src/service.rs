@@ -5,6 +5,7 @@ use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
+use windows::Win32::Foundation::ERROR_FAILED_SERVICE_CONTROLLER_CONNECT;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
@@ -16,8 +17,6 @@ use windows_service::{define_windows_service, service_dispatcher};
 const NAME: &str = "cocoonbox-agent";
 /// Names the file the service appends its stderr to; the service control manager keeps none.
 const LOG_VAR: &str = "CB_LOG";
-/// ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: the process runs from a console, not under the service control manager.
-const NOT_A_SERVICE: i32 = 1063;
 const FAILED: u32 = 1;
 const STOP_HINT: Duration = Duration::from_secs(10);
 const STOP_TICK: Duration = Duration::from_secs(3);
@@ -34,7 +33,10 @@ pub fn run(serve: fn() -> Result<(), String>) -> Result<(), String> {
     let _ = SERVE.set(serve);
     match service_dispatcher::start(NAME, ffi_service_main) {
         Ok(()) => Ok(()),
-        Err(windows_service::Error::Winapi(e)) if e.raw_os_error() == Some(NOT_A_SERVICE) => {
+        Err(windows_service::Error::Winapi(e))
+            if e.raw_os_error()
+                == Some(ERROR_FAILED_SERVICE_CONTROLLER_CONNECT.0.cast_signed()) =>
+        {
             serve()
         }
         Err(e) => Err(format!("start the service dispatcher: {e}")),

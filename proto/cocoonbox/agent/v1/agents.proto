@@ -53,12 +53,11 @@ message Agent {
 }
 
 message CreateAgentRequest {
-  // Empty names the agent after the first line of its first message, cut to
-  // 24 characters; until then its name is "agent".
+  reserved 3;
+  reserved "main_model";
+  // Empty: the first line of the first message, cut to 24 characters; "agent" until then.
   string name = 1;
   string client_nonce = 2;
-  // Empty selects the box default.
-  string main_model = 3;
 }
 
 message ListAgentsRequest {}

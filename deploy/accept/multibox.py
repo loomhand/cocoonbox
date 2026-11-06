@@ -95,7 +95,6 @@ def main():
     _, result, _ = control.tool("box_ensure", {"box": "main"})
     check(result.get("structuredContent", {}).get("state") == "running", f"main ({main_id}) runs")
 
-    # 1. a second box beside a running one is refused; after hibernating main it starts.
     _, result, _ = control.tool("box_create", {"name": "test"})
     check(result.get("isError") and f"box main ({main_id}) is running" in text(result), "1. creating test while main runs is refused, naming main: " + text(result)[:160])
     _, result, _ = control.tool("box_hibernate", {"box": "main"})
@@ -107,7 +106,7 @@ def main():
     _, result, _ = control.tool("box_ensure", {"box": "main"})
     check(result.get("isError") and f"box test ({test_id}) is running" in text(result), "1. waking main while test runs is refused, naming test")
 
-    # 2. the same token drives both boxes by id over the edge; each answers from its own identity file, since clones share a hostname.
+    # clones share a hostname, so each box answers from its own identity file
     hosts = {}
     for name, box in (("test", test_id), ("main", main_id)):
         if name == "main":
@@ -123,19 +122,17 @@ def main():
     listed = [(b["name"], b["state"]) for b in result.get("structuredContent", {}).get("boxes", [])]
     check(listed == [("main", "running"), ("test", "hibernated")], f"2. box_list = {listed}")
 
-    # 3. the total quota, with no box running, so the running limit cannot answer first.
+    # no box runs, so the running limit cannot answer first
     control.tool("box_hibernate", {"box": "main"})
     _, result, _ = control.tool("box_create", {"name": "third"})
     check(result.get("isError") and "quota" in text(result), "3. a third box is refused by max boxes: " + text(result)[:120])
 
-    # 5. another user's box, by id at the edge and by name or id at the control MCP.
     other = box_id("dev")
     status, _ = MCP("/cocoonbox.mcp/" + other, token).post("ping")
-    check(status == 403, f"5. the edge answers {status} for another user's box id, want 403")
+    check(status == 404, f"5. the edge answers {status} for another user's box id, want 404")
     _, result, _ = control.tool("box_status", {"box": other})
     check(result.get("isError") and "no box" in text(result), "5. the control MCP refuses another user's box id")
 
-    # 4. delete test, running, so it is saved first.
     control.tool("box_ensure", {"box": "test"})
     machines = [r["metadata"]["cb_machine"] for r in claims() if (r.get("metadata") or {}).get("cb_machine", "").startswith(test_id)]
     _, result, notes = control.tool("box_delete", {"box": "test", "confirm": True}, progress=True)

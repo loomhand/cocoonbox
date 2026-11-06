@@ -19,14 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Connectors_Catalog_FullMethodName       = "/cocoonbox.control.v1.Connectors/Catalog"
-	Connectors_List_FullMethodName          = "/cocoonbox.control.v1.Connectors/List"
-	Connectors_Begin_FullMethodName         = "/cocoonbox.control.v1.Connectors/Begin"
-	Connectors_Disconnect_FullMethodName    = "/cocoonbox.control.v1.Connectors/Disconnect"
-	Connectors_SetPolicy_FullMethodName     = "/cocoonbox.control.v1.Connectors/SetPolicy"
-	Connectors_Approve_FullMethodName       = "/cocoonbox.control.v1.Connectors/Approve"
-	Connectors_Activity_FullMethodName      = "/cocoonbox.control.v1.Connectors/Activity"
-	Connectors_SpendRequests_FullMethodName = "/cocoonbox.control.v1.Connectors/SpendRequests"
+	Connectors_Catalog_FullMethodName   = "/cocoonbox.control.v1.Connectors/Catalog"
+	Connectors_List_FullMethodName      = "/cocoonbox.control.v1.Connectors/List"
+	Connectors_SetPolicy_FullMethodName = "/cocoonbox.control.v1.Connectors/SetPolicy"
+	Connectors_Approve_FullMethodName   = "/cocoonbox.control.v1.Connectors/Approve"
+	Connectors_Activity_FullMethodName  = "/cocoonbox.control.v1.Connectors/Activity"
 )
 
 // ConnectorsClient is the client API for Connectors service.
@@ -41,22 +38,12 @@ type ConnectorsClient interface {
 	Catalog(ctx context.Context, in *CatalogRequest, opts ...grpc.CallOption) (*CatalogResponse, error)
 	// List returns the caller's connected accounts.
 	List(ctx context.Context, in *ListConnectorsRequest, opts ...grpc.CallOption) (*ListConnectorsResponse, error)
-	// Begin returns the console page that connects the account. The console
-	// binds the flow to its own session, so the app opens the URL in the browser.
-	Begin(ctx context.Context, in *BeginConnectRequest, opts ...grpc.CallOption) (*BeginConnectResponse, error)
-	// Disconnect revokes the grant at the vendor where the vendor offers a
-	// revoke call, then deletes it; its tools leave every MCP session.
-	Disconnect(ctx context.Context, in *ConnectorRef, opts ...grpc.CallOption) (*DisconnectResponse, error)
 	// SetPolicy sets one tool's policy; POLICY_UNSPECIFIED returns it to the default.
 	SetPolicy(ctx context.Context, in *SetPolicyRequest, opts ...grpc.CallOption) (*Connector, error)
 	// Approve answers an approval-required call from a box (§16.5).
 	Approve(ctx context.Context, in *ApproveRequest, opts ...grpc.CallOption) (*ApproveResponse, error)
 	// Activity returns the caller's audit records, newest first.
 	Activity(ctx context.Context, in *ActivityRequest, opts ...grpc.CallOption) (*ActivityResponse, error)
-	// SpendRequests returns the caller's Link spend requests that wait for the
-	// user. The api reads Link on this call when its last read is older than
-	// 30 seconds, and answers from that read in between.
-	SpendRequests(ctx context.Context, in *SpendRequestsRequest, opts ...grpc.CallOption) (*SpendRequestsResponse, error)
 }
 
 type connectorsClient struct {
@@ -81,26 +68,6 @@ func (c *connectorsClient) List(ctx context.Context, in *ListConnectorsRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListConnectorsResponse)
 	err := c.cc.Invoke(ctx, Connectors_List_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *connectorsClient) Begin(ctx context.Context, in *BeginConnectRequest, opts ...grpc.CallOption) (*BeginConnectResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BeginConnectResponse)
-	err := c.cc.Invoke(ctx, Connectors_Begin_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *connectorsClient) Disconnect(ctx context.Context, in *ConnectorRef, opts ...grpc.CallOption) (*DisconnectResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DisconnectResponse)
-	err := c.cc.Invoke(ctx, Connectors_Disconnect_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,16 +104,6 @@ func (c *connectorsClient) Activity(ctx context.Context, in *ActivityRequest, op
 	return out, nil
 }
 
-func (c *connectorsClient) SpendRequests(ctx context.Context, in *SpendRequestsRequest, opts ...grpc.CallOption) (*SpendRequestsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SpendRequestsResponse)
-	err := c.cc.Invoke(ctx, Connectors_SpendRequests_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // ConnectorsServer is the server API for Connectors service.
 // All implementations must embed UnimplementedConnectorsServer
 // for forward compatibility.
@@ -159,22 +116,12 @@ type ConnectorsServer interface {
 	Catalog(context.Context, *CatalogRequest) (*CatalogResponse, error)
 	// List returns the caller's connected accounts.
 	List(context.Context, *ListConnectorsRequest) (*ListConnectorsResponse, error)
-	// Begin returns the console page that connects the account. The console
-	// binds the flow to its own session, so the app opens the URL in the browser.
-	Begin(context.Context, *BeginConnectRequest) (*BeginConnectResponse, error)
-	// Disconnect revokes the grant at the vendor where the vendor offers a
-	// revoke call, then deletes it; its tools leave every MCP session.
-	Disconnect(context.Context, *ConnectorRef) (*DisconnectResponse, error)
 	// SetPolicy sets one tool's policy; POLICY_UNSPECIFIED returns it to the default.
 	SetPolicy(context.Context, *SetPolicyRequest) (*Connector, error)
 	// Approve answers an approval-required call from a box (§16.5).
 	Approve(context.Context, *ApproveRequest) (*ApproveResponse, error)
 	// Activity returns the caller's audit records, newest first.
 	Activity(context.Context, *ActivityRequest) (*ActivityResponse, error)
-	// SpendRequests returns the caller's Link spend requests that wait for the
-	// user. The api reads Link on this call when its last read is older than
-	// 30 seconds, and answers from that read in between.
-	SpendRequests(context.Context, *SpendRequestsRequest) (*SpendRequestsResponse, error)
 	mustEmbedUnimplementedConnectorsServer()
 }
 
@@ -191,12 +138,6 @@ func (UnimplementedConnectorsServer) Catalog(context.Context, *CatalogRequest) (
 func (UnimplementedConnectorsServer) List(context.Context, *ListConnectorsRequest) (*ListConnectorsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
 }
-func (UnimplementedConnectorsServer) Begin(context.Context, *BeginConnectRequest) (*BeginConnectResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Begin not implemented")
-}
-func (UnimplementedConnectorsServer) Disconnect(context.Context, *ConnectorRef) (*DisconnectResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Disconnect not implemented")
-}
 func (UnimplementedConnectorsServer) SetPolicy(context.Context, *SetPolicyRequest) (*Connector, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetPolicy not implemented")
 }
@@ -205,9 +146,6 @@ func (UnimplementedConnectorsServer) Approve(context.Context, *ApproveRequest) (
 }
 func (UnimplementedConnectorsServer) Activity(context.Context, *ActivityRequest) (*ActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Activity not implemented")
-}
-func (UnimplementedConnectorsServer) SpendRequests(context.Context, *SpendRequestsRequest) (*SpendRequestsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SpendRequests not implemented")
 }
 func (UnimplementedConnectorsServer) mustEmbedUnimplementedConnectorsServer() {}
 func (UnimplementedConnectorsServer) testEmbeddedByValue()                    {}
@@ -266,42 +204,6 @@ func _Connectors_List_Handler(srv interface{}, ctx context.Context, dec func(int
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Connectors_Begin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BeginConnectRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConnectorsServer).Begin(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Connectors_Begin_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConnectorsServer).Begin(ctx, req.(*BeginConnectRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Connectors_Disconnect_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ConnectorRef)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConnectorsServer).Disconnect(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Connectors_Disconnect_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConnectorsServer).Disconnect(ctx, req.(*ConnectorRef))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Connectors_SetPolicy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SetPolicyRequest)
 	if err := dec(in); err != nil {
@@ -356,24 +258,6 @@ func _Connectors_Activity_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Connectors_SpendRequests_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SpendRequestsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(ConnectorsServer).SpendRequests(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Connectors_SpendRequests_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConnectorsServer).SpendRequests(ctx, req.(*SpendRequestsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Connectors_ServiceDesc is the grpc.ServiceDesc for Connectors service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -390,14 +274,6 @@ var Connectors_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Connectors_List_Handler,
 		},
 		{
-			MethodName: "Begin",
-			Handler:    _Connectors_Begin_Handler,
-		},
-		{
-			MethodName: "Disconnect",
-			Handler:    _Connectors_Disconnect_Handler,
-		},
-		{
 			MethodName: "SetPolicy",
 			Handler:    _Connectors_SetPolicy_Handler,
 		},
@@ -408,10 +284,6 @@ var Connectors_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Activity",
 			Handler:    _Connectors_Activity_Handler,
-		},
-		{
-			MethodName: "SpendRequests",
-			Handler:    _Connectors_SpendRequests_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

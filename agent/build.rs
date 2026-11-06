@@ -1,5 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-env-changed=CB_AGENT_REV");
+    println!("cargo:rerun-if-changed=../proto");
     let mut version = std::env::var("CARGO_PKG_VERSION")?;
     if let Ok(rev) = std::env::var("CB_AGENT_REV") {
         version = format!("{version}+{rev}");

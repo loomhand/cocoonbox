@@ -401,7 +401,7 @@ func TestGCPurgesADeletedBoxAfterItsRetentionAndKeepsSharedChunks(t *testing.T) 
 	if idx := env.indexIDs(t); !slices.Equal(idx, slices.Sorted(slices.Values(hexIDs("c2", "c3")))) {
 		t.Errorf("index = %v, want c2 and c3", idx)
 	}
-	if _, err := env.svc.state.restore(env.ctx, other, machines.Endpoint{Key: "restore"}, "", noProgress); err != nil {
+	if _, err := env.svc.state.restore(env.ctx, other, machines.Endpoint{Key: "restore"}, headID(t, env.svc.state, other), noProgress); err != nil {
 		t.Errorf("restore of the other box: %v", err)
 	}
 	if r := env.collect(t, opts, 9*24*time.Hour); r.deleted != 0 || r.chunks != 0 {
@@ -505,7 +505,8 @@ func (e *stateEnv) deleteBox(t *testing.T, box string) {
 
 func (e *stateEnv) restoreHead(t *testing.T) {
 	t.Helper()
-	if _, err := e.svc.state.restore(e.ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{Key: "restore"}, "", noProgress); err != nil {
+	p := statePath{user: alice, box: aliceBox}
+	if _, err := e.svc.state.restore(e.ctx, p, machines.Endpoint{Key: "restore"}, headID(t, e.svc.state, p), noProgress); err != nil {
 		t.Errorf("restore of the head: %v", err)
 	}
 }

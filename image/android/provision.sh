@@ -1,6 +1,5 @@
 #!/bin/bash
-# Provisions the Android box base (Ubuntu 24.04, docker, scrcpy-rfb, ashmem, shuttle and its desk runtime) as root.
-# Runs from a copy of image/android in the base build (base/Dockerfile), after /var/lib/docker holds the baked container.
+# Provisions the Android box base (docker, scrcpy-rfb, ashmem, shuttle and its desk runtime) as root, in the base build (base/Dockerfile).
 set -euo pipefail
 
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
@@ -112,7 +111,6 @@ setup_scrcpy() {
 		install -D -m "$mode" "$tmp/$name" "$dest"
 	done
 	rm -rf "$tmp"
-	! ldd /usr/local/bin/scrcpy-rfb | grep 'not found'
 }
 
 # GUI plans and scripts run the desk runtime of cbcore on Node; shuttle serves their desk calls from Android

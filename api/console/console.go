@@ -219,12 +219,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		SpentToday      int64          `json:"spent_today_micros"`
 		OwnBoxes        int            `json:"own_boxes"`
 		Connect         bool           `json:"connect"`
-	}{User: u, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, Connect: s.connect != nil}
-	for _, b := range s.users.Boxes(u.ID) {
-		if !b.Agent {
-			resp.OwnBoxes++
-		}
-	}
+	}{User: u, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, OwnBoxes: len(s.choices(u.ID)), Connect: s.connect != nil}
 	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)
@@ -453,7 +448,6 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, u)
 }
 
-// signupCap gives a signup account the signup settings' daily cap.
 func (s *Server) signupCap(ctx context.Context, id string) error {
 	st, err := s.signup.Settings(ctx)
 	if err != nil {
@@ -507,7 +501,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// removeUser disables user id at once, then releases its boxes, deletes its saved state, revokes its connections and deletes it.
+// removeUser disables id first so its credentials stop before its boxes go.
 func (s *Server) removeUser(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeLimit)
 	defer cancel()
@@ -556,7 +550,7 @@ func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, toShare(created.GetShare()))
+	writeJSON(w, toShare(created))
 }
 
 func (s *Server) setShareWrite(w http.ResponseWriter, r *http.Request) {
@@ -580,7 +574,7 @@ func (s *Server) regenerateShare(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, toShare(regenerated.GetShare()))
+	writeJSON(w, toShare(regenerated))
 }
 
 func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
@@ -591,7 +585,6 @@ func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// viewShare admits the secret in the first message, then bridges the share's screen; a named share takes the viewer from the session cookie.
 func (s *Server) viewShare(ws *websocket.Conn) {
 	r := ws.Request()
 	ws.MaxPayloadBytes = maxSecretLen
@@ -646,7 +639,6 @@ func (s *Server) ownerCtx(r *http.Request) context.Context {
 	return auth.WithUser(r.Context(), caller(r).ID)
 }
 
-// checkPassword checks name's password under the attempt limits.
 func (s *Server) checkPassword(r *http.Request, name, password string) (users.User, error) {
 	nameKey, addrKey := "name:"+name, "addr:"+clientAddr(r)
 	if !s.limiter.take(nameKey, addrKey) {
@@ -661,7 +653,6 @@ func (s *Server) checkPassword(r *http.Request, name, password string) (users.Us
 	return u, err
 }
 
-// signedIn runs next with the session's user in the request context.
 func (s *Server) signedIn(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
@@ -740,7 +731,6 @@ func clientAddr(r *http.Request) string {
 	return host
 }
 
-// sameOrigin refuses a WebSocket that another site's page opens.
 func sameOrigin(cfg *websocket.Config, r *http.Request) error {
 	origin, err := websocket.Origin(cfg, r)
 	if err != nil || origin == nil || origin.Host != r.Host {
@@ -772,6 +762,12 @@ func capText(micros *int64) string {
 	}
 }
 
+func page(name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "static/"+name)
+	}
+}
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.UnmarshalRead(r.Body, v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -785,8 +781,8 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }
 
-func writeError(w http.ResponseWriter, status int, message string) {
+func writeError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(code)
 	_ = json.MarshalWrite(w, map[string]string{"error": message})
 }

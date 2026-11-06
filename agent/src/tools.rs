@@ -420,7 +420,6 @@ fn with_select(tools: &mut [ToolSpec]) {
     }
 }
 
-/// The automation's script tool; none on a box without one.
 fn script_tool(automation: Automation) -> Option<ToolSpec> {
     match automation {
         Automation::Minimal | Automation::Android => None,

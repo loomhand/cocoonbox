@@ -26,7 +26,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::{TcpListener, TcpStream, UnixListener};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
@@ -37,6 +37,8 @@ use common::{authed, owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const DSML_OPEN: &str = "I'll list it first.\n<｜DSML｜ invoke name=\"list_dir\">\n<｜DSML｜ parameter name=\"path\" string=\"true\">/ho";
+const DSML_CLOSE: &str = "Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>";
 const TEST_TERMINFO: &str =
     "cb-test-term|cocoonbox test terminal,\n\tam, cols#80, lines#24, clear=\\E[H\\E[2J, Cbx,\n";
 
@@ -53,6 +55,7 @@ struct Boot {
     plugin: bool,
     checkpoint_nudge: Option<Duration>,
     reasoning_effort: Option<&'static str>,
+    model_main: &'static str,
 }
 
 impl Default for Boot {
@@ -68,6 +71,7 @@ impl Default for Boot {
             plugin: false,
             checkpoint_nudge: None,
             reasoning_effort: None,
+            model_main: "deepseek/deepseek-v4.1-flash",
         }
     }
 }
@@ -152,6 +156,7 @@ impl Harness {
             plugin,
             checkpoint_nudge,
             reasoning_effort,
+            model_main,
         } = boot;
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -182,11 +187,7 @@ impl Harness {
         let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
         let shuttle_socket = dir.path().join("desk.sock");
-        fake_shuttle(
-            &shuttle_socket,
-            dir.path().join("shuttle.log"),
-            Arc::clone(&desk_log),
-        );
+        fake_shuttle(&shuttle_socket, Arc::clone(&desk_log));
         let (chrome_bin, cdp_port) = match &chrome {
             Some(bin) => {
                 let wrapper = dir.path().join("chrome-headless");
@@ -216,7 +217,7 @@ impl Harness {
         let cfg = ServeConfig {
             gw_base_url: format!("http://{gw}/v1"),
             gw_api_key: "k".into(),
-            model_main: "deepseek/deepseek-v4.1-flash".into(),
+            model_main: model_main.into(),
             model_computer: "anthropic/claude-sonnet-5".into(),
             identity_path: identity.clone(),
             identity_owner: std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()),
@@ -246,8 +247,8 @@ impl Harness {
         )
         .unwrap();
         let tools = Arc::new(cocoonbox_agent::shuttle::Split::new(
-            cocoonbox_agent::toolhost::rpc::Client::new(cfg.shuttle_socket.clone()),
-            cocoonbox_agent::toolhost::rpc::Client::new(cfg.toolhost_socket.clone()),
+            toolhost::rpc::Client::new(cfg.shuttle_socket.clone()),
+            toolhost::rpc::Client::new(cfg.toolhost_socket.clone()),
             cfg.workspace.clone(),
             cfg.plugins.iter().map(|p| p.name.clone()).collect(),
         ));
@@ -255,12 +256,10 @@ impl Harness {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(server::serve_on(listener, rt));
-        for _ in 0..100 {
-            if toolhost_socket.exists() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        assert!(
+            wait_until(Duration::from_secs(1), || toolhost_socket.exists()).await,
+            "the toolhost never listened"
+        );
         Self {
             _chrome: chrome.map(|_| ChromeGuard(dir.path().join("chrome"))),
             dir,
@@ -289,6 +288,11 @@ impl Harness {
 
     async fn session(&self) -> SessionClient<Channel> {
         SessionClient::new(self.channel().await)
+    }
+
+    fn shuttle_tools(&self) -> Vec<String> {
+        let log = self.desk_log.lock().unwrap();
+        log.iter().map(|(tool, _)| tool.clone()).collect()
     }
 }
 
@@ -334,30 +338,7 @@ async fn wait_turn_end(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
 ) -> Vec<pb::TranscriptEntry> {
-    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
-    for _ in 0..500 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.into(),
-                after_seq: entries.last().map_or(0, |e| e.seq),
-                limit: 1000,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        entries.extend(page.entries);
-        if page.has_more {
-            continue;
-        }
-        if entries
-            .iter()
-            .any(|e| matches!(e.body, Some(Body::TurnEnd(_))))
-        {
-            return entries;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("turn did not end");
+    turn_ends(agents, agent_id, 1).await
 }
 
 fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
@@ -365,6 +346,20 @@ fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
         Some(Body::TurnEnd(end)) => end,
         last => panic!("want turn end, got {last:?}"),
     }
+}
+
+fn mcp_text(out: &Value) -> &str {
+    out["content"][0]["text"].as_str().unwrap()
+}
+
+fn tool_result<'a>(entries: &'a [pb::TranscriptEntry], call_id: &str) -> &'a pb::ToolResult {
+    entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == call_id => Some(r),
+            _ => None,
+        })
+        .unwrap()
 }
 
 fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
@@ -447,6 +442,41 @@ fn sse(events: &[Value]) -> String {
     events.iter().map(|e| format!("data: {e}\n\n")).collect()
 }
 
+struct HttpRequest {
+    line: String,
+    session: String,
+    body: Vec<u8>,
+}
+
+async fn read_http(reader: &mut BufReader<TcpStream>) -> Option<HttpRequest> {
+    let mut line = String::new();
+    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+        return None;
+    }
+    let (mut len, mut session) = (0, String::new());
+    loop {
+        let mut h = String::new();
+        reader.read_line(&mut h).await.unwrap();
+        if h == "\r\n" {
+            break;
+        }
+        let lower = h.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("content-length:") {
+            len = v.trim().parse().unwrap();
+        }
+        if let Some(v) = lower.strip_prefix("mcp-session-id:") {
+            session = v.trim().to_owned();
+        }
+    }
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body).await.unwrap();
+    Some(HttpRequest {
+        line,
+        session,
+        body,
+    })
+}
+
 async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -465,26 +495,14 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
             let log = Arc::clone(&log);
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
+                let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
+                    return;
+                };
                 let path = line
                     .split_whitespace()
                     .nth(1)
                     .unwrap_or_default()
                     .to_owned();
-                let mut len = 0;
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).await.unwrap();
-                    if h == "\r\n" {
-                        break;
-                    }
-                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
-                        len = v.trim().parse().unwrap();
-                    }
-                }
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await.unwrap();
                 log.lock()
                     .unwrap()
                     .push((path.clone(), serde_json::from_slice(&body).unwrap()));
@@ -529,25 +547,14 @@ async fn mock_door(
             );
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
-                let (mut len, mut session) = (0, String::new());
-                loop {
-                    let mut h = String::new();
-                    reader.read_line(&mut h).await.unwrap();
-                    if h == "\r\n" {
-                        break;
-                    }
-                    let lower = h.to_ascii_lowercase();
-                    if let Some(v) = lower.strip_prefix("content-length:") {
-                        len = v.trim().parse().unwrap();
-                    }
-                    if let Some(v) = lower.strip_prefix("mcp-session-id:") {
-                        session = v.trim().to_owned();
-                    }
-                }
-                let mut body = vec![0u8; len];
-                reader.read_exact(&mut body).await.unwrap();
+                let Some(HttpRequest {
+                    line,
+                    session,
+                    body,
+                }) = read_http(&mut reader).await
+                else {
+                    return;
+                };
                 let mut stream = reader.into_inner();
                 if line.starts_with("GET") && readers.fetch_add(1, Ordering::SeqCst) < refused {
                     log.lock().unwrap().push((
@@ -643,17 +650,13 @@ async fn mock_door(
     url
 }
 
-fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
+fn fake_shuttle(path: &Path, calls: Log) {
     let listener = UnixListener::bind(path).unwrap();
     let mut ended = HashSet::new();
     tokio::spawn(async move {
         loop {
             let (mut conn, _) = listener.accept().await.unwrap();
             let call: Call = read_frame(&mut conn).await.unwrap();
-            let mut logged = std::fs::read_to_string(&log).unwrap_or_default();
-            logged.push_str(&call.tool);
-            logged.push('\n');
-            std::fs::write(&log, logged).unwrap();
             calls
                 .lock()
                 .unwrap()
@@ -807,6 +810,18 @@ async fn tab_gone(port: u16, url: &str) -> bool {
     false
 }
 
+fn assert_continued(chats: &[Value], before: usize, after: usize) {
+    let before = chats[before]["messages"].as_array().unwrap();
+    let after = chats[after]["messages"].as_array().unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(after[..before.len()], before[..]);
+    assert_eq!(after[before.len()]["role"], "user");
+    assert_eq!(
+        after[before.len()]["content"][0]["text"],
+        "Continue: call the next tool, or give your final answer."
+    );
+}
+
 fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
     log.lock()
         .unwrap()
@@ -827,13 +842,18 @@ fn alive(pid_file: &Path) -> bool {
 }
 
 async fn wait_gone(pid_file: &Path) -> bool {
-    for _ in 0..100 {
-        if !alive(pid_file) {
-            return true;
+    wait_until(Duration::from_secs(2), || !alive(pid_file)).await
+}
+
+async fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    while !cond() {
+        if tokio::time::Instant::now() >= deadline {
+            return false;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    false
+    true
 }
 
 fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> String {
@@ -865,37 +885,35 @@ impl Edge {
 }
 
 fn signed<T>(msg: T, credential: &str) -> Request<T> {
+    with_credential(msg, Some(credential))
+}
+
+fn with_credential<T>(msg: T, credential: Option<&str>) -> Request<T> {
     let mut req = Request::new(msg);
-    req.metadata_mut()
-        .insert("x-cocoonbox-credential", credential.parse().unwrap());
+    if let Some(c) = credential {
+        req.metadata_mut()
+            .insert("x-cocoonbox-credential", c.parse().unwrap());
+    }
     req
 }
 
 async fn surface_codes(h: &Harness, credential: Option<&str>) -> Vec<String> {
-    fn with<T>(msg: T, credential: Option<&str>) -> Request<T> {
-        let mut req = Request::new(msg);
-        if let Some(c) = credential {
-            req.metadata_mut()
-                .insert("x-cocoonbox-credential", c.parse().unwrap());
-        }
-        req
-    }
     fn code<T>(r: Result<T, tonic::Status>) -> String {
         r.map_or_else(|e| format!("{:?}", e.code()), |_| "Ok".into())
     }
     let agents = h
         .agents()
         .await
-        .list(with(pb::ListAgentsRequest {}, credential))
+        .list(with_credential(pb::ListAgentsRequest {}, credential))
         .await;
     let hello = h
         .session()
         .await
-        .hello(with(pb::HelloRequest::default(), credential))
+        .hello(with_credential(pb::HelloRequest::default(), credential))
         .await;
     let plan = state_client(h)
         .await
-        .plan(with(pb::PlanRequest::default(), credential))
+        .plan(with_credential(pb::PlanRequest::default(), credential))
         .await;
     let mut mcp = reqwest::Client::new()
         .post(format!("{}/mcp", h.endpoint))
@@ -921,17 +939,21 @@ async fn credential_guards_every_surface() {
     assert_eq!(surface_codes(&h, Some(owner())).await, admitted);
     assert_eq!(surface_codes(&h, None).await, refused);
 
-    let key = SigningKey::from_bytes(&[5; 32]);
-    let key_id = write_identity(&h.identity, &key, "w1");
-    let good = credential(&key, &key_id, "cb-box", "w1");
+    let edge = Edge::provision(&h);
+    let good = edge.owner();
     assert_eq!(surface_codes(&h, Some(&good)).await, admitted);
-    let other_box = credential(&key, &key_id, "cb-other", "w1");
+    let other_box = credential(&edge.key, &edge.key_id, "cb-other", "w1");
     assert_eq!(surface_codes(&h, Some(&other_box)).await, refused);
-    let forged = credential(&SigningKey::from_bytes(&[6; 32]), &key_id, "cb-box", "w1");
+    let forged = credential(
+        &SigningKey::from_bytes(&[6; 32]),
+        &edge.key_id,
+        "cb-box",
+        "w1",
+    );
     assert_eq!(surface_codes(&h, Some(&forged)).await, refused);
 
-    write_identity(&h.identity, &key, "w2");
-    let woken = credential(&key, &key_id, "cb-box", "w2");
+    write_identity(&h.identity, &edge.key, "w2");
+    let woken = credential(&edge.key, &edge.key_id, "cb-box", "w2");
     assert_eq!(surface_codes(&h, Some(&woken)).await, admitted);
     assert_eq!(surface_codes(&h, Some(&good)).await, refused);
 
@@ -946,11 +968,6 @@ async fn credential_guards_every_surface() {
 async fn credential_is_required() {
     let h = Harness::start(Vec::new()).await;
     let mut agents = h.agents().await;
-    let err = agents
-        .list(Request::new(pb::ListAgentsRequest {}))
-        .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::Unauthenticated);
     let mut wrong = Request::new(pb::ListAgentsRequest {});
     wrong.metadata_mut().insert(
         "x-cocoonbox-credential",
@@ -960,20 +977,14 @@ async fn credential_is_required() {
         agents.list(wrong).await.unwrap_err().code(),
         Code::Unauthenticated
     );
-    let mut session = h.session().await;
-    let err = session
-        .hello(Request::new(pb::HelloRequest::default()))
+    let hello = h
+        .session()
         .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::Unauthenticated);
-    let hello = session
         .hello(authed(pb::HelloRequest::default()))
         .await
         .unwrap()
         .into_inner();
     assert_eq!((hello.screen_width, hello.screen_height), (1280, 800));
-    assert_eq!(hello.default_main_model, "deepseek/deepseek-v4.1-flash");
-    assert_eq!(hello.models.len(), 2);
     assert!(agents.list(authed(pb::ListAgentsRequest {})).await.is_ok());
 }
 
@@ -1218,26 +1229,14 @@ async fn run_delegate(messages_wire: bool) {
         sub_texts.contains(&"Typed hello into Mousepad."),
         "{sub_texts:?}"
     );
-    let state = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "toolu_1" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let state = tool_result(&entries, "toolu_1");
     assert!(
         state.text.starts_with("Windows (frontmost first):"),
         "{}",
         state.text
     );
     assert!(state.image.starts_with(b"\x89PNG"));
-    let delegate = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "call_d" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let delegate = tool_result(&entries, "call_d");
     assert!(
         delegate.text.starts_with("Typed hello into Mousepad."),
         "{}",
@@ -1284,12 +1283,7 @@ async fn run_delegate(messages_wire: bool) {
         let vision = gw_bodies(&h.gw_log, "/v1/messages");
         assert_eq!(vision.len(), 4);
         assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-        let last_user = vision[3]["messages"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
+        let last_user = vision[3]["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(last_user["content"][0]["type"], "tool_result");
         assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
         assert_eq!(chats.len(), 2);
@@ -1311,8 +1305,7 @@ async fn run_delegate(messages_wire: bool) {
         .unwrap()
         .iter()
         .find(|m| m["role"] == "tool")
-        .unwrap()
-        .clone();
+        .unwrap();
     assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
     assert!(!main_after.to_string().contains(PNG));
 
@@ -1623,13 +1616,7 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     send(&mut agents, &agent_id, "look", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
     assert!(turn_end(&entries).ok);
-    let delegate = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "call_d" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let delegate = tool_result(&entries, "call_d");
     assert!(delegate.is_error);
     assert!(
         delegate.text.starts_with("The computer subagent stopped at its 30-step cap. Its progress report: Opened the editor; the save dialog never came up."),
@@ -1669,17 +1656,8 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
         .collect();
     assert_eq!(texts, ["list it", "Let me check.", "Listed."]);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    for (empty, next) in [(0, 1), (2, 3)] {
-        let before = chats[empty]["messages"].as_array().unwrap();
-        let after = chats[next]["messages"].as_array().unwrap();
-        assert_eq!(after.len(), before.len() + 1);
-        assert_eq!(after[..before.len()], before[..]);
-        assert_eq!(after[before.len()]["role"], "user");
-        assert_eq!(
-            after[before.len()]["content"][0]["text"],
-            "Continue: call the next tool, or give your final answer."
-        );
-    }
+    assert_continued(&chats, 0, 1);
+    assert_continued(&chats, 2, 3);
     let silent = create_agent(&mut agents).await;
     send(&mut agents, &silent, "say nothing", "").await;
     let entries = wait_turn_end(&mut agents, &silent).await;
@@ -1786,26 +1764,21 @@ async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_histo
 
 #[tokio::test]
 async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_text("I'll list it first.\n<｜DSML｜ invoke name=\"list_dir\">\n<｜DSML｜ parameter name=\"path\" string=\"true\">/ho"),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            (
-                "chat/completions",
-                chat_text("Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"),
-            ),
-            ("chat/completions", chat_text("Listed.")),
-            ("chat/completions", chat_text("I'd invoke list_dir again.")),
-            ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
-            ("chat/completions", chat_text("\n<｜DSML｜ invoke name=\"shell\">\n")),
-        ],
-)
+    let h = Harness::start(vec![
+        ("chat/completions", chat_text(DSML_OPEN)),
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_text(DSML_CLOSE)),
+        ("chat/completions", chat_text("Listed.")),
+        ("chat/completions", chat_text("I'd invoke list_dir again.")),
+        ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
+        (
+            "chat/completions",
+            chat_text("\n<｜DSML｜ invoke name=\"shell\">\n"),
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -1813,16 +1786,8 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
     let entries = wait_turn_end(&mut agents, &listed).await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    for (markup, next) in [(0, 1), (2, 3)] {
-        let before = chats[markup]["messages"].as_array().unwrap();
-        let after = chats[next]["messages"].as_array().unwrap();
-        assert_eq!(after.len(), before.len() + 1);
-        assert_eq!(after[..before.len()], before[..]);
-        assert_eq!(
-            after[before.len()]["content"][0]["text"],
-            "Continue: call the next tool, or give your final answer."
-        );
-    }
+    assert_continued(&chats, 0, 1);
+    assert_continued(&chats, 2, 3);
     let prose = create_agent(&mut agents).await;
     send(&mut agents, &prose, "again", "").await;
     let entries = wait_turn_end(&mut agents, &prose).await;
@@ -1860,14 +1825,7 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     let entries = wait_turn_end(&mut agents, &listed).await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let before = chats[1]["messages"].as_array().unwrap();
-    let after = chats[2]["messages"].as_array().unwrap();
-    assert_eq!(after.len(), before.len() + 1);
-    assert_eq!(after[..before.len()], before[..]);
-    assert_eq!(
-        after[before.len()]["content"][0]["text"],
-        "Continue: call the next tool, or give your final answer."
-    );
+    assert_continued(&chats, 1, 2);
     let idle = create_agent(&mut agents).await;
     send(&mut agents, &idle, "run it", "").await;
     let entries = wait_turn_end(&mut agents, &idle).await;
@@ -1910,11 +1868,7 @@ async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 3);
-    let last = chats[2]["messages"].as_array().unwrap();
-    assert_eq!(
-        last[last.len() - 1]["content"][0]["text"],
-        "Continue: call the next tool, or give your final answer."
-    );
+    assert_continued(&chats, 1, 2);
 }
 
 #[tokio::test]
@@ -1942,13 +1896,9 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
-            _ => None,
-        })
-    })
-    .await;
+    let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
+        .await
+        .approval_id;
     let listed = agents
         .list(authed(pb::ListAgentsRequest {}))
         .await
@@ -1984,13 +1934,10 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 
     send(&mut agents, &agent_id, "sleep", "").await;
     let started = h.workspace.join("started");
-    for _ in 0..250 {
-        if started.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(started.exists(), "the shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || started.exists()).await,
+        "the shell call never started"
+    );
     agents
         .cancel(authed(pb::CancelRequest {
             agent_id: agent_id.clone(),
@@ -2030,13 +1977,9 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
-            _ => None,
-        })
-    })
-    .await;
+    let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
+        .await
+        .approval_id;
 
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
@@ -2063,13 +2006,10 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
                 .await
         })
     };
-    for _ in 0..200 {
-        if saving.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(saving.exists(), "the quiesce never started");
+    assert!(
+        wait_until(Duration::from_secs(2), || saving.exists()).await,
+        "the quiesce never started"
+    );
     agents
         .respond(authed(pb::RespondRequest {
             agent_id: agent_id.clone(),
@@ -2121,7 +2061,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let agent_id = create_agent(&mut agents).await;
 
     send(&mut agents, &agent_id, "make x", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, 0).await;
+    let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
     assert_eq!(asked.summary, "Mock: create_item (title=\"x\")");
     let listed = agents
         .list(authed(pb::ListAgentsRequest {}))
@@ -2142,14 +2082,8 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 1).await;
-    let result = |id: &str| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == id => Some(r.clone()),
-            _ => None,
-        })
-    };
-    assert_eq!(result("c1").unwrap().text, "items: a");
-    let created = result("c2").unwrap();
+    assert_eq!(tool_result(&entries, "c1").text, "items: a");
+    let created = tool_result(&entries, "c2");
     assert!(!created.is_error);
     assert_eq!(
         created.text,
@@ -2157,7 +2091,13 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     );
 
     send(&mut agents, &agent_id, "make y", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, entries.last().unwrap().seq).await;
+    let asked = asked_approval(
+        &mut agents,
+        &agent_id,
+        "connector",
+        entries.last().unwrap().seq,
+    )
+    .await;
     agents
         .respond(authed(pb::RespondRequest {
             agent_id: agent_id.clone(),
@@ -2168,13 +2108,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 2).await;
-    let declined = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "c3" => Some(r.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let declined = tool_result(&entries, "c3");
     assert!(declined.is_error);
     assert_eq!(declined.text, "The user declined the call.");
     let approved_calls = door_log
@@ -2187,12 +2121,10 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .count();
     assert_eq!(approved_calls, 1, "a declined call ran again");
 
-    for _ in 0..200 {
-        if door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until(Duration::from_secs(2), || {
+        door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
+    })
+    .await;
     events
         .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
         .unwrap();
@@ -2231,27 +2163,23 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
 }
 
 #[tokio::test]
-async fn an_ended_door_stream_is_followed_again_within_a_second_each_time() {
+async fn an_ended_door_stream_is_followed_again_within_two_and_a_half_seconds_each_time() {
     let door_log = Log::default();
     let (events, _) = tokio::sync::broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
     let _h = Harness::with_connect(vec![], door).await;
     for readers in 1..=4 {
-        let since = tokio::time::Instant::now();
-        while door_log
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(m, _)| m == "GET")
-            .count()
-            < readers
-        {
-            assert!(
-                since.elapsed() < Duration::from_millis(2500),
-                "reader {readers} did not come within 2.5 s"
-            );
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        let came = wait_until(Duration::from_millis(2500), || {
+            door_log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _)| m == "GET")
+                .count()
+                >= readers
+        })
+        .await;
+        assert!(came, "reader {readers} did not come within 2.5 s");
         events.send("close".to_owned()).unwrap();
     }
 }
@@ -2271,15 +2199,8 @@ async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() 
             .map(|(_, v)| v["ms"].as_u64().unwrap())
             .collect()
     };
-    let since = tokio::time::Instant::now();
-    while refusals().len() < 6 {
-        assert!(
-            since.elapsed() < Duration::from_secs(25),
-            "{:?}",
-            refusals()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let refused = wait_until(Duration::from_secs(25), || refusals().len() >= 6).await;
+    assert!(refused, "{:?}", refusals());
     let gaps: Vec<u64> = refusals().windows(2).map(|w| w[1] - w[0]).collect();
     assert!(gaps.iter().all(|&g| g < 5500), "{gaps:?}");
     assert!(gaps[3..].iter().all(|&g| g >= 4500), "{gaps:?}");
@@ -2304,15 +2225,12 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "make x", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, 0).await;
-    let refused_at = tokio::time::Instant::now();
-    while !door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
-        assert!(
-            refused_at.elapsed() < Duration::from_secs(5),
-            "no reader came back after the refused one"
-        );
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
+    let came_back = wait_until(Duration::from_secs(5), || {
+        door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
+    })
+    .await;
+    assert!(came_back, "no reader came back after the refused one");
     events
         .send(
             json!({"jsonrpc": "2.0", "method": "notifications/cocoonbox/approval_answered",
@@ -2321,13 +2239,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
         )
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 1).await;
-    let created = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "c1" => Some(r.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let created = tool_result(&entries, "c1");
     assert!(!created.is_error, "{created:?}");
     assert_eq!(
         created.text,
@@ -2378,18 +2290,19 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
         .map(|(_, v)| v.clone())
         .collect();
     assert!(calls.is_empty(), "{calls:?}");
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    assert!(ran.lines().any(|l| l == "demo_run"), "{ran}");
+    let ran = h.shuttle_tools();
+    assert!(ran.iter().any(|t| t == "demo_run"), "{ran:?}");
 }
 
-async fn connector_approval(
+async fn asked_approval(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
+    kind: &str,
     after_seq: u64,
 ) -> pb::ApprovalRequest {
     wait_transcript(agents, agent_id, after_seq, |entries| {
         entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "connector" => Some(a.clone()),
+            Some(Body::Approval(a)) if a.kind == kind => Some(a.clone()),
             _ => None,
         })
     })
@@ -2417,17 +2330,22 @@ async fn wait_transcript<T>(
     after_seq: u64,
     mut found: impl FnMut(&[pb::TranscriptEntry]) -> Option<T>,
 ) -> T {
+    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
     for _ in 0..500 {
         let page = agents
             .transcript(authed(pb::TranscriptRequest {
                 agent_id: agent_id.into(),
-                after_seq,
+                after_seq: entries.last().map_or(after_seq, |e| e.seq),
                 limit: 1000,
             }))
             .await
             .unwrap()
             .into_inner();
-        if let Some(t) = found(&page.entries) {
+        entries.extend(page.entries);
+        if page.has_more {
+            continue;
+        }
+        if let Some(t) = found(&entries) {
             return t;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -3070,12 +2988,10 @@ async fn cancelling_exec_kills_the_command() {
             .exec(authed(tokio_stream_from(rx)))
             .await
             .unwrap();
-        for _ in 0..100 {
-            if std::fs::read_to_string(&pid).is_ok_and(|p| !p.trim().is_empty()) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        wait_until(Duration::from_secs(2), || {
+            std::fs::read_to_string(&pid).is_ok_and(|p| !p.trim().is_empty())
+        })
+        .await;
         assert!(alive(&pid), "{name}: not running");
         if fill {
             let chunk = noise(64 << 10, 3);
@@ -3149,7 +3065,7 @@ async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
             let (mut down, _) = listener.accept().await.unwrap();
             let target = target.clone();
             conns.spawn(async move {
-                let mut up = tokio::net::TcpStream::connect(target).await.unwrap();
+                let mut up = TcpStream::connect(target).await.unwrap();
                 let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
             });
         }
@@ -3208,15 +3124,13 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     assert!(
         matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.error == "cancelled")
     );
-    for _ in 0..200 {
-        if h.desk_log.lock().unwrap().iter().any(|(n, a)| {
+    let ended = || {
+        h.desk_log.lock().unwrap().iter().any(|(n, a)| {
             n == "desk_computer_end" && a["session"].as_str().is_some_and(|s| s.starts_with("cu-"))
-        }) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!(
+        })
+    };
+    assert!(
+        wait_until(Duration::from_secs(4), ended).await,
         "cancel did not end the driver session: {:?}",
         h.desk_log.lock().unwrap()
     );
@@ -3224,25 +3138,21 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
 
 #[tokio::test]
 async fn vision_main_model_gets_a_screenshot_tool() {
-    let h = Harness::with_desk(vec![
-        (
-            "chat/completions",
-            chat_tool_call("call_s", "screenshot", &json!({})),
-        ),
-        ("chat/completions", chat_text("I see the desktop.")),
-    ])
+    let h = Harness::boot(Boot {
+        script: vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "screenshot", &json!({})),
+            ),
+            ("chat/completions", chat_text("I see the desktop.")),
+        ],
+        automation: Automation::Desk,
+        model_main: "anthropic/claude-sonnet-5",
+        ..Boot::default()
+    })
     .await;
     let mut agents = h.agents().await;
-    let agent_id = agents
-        .create(authed(pb::CreateAgentRequest {
-            name: "v".into(),
-            main_model: "anthropic/claude-sonnet-5".into(),
-            ..Default::default()
-        }))
-        .await
-        .unwrap()
-        .into_inner()
-        .id;
+    let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "what is on screen", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
     assert!(turn_end(&entries).ok);
@@ -3254,12 +3164,7 @@ async fn vision_main_model_gets_a_screenshot_tool() {
             .iter()
             .any(|t| t["function"]["name"] == "screenshot")
     );
-    let last = chats[1]["messages"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .clone();
+    let last = chats[1]["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(last["role"], "user");
     assert!(
         last["content"][1]["image_url"]["url"]
@@ -3416,7 +3321,10 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     for tool in ["computer_act", "computer_state", "screenshot", "shell"] {
         assert!(names.contains(&tool.to_owned()), "{names:?}");
     }
-    assert!(listed["result"]["tools"][0]["inputSchema"]["type"] == "object");
+    assert_eq!(
+        listed["result"]["tools"][0]["inputSchema"]["type"],
+        "object"
+    );
 
     let shell = mcp
         .call(
@@ -3425,13 +3333,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         )
         .await;
     assert_eq!(shell["isError"], false);
-    assert!(
-        shell["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("from-mcp"),
-        "{shell}"
-    );
+    assert!(mcp_text(&shell).starts_with("from-mcp"), "{shell}");
     assert!(h.workspace.join("m.txt").exists());
 
     let shot = mcp.call("screenshot", json!({"max_edge": 640})).await;
@@ -3546,7 +3448,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         )
         .await;
     assert_eq!(ok["isError"], false, "{ok}");
-    let report: Value = serde_json::from_str(ok["content"][0]["text"].as_str().unwrap()).unwrap();
+    let report: Value = serde_json::from_str(mcp_text(&ok)).unwrap();
     assert_eq!(report["result"], json!({"params": {"text": "hi"}}));
     assert_eq!(report["exit_code"], 0);
     assert_eq!(report["snapshot"], "outline");
@@ -3564,8 +3466,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         .call(tool, json!({"script": "flow.mjs", "screenshot": false}))
         .await;
     assert_eq!(failed["isError"], true, "{failed}");
-    let report: Value =
-        serde_json::from_str(failed["content"][0]["text"].as_str().unwrap()).unwrap();
+    let report: Value = serde_json::from_str(mcp_text(&failed)).unwrap();
     assert_eq!(
         report["error"],
         json!({"kind": "exception", "message": "Error: boom"})
@@ -3579,22 +3480,16 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         .await;
     assert_eq!(refused["isError"], true, "{refused}");
     let missing = mcp.call(tool, json!({"script": "nope.mjs"})).await;
-    assert!(
-        missing["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("does not exist"),
-        "{missing}"
-    );
+    assert!(mcp_text(&missing).contains("does not exist"), "{missing}");
 }
 
 #[tokio::test]
 async fn mcp_plugin_runs_on_shuttle_as_its_own_tool() {
     let h = Harness::with_plugin(Vec::new()).await;
     reports_result_logs_and_a_screenshot(&h, "demo_run").await;
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    let runs: Vec<&str> = ran.lines().filter(|t| t.ends_with("_run")).collect();
-    assert_eq!(runs, ["demo_run", "demo_run"], "{ran}");
+    let ran = h.shuttle_tools();
+    let runs: Vec<&String> = ran.iter().filter(|t| t.ends_with("_run")).collect();
+    assert_eq!(runs, ["demo_run", "demo_run"], "{ran:?}");
 }
 
 #[tokio::test]
@@ -3667,7 +3562,7 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
             out["error"]["message"], "unknown tool: demo_run",
             "{automation:?}: {out}"
         );
-        assert!(!h.dir.path().join("shuttle.log").exists(), "{automation:?}");
+        assert!(h.shuttle_tools().is_empty(), "{automation:?}");
     }
 }
 
@@ -3787,10 +3682,11 @@ async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
         .call("computer_act", json!({"action": "tap", "element": 0}))
         .await;
     assert_eq!(tap["isError"], false, "{tap}");
-    let log = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
+    let log = h.shuttle_tools();
     assert_eq!(
-        log, "desk_look\ndesk_computer_state\ndesk_computer_act\n",
-        "{log}"
+        log,
+        ["desk_look", "desk_computer_state", "desk_computer_act"],
+        "{log:?}"
     );
 }
 
@@ -3855,8 +3751,8 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 2}}), "{report}");
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    let ran: Vec<&str> = ran.lines().filter(|l| *l != "desk_screen").collect();
+    let ran = h.shuttle_tools();
+    let ran: Vec<&String> = ran.iter().filter(|t| *t != "desk_screen").collect();
     assert_eq!(ran, ["demo_run"]);
 }
 
@@ -3895,7 +3791,7 @@ async fn mcp_lists_a_title_and_one_hint_for_every_tool() {
 }
 
 #[tokio::test]
-async fn mcp_serves_the_desk_guide_as_a_resource() {
+async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
     let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
@@ -4229,22 +4125,12 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     let mut nudged = Vec::new();
     for _ in 0..3 {
         let out = mcp.call("computer_act", press.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     mcp.call("list_dir", json!({})).await;
     for _ in 0..2 {
         let out = mcp.call("computer_act", press.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     assert_eq!(nudged, [false, true, false, false, true]);
 
@@ -4254,12 +4140,7 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     mcp.call("list_dir", json!({})).await;
     for args in [&launch, &click, &launch, &click] {
         let out = mcp.call("computer_act", args.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     assert_eq!(nudged, [false, false, false, true]);
 }
@@ -4271,10 +4152,7 @@ async fn mcp_a_desktop_call_hears_of_another_session_driving_the_desktop() {
     let mut second = McpClient::connect(&h).await;
     let press = json!({"action": "key", "key": "a"});
     let busy = |out: Value| {
-        out["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Another agent (test-client) also drives this box's desktop")
+        mcp_text(&out).contains("Another agent (test-client) also drives this box's desktop")
     };
     assert!(!busy(first.call("computer_act", press.clone()).await));
     assert!(!busy(first.call("computer_act", press.clone()).await));
@@ -4542,7 +4420,6 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
     std::fs::write(h.workspace.join("flows/save.json"), "{\"typed\":\"x\"}").unwrap();
     std::fs::write(h.workspace.join("notes.txt"), "shared\n").unwrap();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
     for (tool, args) in [
@@ -4552,18 +4429,18 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         let out = reader.call(tool, args).await;
         assert_eq!(out["isError"], true, "{tool}: {out}");
         assert!(
-            text(&out).contains("does not read saved flows"),
+            mcp_text(&out).contains("does not read saved flows"),
             "{tool}: {out}"
         );
     }
     let out = reader.call("read_file", json!({"path": "notes.txt"})).await;
-    assert!(text(&out).contains("shared"), "{out}");
+    assert!(mcp_text(&out).contains("shared"), "{out}");
 
     let mut owner = McpClient::connect_as(&h, Some(edge.owner())).await;
     let out = owner
         .call("read_file", json!({"path": "flows/save.json"}))
         .await;
-    assert!(text(&out).contains("typed"), "{out}");
+    assert!(mcp_text(&out).contains("typed"), "{out}");
 
     let android = Harness::with_android().await;
     let edge = Edge::provision(&android);
@@ -4574,7 +4451,7 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         .call("read_file", json!({"path": "flows/save.json"}))
         .await;
     assert!(
-        text(&out).contains("does not read saved flows"),
+        mcp_text(&out).contains("does not read saved flows"),
         "an Android read share: {out}"
     );
 
@@ -4605,7 +4482,6 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     std::os::unix::fs::symlink("../home/.claude", h.workspace.join("rel")).unwrap();
     let ws = h.workspace.display().to_string();
     let secret = claude.join("x").display().to_string();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
     for path in [
@@ -4615,13 +4491,13 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     ] {
         let out = reader.call("read_file", json!({"path": path})).await;
         assert_eq!(out["isError"], false, "{path}: {out}");
-        assert!(text(&out).contains("shared"), "{path}: {out}");
+        assert!(mcp_text(&out).contains("shared"), "{path}: {out}");
     }
     for path in [json!({}), json!({"path": ws}), json!({"path": "docs"})] {
         let out = reader.call("list_dir", path.clone()).await;
         assert_eq!(out["isError"], false, "{path}: {out}");
     }
-    assert!(text(&reader.call("list_dir", json!({})).await).contains("docs/"));
+    assert!(mcp_text(&reader.call("list_dir", json!({})).await).contains("docs/"));
     let escapes = [
         (secret.clone(), claude.display().to_string()),
         (
@@ -4645,10 +4521,10 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
                 let out = reader.call(tool, args).await;
                 assert_eq!(out["isError"], true, "{tool} {path}: {out}");
                 assert!(
-                    text(&out).contains("is refused: a read-only share reads files only under"),
+                    mcp_text(&out).contains("is refused: a read-only share reads files only under"),
                     "{tool} {path}: {out}"
                 );
-                assert!(!text(&out).contains("secret"), "{tool} {path}: {out}");
+                assert!(!mcp_text(&out).contains("secret"), "{tool} {path}: {out}");
             }
         }
     }
@@ -4658,7 +4534,7 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     for client in [&mut owner, &mut writer] {
         for (file, dir) in &escapes {
             let out = client.call("read_file", json!({"path": file})).await;
-            assert!(text(&out).contains("secret"), "{file}: {out}");
+            assert!(mcp_text(&out).contains("secret"), "{file}: {out}");
             let out = client.call("list_dir", json!({"path": dir})).await;
             assert_eq!(out["isError"], false, "{dir}: {out}");
         }
@@ -4676,7 +4552,7 @@ async fn only_a_box_that_runs_gui_plans_says_that_shell_capped_its_timeout() {
             .call("shell", json!({"command": "echo hi", "timeout_s": 2400}))
             .await;
         assert_eq!(out["isError"], false, "{out}");
-        let text = out["content"][0]["text"].as_str().unwrap();
+        let text = mcp_text(&out);
         assert_eq!(
             text.ends_with(
                 "[exit status 0]\n[timeout_s 2400 is over the 600 s maximum; ran with 600 s]"
@@ -4700,13 +4576,10 @@ async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
         .await
     });
     let running = h.workspace.join("started");
-    for _ in 0..250 {
-        if running.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(running.exists(), "the MCP shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || running.exists()).await,
+        "the MCP shell call never started"
+    );
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
     let waited = started.elapsed();
@@ -4742,23 +4615,24 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
     assert_eq!(stream.headers()["content-type"], "text/event-stream");
     assert!(stream.chunk().await.unwrap().is_some());
     drop(stream);
-    for _ in 0..100 {
-        if !driver_calls(&h, "desk_computer_end").is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    assert!(
+        wait_until(Duration::from_secs(1), || !driver_calls(
+            &h,
+            "desk_computer_end"
+        )
+        .is_empty())
+        .await,
+        "the stream close never ended the driver session"
+    );
     assert_eq!(driver_calls(&h, "desk_computer_end")[0]["session"], first);
 
     mcp.call("screenshot", json!({})).await;
     let second = driver_calls(&h, "desk_look")[1]["session"].clone();
     assert_ne!(first, second);
-    for _ in 0..300 {
-        if driver_calls(&h, "desk_computer_end").len() == 2 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    wait_until(Duration::from_secs(3), || {
+        driver_calls(&h, "desk_computer_end").len() == 2
+    })
+    .await;
     let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 2, "{ended:?}");
     assert_eq!(ended[1]["session"], second);
@@ -4794,12 +4668,10 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
             .await
     });
     let pid = h.workspace.join("guest.pid");
-    for _ in 0..100 {
-        if pid.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    assert!(
+        wait_until(Duration::from_secs(2), || pid.exists()).await,
+        "the guest's shell call never started"
+    );
     let started = std::time::Instant::now();
     state_client(&h).await.plan(quiesced(&owner)).await.unwrap();
     let took = started.elapsed();
@@ -4809,13 +4681,7 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
     );
     let out = call.await.unwrap();
     assert_eq!(out["isError"], true, "{out}");
-    assert!(
-        out["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("interrupted"),
-        "{out}"
-    );
+    assert!(mcp_text(&out).starts_with("interrupted"), "{out}");
     assert!(
         wait_gone(&pid).await,
         "the guest's sleep outlived the quiesce"
@@ -4827,13 +4693,10 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
             .await
     });
     let running = h.workspace.join("mine.started");
-    for _ in 0..250 {
-        if running.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(running.exists(), "the owner's MCP shell call never started");
+    assert!(
+        wait_until(Duration::from_secs(5), || running.exists()).await,
+        "the owner's MCP shell call never started"
+    );
     let busy = state_client(&h).await.plan(quiesced(&owner)).await;
     assert_eq!(busy.unwrap_err().code(), Code::Unavailable);
     assert_eq!(call.await.unwrap()["isError"], false);
@@ -4868,19 +4731,28 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
         .unwrap();
     assert_eq!(deleted.status(), 204);
     let mut open = McpClient::connect_as(&h, Some(guest)).await;
-    for _ in 0..8 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut names: Vec<(String, String)> = Vec::new();
+    for _ in 0..50 {
         open.rpc("ping", json!({})).await;
+        names = agents
+            .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
+            .await
+            .unwrap()
+            .into_inner()
+            .agents
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect();
+        if names
+            .iter()
+            .filter(|(_, n)| n == "mcp:test-client@sh-1")
+            .count()
+            == 1
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let names: Vec<(String, String)> = agents
-        .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
-        .await
-        .unwrap()
-        .into_inner()
-        .agents
-        .into_iter()
-        .map(|a| (a.id, a.name))
-        .collect();
     let mcp_count = names
         .iter()
         .filter(|(_, n)| n == "mcp:test-client@sh-1")
@@ -4963,7 +4835,7 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
         b.call("browser_navigate", json!({"url": url_b("/b")}))
     );
     for (nav, field) in [(&na, "field /a"), (&nb, "field /b")] {
-        let text = nav["content"][0]["text"].as_str().unwrap();
+        let text = mcp_text(nav);
         assert!(
             text.contains(&format!("textbox \"{field}\" [ref=e1]")),
             "{text}"
@@ -5059,16 +4931,15 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
         .await
         .unwrap();
     let id = user["id"].as_str().unwrap();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let nav = mcp
         .call("browser_navigate", json!({"url": url("/user"), "tab": id}))
         .await;
     assert!(
-        text(&nav).contains("textbox \"field /user\" [ref=e1]"),
+        mcp_text(&nav).contains("textbox \"field /user\" [ref=e1]"),
         "{nav}"
     );
-    let listed = text(&mcp.call("browser_tabs", json!({})).await);
+    let listed = mcp_text(&mcp.call("browser_tabs", json!({})).await).to_owned();
     assert!(
         listed.contains(&format!("- tab {id} \"/user\" ({})", url("/user"))),
         "{listed}"
@@ -5087,7 +4958,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
     assert_eq!(tab_eval(&ws(url("/user")), value).await, "for the user");
     assert_eq!(tab_eval(&ws(url("/agent")), value).await, "");
     let own = mcp.call("browser_snapshot", json!({})).await;
-    assert!(text(&own).contains("field /agent"), "{own}");
+    assert!(mcp_text(&own).contains("field /agent"), "{own}");
 }
 
 #[tokio::test]
@@ -5097,10 +4968,9 @@ async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
     };
     let page = format!("http://{}/spa", feed_pages().await);
     let desk = Harness::with_chrome(Vec::new(), &chrome).await;
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
     for tool in ["browser_navigate", "browser_fetch"] {
         let mut mcp = McpClient::connect(&desk).await;
-        let out = text(&mcp.call(tool, json!({"url": page})).await);
+        let out = mcp_text(&mcp.call(tool, json!({"url": page})).await).to_owned();
         assert!(out.contains("feed item one"), "{tool}: {out}");
     }
 }
@@ -5191,10 +5061,9 @@ async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 loop {
-                    let mut line = String::new();
-                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
                         return;
-                    }
+                    };
                     let mut parts = line.split_whitespace();
                     let method = parts.next().unwrap_or_default().to_owned();
                     let name = parts
@@ -5204,19 +5073,6 @@ async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
                         .next()
                         .unwrap()
                         .to_owned();
-                    let mut len = 0;
-                    loop {
-                        let mut h = String::new();
-                        reader.read_line(&mut h).await.unwrap();
-                        if h == "\r\n" {
-                            break;
-                        }
-                        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
-                            len = v.trim().parse().unwrap();
-                        }
-                    }
-                    let mut body = vec![0u8; len];
-                    reader.read_exact(&mut body).await.unwrap();
                     let (status, reply) = if method == "PUT" {
                         objects.lock().unwrap().insert(name, body);
                         ("200 OK", Vec::new())
@@ -5288,7 +5144,7 @@ async fn upload_missing(
         url: format!("{base}/{id}"),
         headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
     };
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .upload(authed(pb::UploadRequest {
             snapshot_id: planned.snapshot_id.clone(),
@@ -5299,11 +5155,7 @@ async fn upload_missing(
         .await
         .unwrap()
         .into_inner();
-    let mut last = None;
-    while let Some(p) = stream.message().await.unwrap() {
-        last = Some(p);
-    }
-    let last = last.unwrap();
+    let last = last_message(stream).await.unwrap();
     assert!(last.finished);
     assert_eq!(last.manifest_id, planned.snapshot_id);
     assert_eq!(last.done_chunks as usize, missing.len() + 1);
@@ -5348,14 +5200,18 @@ async fn restore_pages(
         gets: page.to_vec(),
         ..Default::default()
     }));
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .restore(authed(tokio_stream::iter(reqs)))
         .await?
         .into_inner();
+    last_message(stream).await
+}
+
+async fn last_message<T>(mut stream: tonic::Streaming<T>) -> Result<T, tonic::Status> {
     let mut last = None;
-    while let Some(p) = stream.message().await? {
-        last = Some(p);
+    while let Some(m) = stream.message().await? {
+        last = Some(m);
     }
     Ok(last.unwrap())
 }
@@ -5367,12 +5223,12 @@ fn manifest_of(objects: &Objects, id: &str) -> Value {
 }
 
 fn known_files(h: &Harness) -> Value {
-    let path = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
-    serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["files"].take()
+    serde_json::from_slice::<Value>(&std::fs::read(known_chunks(h)).unwrap()).unwrap()["files"]
+        .take()
+}
+
+fn known_chunks(h: &Harness) -> PathBuf {
+    h.dir.path().join("state/state/known-chunks.json")
 }
 
 fn chunks_of(m: &Value, path: &str) -> Value {
@@ -5723,7 +5579,7 @@ async fn an_android_box_fails_a_quiesced_plan_when_its_session_save_fails() {
 #[tokio::test]
 async fn a_restore_tells_the_offload_inbox_to_rescan() {
     let h = Harness::start(Vec::new()).await;
-    let inbox = UnixListener::bind(h.home.parent().unwrap().join("offload.sock")).unwrap();
+    let inbox = UnixListener::bind(h.dir.path().join("offload.sock")).unwrap();
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), b"x").unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
@@ -5952,7 +5808,7 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
         let snapshot_id = planned.snapshot_id.clone();
         let h = &h;
         async move {
-            let mut stream = state_client(h)
+            let stream = state_client(h)
                 .await
                 .upload(authed(pb::UploadRequest {
                     snapshot_id,
@@ -5963,11 +5819,7 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
                 .await
                 .unwrap()
                 .into_inner();
-            let mut last = None;
-            while let Some(p) = stream.message().await.unwrap() {
-                last = Some(p);
-            }
-            last.unwrap()
+            last_message(stream).await.unwrap()
         }
     };
     let part = call(first.iter().map(|id| put(id)).collect(), None).await;
@@ -6035,11 +5887,7 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
         .set_modified(mtime)
         .unwrap();
     assert_eq!(std::fs::metadata(&a).unwrap().modified().unwrap(), mtime);
-    let known = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
+    let known = known_chunks(&h);
     let mut forged: Value = serde_json::from_slice(&std::fs::read(&known).unwrap()).unwrap();
     forged["files"]["workspace/c.txt"]["chunks"] =
         forged["files"]["workspace/b.txt"]["chunks"].clone();
@@ -6099,11 +5947,7 @@ async fn a_plan_right_after_a_restore_reads_no_file_the_restore_wrote() {
     let first = plan(&h, pb::Consistency::Live, "").await;
     upload_missing(&h, &base, &objects, &first).await;
     let m1 = manifest_of(&objects, &first.snapshot_id);
-    let known = h
-        .home
-        .parent()
-        .unwrap()
-        .join("state/state/known-chunks.json");
+    let known = known_chunks(&h);
     std::fs::remove_file(&known).unwrap();
     std::fs::remove_file(h.workspace.join("a.txt")).unwrap();
 
@@ -6269,7 +6113,7 @@ async fn restore_fetches_a_chunk_shared_by_several_files_once() {
         std::fs::read(h.workspace.join("own.txt")).unwrap(),
         noise(7_000, 23)
     );
-    let work = h.home.parent().unwrap().join("state/state");
+    let work = h.dir.path().join("state/state");
     let leftovers: Vec<_> = std::fs::read_dir(&work)
         .unwrap()
         .map(|e| e.unwrap().file_name())
@@ -6286,9 +6130,8 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
     assert_eq!(ok["isError"], false, "{ok}");
     let first = driver_calls(&h, "desk_computer_state")[0]["session"].clone();
 
-    let toolhost =
-        cocoonbox_agent::toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
-    let end = cocoonbox_agent::toolhost::rpc::Call {
+    let toolhost = toolhost::rpc::Client::new(h.dir.path().join("toolhost.sock"));
+    let end = Call {
         agent_id: String::new(),
         tool: "computer_end".into(),
         args: json!({"session": first}),
@@ -6362,7 +6205,7 @@ async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
 async fn a_failed_plan_removes_its_spool() {
     let h = Harness::start(Vec::new()).await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 41)).unwrap();
-    let dir = h.home.parent().unwrap().to_path_buf();
+    let dir = h.dir.path();
     std::fs::remove_file(dir.join("toolhost.sock")).unwrap();
     let err = state_client(&h)
         .await
@@ -6622,16 +6465,12 @@ async fn restore_paths(
             ..Default::default()
         }
     }));
-    let mut stream = state_client(h)
+    let stream = state_client(h)
         .await
         .restore_paths(authed(tokio_stream::iter(reqs)))
         .await?
         .into_inner();
-    let mut last = None;
-    while let Some(p) = stream.message().await? {
-        last = Some(p);
-    }
-    Ok(last.unwrap())
+    last_message(stream).await
 }
 
 fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {

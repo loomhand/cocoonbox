@@ -49,16 +49,7 @@ func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*contro
 
 // RunScheduler saves every running box whose latest snapshot is older than interval, until ctx ends.
 func (s *Service) RunScheduler(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval / 4)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.saveStale(ctx, interval)
-		}
-	}
+	every(ctx, interval/4, func() { s.saveStale(ctx, interval) })
 }
 
 func (s *Service) saveStale(ctx context.Context, interval time.Duration) {

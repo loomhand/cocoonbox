@@ -12,7 +12,7 @@ use super::rpc::{self, Call, Client, Output};
 use crate::llm::image_mime;
 use crate::runs::{self, Shot};
 
-const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+const REINDEX_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCATE_TIMEOUT: Duration = Duration::from_secs(20);
 const KEPT_SHOTS: usize = 20;
 
@@ -42,7 +42,7 @@ impl Scripts {
     pub async fn reindex(&self) -> Result<Output, String> {
         let _index = super::flows::INDEX_LOCK.lock().await;
         let report =
-            runs::plan_report(&self.shuttle, json!({"reindex": true}), RELEASE_TIMEOUT).await?;
+            runs::plan_report(&self.shuttle, json!({"reindex": true}), REINDEX_TIMEOUT).await?;
         if let Some(error) = report.get("error") {
             return Err(format!("reindex flows: {error}"));
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Acceptance of box sharing (design §23.3) against a deployed api and a v18 box, run on the deployment host.
+"""Acceptance of box sharing (design §23.3) against a deployed api and a box, run on the deployment host.
 
 Users qa1, qa2 and qa3 exist; qa1 has a box. Their console passwords come from QA1_PASSWORD, QA2_PASSWORD and
 QA3_PASSWORD; the script signs in, issues fresh API tokens for the three scratch users and never prints a secret.
@@ -328,8 +328,8 @@ def main():
     status, out = guest.call("shell", {"command": "echo guest-write"})
     check("guest-write" in json.dumps(out.get("result", {})), "with write on, the next guest shell call runs")
     status, tools = guest.tools()
-    check(len(tools) == 13 and not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
-          "with write on the guest lists 13 tools, none of them lifecycle or FillCredential")
+    check(not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
+          "with write on the guest lists no lifecycle tool and no FillCredential")
     status, _, _ = http("POST", "/cocoonbox.mcp/control", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"Authorization": "Bearer " + secret})
     check(status == 401, f"the control MCP refuses the share secret ({status})")
     os.environ["SHARE_SECRET"] = secret

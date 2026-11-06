@@ -72,30 +72,6 @@ public nonisolated struct Cocoonbox_Control_V1_ShareRef: Sendable {
   public init() {}
 }
 
-public nonisolated struct Cocoonbox_Control_V1_ShareSecret: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var share: Cocoonbox_Control_V1_Share {
-    get {_share ?? Cocoonbox_Control_V1_Share()}
-    set {_share = newValue}
-  }
-  /// Returns true if `share` has been explicitly set.
-  public var hasShare: Bool {self._share != nil}
-  /// Clears the value of `share`. Subsequent reads from it will return its default value.
-  public mutating func clearShare() {self._share = nil}
-
-  /// The same as share.secret.
-  public var secret: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-
-  fileprivate var _share: Cocoonbox_Control_V1_Share? = nil
-}
-
 public nonisolated struct Cocoonbox_Control_V1_CreateShareRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -286,45 +262,6 @@ nonisolated extension Cocoonbox_Control_V1_ShareRef: SwiftProtobuf.Message, Swif
 
   public static func ==(lhs: Cocoonbox_Control_V1_ShareRef, rhs: Cocoonbox_Control_V1_ShareRef) -> Bool {
     if lhs.shareID != rhs.shareID {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Cocoonbox_Control_V1_ShareSecret: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".ShareSecret"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}share\0\u{1}secret\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._share) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.secret) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._share {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if !self.secret.isEmpty {
-      try visitor.visitSingularStringField(value: self.secret, fieldNumber: 2)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Cocoonbox_Control_V1_ShareSecret, rhs: Cocoonbox_Control_V1_ShareSecret) -> Bool {
-    if lhs._share != rhs._share {return false}
-    if lhs.secret != rhs.secret {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

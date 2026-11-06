@@ -573,12 +573,13 @@ func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
 	return nil
 }
 
-func exec(dsn, sql string) error {
-	conn, err := pgx.Connect(context.Background(), dsn)
+func exec(t *testing.T, dsn, sql string) error {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	_, err = conn.Exec(context.Background(), sql)
+	defer func() { _ = conn.Close(t.Context()) }()
+	_, err = conn.Exec(t.Context(), sql)
 	return err
 }

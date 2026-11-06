@@ -137,32 +137,6 @@ impl Shell {
     }
 }
 
-/// A note for a requested `timeout` over [`MAX_TIMEOUT`], which a command runs with instead.
-pub fn capped_note(timeout: Option<Duration>) -> String {
-    match timeout {
-        Some(t) if t > MAX_TIMEOUT => format!(
-            "\n[timeout_s {} is over the {} s maximum; ran with {} s]",
-            t.as_secs(),
-            MAX_TIMEOUT.as_secs(),
-            MAX_TIMEOUT.as_secs()
-        ),
-        _ => String::new(),
-    }
-}
-
-/// bash in `cwd` with the environment of the shell tool.
-pub fn bash(cwd: &Path) -> Command {
-    let mut cmd = Command::new(BASH);
-    cmd.current_dir(cwd)
-        .env("TERM", "dumb")
-        .env("PAGER", "cat")
-        .env("GIT_PAGER", "cat")
-        .env("NO_COLOR", "1")
-        .kill_on_drop(true);
-    sys::unprotect(&mut cmd);
-    cmd
-}
-
 struct KillOnDrop<'a> {
     shell: &'a mut Shell,
     armed: bool,
@@ -222,6 +196,32 @@ impl Capture {
             &text[tail..]
         )
     }
+}
+
+/// A note for a requested `timeout` over [`MAX_TIMEOUT`], which a command runs with instead.
+pub fn capped_note(timeout: Option<Duration>) -> String {
+    match timeout {
+        Some(t) if t > MAX_TIMEOUT => format!(
+            "\n[timeout_s {} is over the {} s maximum; ran with {} s]",
+            t.as_secs(),
+            MAX_TIMEOUT.as_secs(),
+            MAX_TIMEOUT.as_secs()
+        ),
+        _ => String::new(),
+    }
+}
+
+/// bash in `cwd` with the environment of the shell tool.
+pub fn bash(cwd: &Path) -> Command {
+    let mut cmd = Command::new(BASH);
+    cmd.current_dir(cwd)
+        .env("TERM", "dumb")
+        .env("PAGER", "cat")
+        .env("GIT_PAGER", "cat")
+        .env("NO_COLOR", "1")
+        .kill_on_drop(true);
+    sys::unprotect(&mut cmd);
+    cmd
 }
 
 async fn read_until(

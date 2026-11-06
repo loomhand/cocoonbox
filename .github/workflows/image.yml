@@ -1,5 +1,3 @@
-# Cuts cbcore:vN from a release on the runner labelled cocoon (deploy/runner), then, after the box acceptance on that host and an approval
-# in the ghcr-publish environment, publishes its rootfs as ghcr.io/loomhand/cocoonbox/base:vN and :latest; see docs/image.md.
 # The runner's job-started hook refuses every job but CMGS's dispatch of this file on main.
 name: image
 

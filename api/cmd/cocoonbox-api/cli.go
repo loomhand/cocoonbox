@@ -3,45 +3,29 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/config"
-	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
-const (
-	cliUsage = `usage:
+const cliUsage = `usage:
   cocoonbox-api [-config FILE] check
-  cocoonbox-api [-config FILE] user add NAME [-id ID] [-admin]
+  cocoonbox-api [-config FILE] user add NAME [-admin]
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
   cocoonbox-api [-config FILE] user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
-  cocoonbox-api [-config FILE] state migrate [-keyring DIR]
-  cocoonbox-api [-config FILE] state expand [-user ID]
   cocoonbox-api [-config FILE] state heads
   cocoonbox-api [-config FILE] box rebase USER BOX IMAGE`
-
-	defaultKeyringDir = "/var/lib/cocoonbox-api/keys"
-)
-
-type stateKeys interface {
-	StateKey(ctx context.Context, user string) (keyring.Key, error)
-	SetStateKey(ctx context.Context, user string, k keyring.Key) error
-}
 
 type connections interface {
 	RevokeAll(ctx context.Context, user string) error
@@ -57,8 +41,8 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	if len(args) == 1 && args[0] == "check" {
 		return checkConfig(ctx, cfg, stdout)
 	}
-	if len(args) >= 2 && args[0] == "state" {
-		return runStateCLI(ctx, cfg, args[1], args[2:], stdout)
+	if len(args) == 2 && args[0] == "state" && args[1] == "heads" {
+		return backfillHeads(ctx, cfg, stdout)
 	}
 	if len(args) >= 2 && args[0] == "box" && args[1] == "rebase" {
 		return rebaseBox(ctx, cfg, args[2:], stdout)
@@ -71,7 +55,6 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return setPolicy(ctx, cfg, name, args[3:], stdout)
 	}
 	flags := flag.NewFlagSet(verb, flag.ContinueOnError)
-	id := flags.String("id", "", "user id; migrated users keep their old name so their box id stays")
 	admin := flags.Bool("admin", false, "make the user an admin")
 	fromStdin := flags.Bool("stdin", false, "read the secret from the first line of stdin")
 	if err := flags.Parse(args[3:]); err != nil {
@@ -87,7 +70,7 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return printErr
 	}
 	if verb == "add" {
-		u, createErr := accounts.Create(ctx, users.NewUser{ID: *id, Name: name, Admin: *admin})
+		u, createErr := accounts.Create(ctx, users.NewUser{Name: name, Admin: *admin})
 		if createErr != nil {
 			return createErr
 		}
@@ -174,9 +157,13 @@ func setPolicy(ctx context.Context, cfg *config.Config, name string, args []stri
 }
 
 func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service, u users.User) (int, error) {
-	st, err := newStore(cfg)
-	if err != nil {
-		return 0, err
+	var st store.Store
+	if cfg.State.Bucket != "" {
+		objects, err := newStore(cfg)
+		if err != nil {
+			return 0, err
+		}
+		st = objects
 	}
 	var revoker connections
 	if cfg.Connect.PublicURL != "" {
@@ -194,9 +181,13 @@ func deleteUser(ctx context.Context, st store.Store, revoker connections, accoun
 	if len(accounts.Boxes(u.ID)) > 0 {
 		return 0, errors.New("the user owns boxes: delete it in the console, which releases them")
 	}
-	removed, err := boxes.DeleteState(ctx, st, u.ID)
-	if err != nil {
-		return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
+	removed := 0
+	if st != nil {
+		n, err := boxes.DeleteState(ctx, st, u.ID)
+		if err != nil {
+			return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
+		}
+		removed = n
 	}
 	if revoker != nil {
 		if err := revoker.RevokeAll(ctx, u.ID); err != nil {
@@ -204,69 +195,6 @@ func deleteUser(ctx context.Context, st store.Store, revoker connections, accoun
 		}
 	}
 	return removed, accounts.Delete(ctx, u.ID)
-}
-
-// migrateState gives every user a state key in the users table and copies its box into the per-user store layout; a rerun is safe.
-func migrateState(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) error {
-	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
-	dir := flags.String("keyring", defaultKeyringDir, "directory of the per-box key files")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	st, err := newStore(cfg)
-	if err != nil {
-		return err
-	}
-	accounts, err := openUsers(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer accounts.Close()
-	for _, u := range accounts.List() {
-		box := boxes.BoxID(u.ID)
-		if err := importStateKey(ctx, accounts, u.ID, filepath.Join(*dir, box+".json")); err != nil {
-			return fmt.Errorf("state key of %s: %w", u.Name, err)
-		}
-		copied, err := boxes.MigrateState(ctx, st, u.ID)
-		if err != nil {
-			return fmt.Errorf("migrate state of %s: %w", u.Name, err)
-		}
-		if _, err := fmt.Fprintf(stdout, "user %s (%s): state key set, %d objects copied from %s/\n", u.Name, u.ID, copied, box); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// expandState rewrites every delta record and manifest delta as full objects, for a rollback to an api without delta records; stop the api first.
-func expandState(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) error {
-	flags := flag.NewFlagSet("expand", flag.ContinueOnError)
-	only := flags.String("user", "", "expand only this user id")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	st, err := newStore(cfg)
-	if err != nil {
-		return err
-	}
-	accounts, err := openUsers(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer accounts.Close()
-	for _, u := range accounts.List() {
-		if *only != "" && u.ID != *only {
-			continue
-		}
-		n, err := boxes.ExpandState(ctx, st, accounts, u.ID)
-		if err != nil {
-			return fmt.Errorf("expand state of %s: %w", u.Name, err)
-		}
-		if _, err := fmt.Fprintf(stdout, "user %s (%s): %d snapshots made full\n", u.Name, u.ID, n); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
@@ -295,18 +223,6 @@ func reportMigrations(ctx context.Context, cfg *config.Config, stdout io.Writer)
 	}
 	_, err = fmt.Fprintf(stdout, "cluster migrations the next start applies: %s\n", strings.Join(pending, ", "))
 	return err
-}
-
-func runStateCLI(ctx context.Context, cfg *config.Config, verb string, args []string, stdout io.Writer) error {
-	switch verb {
-	case "migrate":
-		return migrateState(ctx, cfg, args, stdout)
-	case "expand":
-		return expandState(ctx, cfg, args, stdout)
-	case "heads":
-		return backfillHeads(ctx, cfg, stdout)
-	}
-	return errors.New(cliUsage)
 }
 
 // backfillHeads copies every box's head.json into the cluster ledger once, before cluster.shared makes the ledger the heads' truth.
@@ -339,26 +255,4 @@ func backfillHeads(ctx context.Context, cfg *config.Config, stdout io.Writer) er
 		}
 	}
 	return nil
-}
-
-// importStateKey gives user the key in the box key file at path, or a new key when there is no file and the user has none.
-func importStateKey(ctx context.Context, keys stateKeys, user, path string) error {
-	raw, err := os.ReadFile(path) //nolint:gosec // path is built from a box id
-	if errors.Is(err, fs.ErrNotExist) {
-		if _, err = keys.StateKey(ctx, user); err == nil {
-			return nil
-		}
-		return keys.SetStateKey(ctx, user, keyring.Generate(user))
-	}
-	if err != nil {
-		return err
-	}
-	var file struct {
-		ID     string `json:"id"`
-		Secret []byte `json:"secret"`
-	}
-	if err := json.Unmarshal(raw, &file); err != nil {
-		return fmt.Errorf("decode %s: %w", path, err)
-	}
-	return keys.SetStateKey(ctx, user, keyring.Key{ID: file.ID, Secret: file.Secret})
 }

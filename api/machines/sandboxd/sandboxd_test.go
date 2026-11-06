@@ -1053,39 +1053,6 @@ func TestARollingSwitchOfTheEntryNodeKeepsEveryMachineOnItsNode(t *testing.T) {
 	}
 }
 
-func TestAStoredEmptyOwnerResolvesToTheNodeThatHoldsTheClaim(t *testing.T) {
-	a, b := newFakeSandboxd(t), newFakeSandboxd(t)
-	a.peers, b.peers = []*fakeSandboxd{b}, []*fakeSandboxd{a}
-	sb := &fakeSandbox{row: row{
-		ID: "sb_1", Key: poolKey{Template: template, Net: "none", Size: "xlarge"}, ClaimedAt: time.Now().UTC(),
-		Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner},
-	}, token: "tok"}
-	a.add(sb)
-	claim, err := json.Marshal(sb.row)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	db := clustertest.Open(t)
-	if _, err := db.UpdateMachine(t.Context(), boxID, func(m *cluster.Machine, _ bool) (bool, error) {
-		m.Owner, m.Image, m.CreatedAt, m.Claim, m.Ready = owner, template, time.Now(), claim, true
-		return true, nil
-	}); err != nil {
-		t.Fatalf("UpdateMachine: %v", err)
-	}
-	a.setDown(true)
-	next := newSharedBackend(t, b, db)
-	if _, err := rowOf(t, next, boxID); err != nil {
-		t.Fatalf("a row an older api wrote went while its node did not answer: %v", err)
-	}
-	a.setDown(false)
-	if got, err := next.Get(t.Context(), boxID); err != nil || got.State != machines.StateRunning {
-		t.Fatalf("Get = %+v, %v, want the running machine on its node", got, err)
-	}
-	if rec, err := db.Machine(t.Context(), boxID); err != nil || rec.OwnerAddr != a.addr() {
-		t.Errorf("the row names %q, %v, want %q", rec.OwnerAddr, err, a.addr())
-	}
-}
-
 func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}

@@ -21,7 +21,6 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Account_ListDevices_FullMethodName       = "/cocoonbox.control.v1.Account/ListDevices"
 	Account_RevokeDevice_FullMethodName      = "/cocoonbox.control.v1.Account/RevokeDevice"
-	Account_RevokeToken_FullMethodName       = "/cocoonbox.control.v1.Account/RevokeToken"
 	Account_SignOutEverywhere_FullMethodName = "/cocoonbox.control.v1.Account/SignOutEverywhere"
 )
 
@@ -38,8 +37,6 @@ type AccountClient interface {
 	// RevokeDevice signs one device out; NOT_FOUND for another user's device or
 	// one already gone.
 	RevokeDevice(ctx context.Context, in *RevokeDeviceRequest, opts ...grpc.CallOption) (*RevokeDeviceResponse, error)
-	// RevokeToken drops the personal token; device tokens stay.
-	RevokeToken(ctx context.Context, in *RevokeTokenRequest, opts ...grpc.CallOption) (*RevokeTokenResponse, error)
 	// SignOutEverywhere ends every sign-in of the caller, the calling one too:
 	// console sessions, the personal token, device tokens and agents' OAuth
 	// grants. Boxes, shares and connected accounts stay.
@@ -74,16 +71,6 @@ func (c *accountClient) RevokeDevice(ctx context.Context, in *RevokeDeviceReques
 	return out, nil
 }
 
-func (c *accountClient) RevokeToken(ctx context.Context, in *RevokeTokenRequest, opts ...grpc.CallOption) (*RevokeTokenResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(RevokeTokenResponse)
-	err := c.cc.Invoke(ctx, Account_RevokeToken_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *accountClient) SignOutEverywhere(ctx context.Context, in *SignOutEverywhereRequest, opts ...grpc.CallOption) (*SignOutEverywhereResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SignOutEverywhereResponse)
@@ -107,8 +94,6 @@ type AccountServer interface {
 	// RevokeDevice signs one device out; NOT_FOUND for another user's device or
 	// one already gone.
 	RevokeDevice(context.Context, *RevokeDeviceRequest) (*RevokeDeviceResponse, error)
-	// RevokeToken drops the personal token; device tokens stay.
-	RevokeToken(context.Context, *RevokeTokenRequest) (*RevokeTokenResponse, error)
 	// SignOutEverywhere ends every sign-in of the caller, the calling one too:
 	// console sessions, the personal token, device tokens and agents' OAuth
 	// grants. Boxes, shares and connected accounts stay.
@@ -128,9 +113,6 @@ func (UnimplementedAccountServer) ListDevices(context.Context, *ListDevicesReque
 }
 func (UnimplementedAccountServer) RevokeDevice(context.Context, *RevokeDeviceRequest) (*RevokeDeviceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeDevice not implemented")
-}
-func (UnimplementedAccountServer) RevokeToken(context.Context, *RevokeTokenRequest) (*RevokeTokenResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method RevokeToken not implemented")
 }
 func (UnimplementedAccountServer) SignOutEverywhere(context.Context, *SignOutEverywhereRequest) (*SignOutEverywhereResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SignOutEverywhere not implemented")
@@ -192,24 +174,6 @@ func _Account_RevokeDevice_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Account_RevokeToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RevokeTokenRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AccountServer).RevokeToken(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Account_RevokeToken_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AccountServer).RevokeToken(ctx, req.(*RevokeTokenRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Account_SignOutEverywhere_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SignOutEverywhereRequest)
 	if err := dec(in); err != nil {
@@ -242,10 +206,6 @@ var Account_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeDevice",
 			Handler:    _Account_RevokeDevice_Handler,
-		},
-		{
-			MethodName: "RevokeToken",
-			Handler:    _Account_RevokeToken_Handler,
 		},
 		{
 			MethodName: "SignOutEverywhere",

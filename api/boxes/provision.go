@@ -53,9 +53,10 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 }
 
 func (s *Service) provisionStale(ctx context.Context) {
+	logger := log.WithFunc("boxes.Service.provisionStale")
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
-		log.WithFunc("boxes.Service.provisionStale").Error(ctx, err, "list machines")
+		logger.Error(ctx, err, "list machines")
 		return
 	}
 	current := serving(ms)
@@ -65,11 +66,11 @@ func (s *Service) provisionStale(ctx context.Context) {
 			continue
 		}
 		if err := s.syncExit(ctx, m); err != nil {
-			log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Error(ctx, err, "sync exit")
+			logger.WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
 		if m.State == machines.StateRunning && wakeOf(m) == "" {
 			if err := s.provisionMachine(ctx, m); err != nil {
-				log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
+				logger.WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
 			}
 		}
 	}
@@ -138,6 +139,7 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 }
 
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
+	logger := log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID)
 	p := s.provision
 	if err := s.syncExit(ctx, m); err != nil {
 		return "", fmt.Errorf("exit: %w", err)
@@ -158,7 +160,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
 		if err != nil {
-			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the box door key: %v", err)
+			logger.Warnf(ctx, "issue the box door key: %v", err)
 		}
 		if key != "" {
 			keys[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
@@ -172,7 +174,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	}
 	if s.vault != nil && owned {
 		if err := s.pushVault(ctx, m); err != nil {
-			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "push keys: %v", err)
+			logger.Warnf(ctx, "push keys: %v", err)
 		}
 	}
 	if keys[gwKeyEnv] != nil {

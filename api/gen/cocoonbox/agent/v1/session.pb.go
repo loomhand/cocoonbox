@@ -677,7 +677,6 @@ func (*ExecServerFrame_ExitCode) isExecServerFrame_Body() {}
 
 type HelloRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientVersion string                 `protobuf:"bytes,1,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -712,25 +711,15 @@ func (*HelloRequest) Descriptor() ([]byte, []int) {
 	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{6}
 }
 
-func (x *HelloRequest) GetClientVersion() string {
-	if x != nil {
-		return x.ClientVersion
-	}
-	return ""
-}
-
 type HelloResponse struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	AgentVersion string                 `protobuf:"bytes,1,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	// The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
-	// Android. A later change in the box, such as `wm size`, is not reflected.
-	ScreenWidth      uint32     `protobuf:"varint,2,opt,name=screen_width,json=screenWidth,proto3" json:"screen_width,omitempty"`
-	ScreenHeight     uint32     `protobuf:"varint,3,opt,name=screen_height,json=screenHeight,proto3" json:"screen_height,omitempty"`
-	Models           []string   `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	DefaultMainModel string     `protobuf:"bytes,5,opt,name=default_main_model,json=defaultMainModel,proto3" json:"default_main_model,omitempty"`
-	Automation       Automation `protobuf:"varint,6,opt,name=automation,proto3,enum=cocoonbox.agent.v1.Automation" json:"automation,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The screen size the image boots at; a later change such as `wm size` is not reflected.
+	ScreenWidth   uint32     `protobuf:"varint,2,opt,name=screen_width,json=screenWidth,proto3" json:"screen_width,omitempty"`
+	ScreenHeight  uint32     `protobuf:"varint,3,opt,name=screen_height,json=screenHeight,proto3" json:"screen_height,omitempty"`
+	Automation    Automation `protobuf:"varint,6,opt,name=automation,proto3,enum=cocoonbox.agent.v1.Automation" json:"automation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HelloResponse) Reset() {
@@ -782,20 +771,6 @@ func (x *HelloResponse) GetScreenHeight() uint32 {
 		return x.ScreenHeight
 	}
 	return 0
-}
-
-func (x *HelloResponse) GetModels() []string {
-	if x != nil {
-		return x.Models
-	}
-	return nil
-}
-
-func (x *HelloResponse) GetDefaultMainModel() string {
-	if x != nil {
-		return x.DefaultMainModel
-	}
-	return ""
 }
 
 func (x *HelloResponse) GetAutomation() Automation {
@@ -1830,18 +1805,15 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	"\x06stdout\x18\x01 \x01(\fH\x00R\x06stdout\x12\x18\n" +
 	"\x06stderr\x18\x02 \x01(\fH\x00R\x06stderr\x12\x1d\n" +
 	"\texit_code\x18\x03 \x01(\x05H\x00R\bexitCodeB\x06\n" +
-	"\x04body\"5\n" +
-	"\fHelloRequest\x12%\n" +
-	"\x0eclient_version\x18\x01 \x01(\tR\rclientVersion\"\x82\x02\n" +
+	"\x04body\"$\n" +
+	"\fHelloRequestJ\x04\b\x01\x10\x02R\x0eclient_version\"\xe4\x01\n" +
 	"\rHelloResponse\x12#\n" +
 	"\ragent_version\x18\x01 \x01(\tR\fagentVersion\x12!\n" +
 	"\fscreen_width\x18\x02 \x01(\rR\vscreenWidth\x12#\n" +
-	"\rscreen_height\x18\x03 \x01(\rR\fscreenHeight\x12\x16\n" +
-	"\x06models\x18\x04 \x03(\tR\x06models\x12,\n" +
-	"\x12default_main_model\x18\x05 \x01(\tR\x10defaultMainModel\x12>\n" +
+	"\rscreen_height\x18\x03 \x01(\rR\fscreenHeight\x12>\n" +
 	"\n" +
 	"automation\x18\x06 \x01(\x0e2\x1e.cocoonbox.agent.v1.AutomationR\n" +
-	"automation\"\x15\n" +
+	"automationJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\x06modelsR\x12default_main_model\"\x15\n" +
 	"\x13ActiveOriginRequest\".\n" +
 	"\x14ActiveOriginResponse\x12\x16\n" +
 	"\x06origin\x18\x01 \x01(\tR\x06origin\"\xa1\x01\n" +

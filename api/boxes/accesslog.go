@@ -43,15 +43,15 @@ func (a *AccessLog) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServe
 }
 
 func (a *AccessLog) write(ctx context.Context, method, box string, err error, start time.Time) {
-	log.WithFunc("boxes.AccessLog").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
-}
-
-func accessLine(method, user, box string, code codes.Code, took time.Duration) string {
-	return fmt.Sprintf("%s user=%s box=%q code=%s in %s", strings.TrimPrefix(method, boxesServicePrefix), user, box, code, took.Round(time.Millisecond))
+	log.WithFunc("boxes.AccessLog.write").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
 }
 
 type boxRequest interface {
 	GetBoxId() string
+}
+
+func accessLine(method, user, box string, code codes.Code, took time.Duration) string {
+	return fmt.Sprintf("%s user=%s box=%q code=%s in %s", strings.TrimPrefix(method, boxesServicePrefix), user, box, code, took.Round(time.Millisecond))
 }
 
 func boxOf(req any) string {

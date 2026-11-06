@@ -112,7 +112,7 @@ and take the default box the app sets.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let command = arguments.first ?? "help"
 let flags = Set(arguments.dropFirst().filter { $0.hasPrefix("--") })
-let valuedFlags: Set = ["--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--ttl", "--tz", "--wait"]
+let valuedFlags: Set = ["-o", "--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--ttl", "--tz", "--wait"]
 let words = positional(arguments.dropFirst())
 
 // rsh exits 255 on its own failures, so they differ from the command's exit codes.
@@ -179,8 +179,12 @@ func sourceKey(_ endpoint: Endpoint) -> String {
     "token_source:" + endpoint.url
 }
 
+func endpointURL(_ flag: String? = value(of: "--endpoint")) -> String? {
+    flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL
+}
+
 func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
-    guard let url = flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL else {
+    guard let url = endpointURL(flag) else {
         fail("no endpoint: pass --endpoint or set COCOONBOX_ENDPOINT")
     }
     guard let endpoint = Endpoint(url: url) else { fail("\(url) is not an http(s) URL") }
@@ -212,18 +216,6 @@ func connection(_ endpoint: Endpoint = endpoint()) -> BoxConnection {
     }
 }
 
-func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
-    switch state {
-    case .starting: "starting"
-    case .running: "running"
-    case .hibernating: "hibernating"
-    case .hibernated: "hibernated"
-    case .failed: "failed"
-    default: "absent"
-    }
-}
-
-// selectedBox is the box --box names, else the first box.
 func selectedBox(_ connection: BoxConnection) async throws -> Cocoonbox_Control_V1_Box? {
     let boxes = try await connection.listBoxes()
     guard let ref = value(of: "--box") else { return boxes.first }
@@ -237,13 +229,13 @@ func box(_ ref: String, in boxes: [Cocoonbox_Control_V1_Box]) -> Cocoonbox_Contr
 
 func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
     let object: [String: Any] = [
-        "box_id": box?.id ?? "", "name": box?.name ?? "", "state": stateName(box?.state ?? .unspecified), "image": box?.image ?? "",
+        "box_id": box?.id ?? "", "name": box?.name ?? "", "state": (box?.state ?? .unspecified).name, "image": box?.image ?? "",
         "latest_image": box?.latestImage ?? "", "last_saved_at_ms": box?.lastSavedAtMs ?? 0,
         "upgrade_available": box.map { !$0.latestImage.isEmpty && $0.latestImage != $0.image } ?? false,
     ]
     if json { return printJSON(object) }
     guard let box else { return print("no box yet; run cocoonbox ensure") }
-    var line = "\(box.name) \(box.id) \(stateName(box.state)) \(box.image)"
+    var line = "\(box.name) \(box.id) \(box.state.name) \(box.image)"
     if !box.latestImage.isEmpty, box.latestImage != box.image { line += " (upgrade available: \(box.latestImage))" }
     if box.lastSavedAtMs > 0 {
         line += ", saved \(Int(Date().timeIntervalSince1970 - Double(box.lastSavedAtMs) / 1000) / 60) min ago"
@@ -251,7 +243,6 @@ func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
     print(line)
 }
 
-// follow prints an operation's events to stderr until it ends and fails on PHASE_FAILED.
 func follow(_ connection: BoxConnection, _ operation: String) async {
     let failed = Mutex<String?>(nil)
     do {
@@ -450,7 +441,7 @@ func readExport(_ path: String) throws -> [Cocoonbox_Control_V1_Flow] {
 func flowsCommand() async {
     let out = value(of: "-o")
     let verb = words.first ?? "list"
-    let names = Array(words.dropFirst()).filter { $0 != "-o" && $0 != out }
+    let names = Array(words.dropFirst())
     let connection = connection()
     defer { connection.close() }
     do {
@@ -710,13 +701,12 @@ func shareCommand() async {
                 guard let text = value(of: "--ttl"), let parsed = seconds(text) else { fail("--ttl is a duration such as 30m, 24h or 7d") }
                 ttl = Int64(parsed)
             }
-            let created: Cocoonbox_Control_V1_ShareSecret
+            let share: Cocoonbox_Control_V1_Share
             do {
-                created = try await connection.createShare(boxID: target.id, ttlSeconds: ttl, userNames: [], write: false)
+                share = try await connection.createShare(boxID: target.id, ttlSeconds: ttl, userNames: [], write: false)
             } catch let error as RPCError where error.code == .alreadyExists {
                 fail("\(target.name) already has a live share; `cocoonbox share ls` shows it, and `cocoonbox share revoke ID` ends it")
             }
-            let share = created.share
             if json { return printJSON(shareObject(share, name: target.name, endpoint: connection.endpoint)) }
             print(ShareSetup.link(endpoint: connection.endpoint, secret: share.secret))
             print("read-only share \(share.id) of \(target.name), expires \(iso(share.expiresAtMs))")
@@ -969,7 +959,6 @@ final class Terminal: Sendable {
     }
 }
 
-// terminfo is `infocmp -x term`, empty when missing or over maxTerminfo.
 func terminfo(_ term: String) -> String {
     guard !term.isEmpty, let run = try? Command.run(["infocmp", "-x", term], environment: ProcessInfo.processInfo.environment),
           run.status == 0, run.out.count <= maxTerminfo else { return "" }
@@ -1112,7 +1101,6 @@ func offloader(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) -> 
               environment: ProcessInfo.processInfo.environment) { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
 }
 
-// runningBox is the box ref names, else the first box, woken when it does not run.
 func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Cocoonbox_Control_V1_Box {
     let boxes = try await connection.listBoxes()
     guard let box = ref.map({ CocoonBoxCLI.box($0, in: boxes) }) ?? boxes.first else { fail("no box yet") }
@@ -1135,7 +1123,6 @@ func offloadKey(inFlight: Bool = false) -> String {
     return offloadStore.records().last { $0.top == repo.top.path }?.repo ?? repo.key
 }
 
-// positional is the words after sub that are neither options nor their values.
 func positional(after sub: String) -> [String] {
     positional(arguments.drop { $0 != sub }.dropFirst())
 }
@@ -1379,7 +1366,7 @@ func setup() {
     let update = client == "claude" ? ["claude", "plugin", "marketplace", "update", Plugin.marketplace] : ["codex", "plugin", "marketplace", "upgrade", Plugin.marketplace]
     guard run(steps[0]) || run(update), steps.dropFirst().allSatisfy(run) else { fail("\(client) did not install the plugin") }
     print("installed the cocoonbox plugin for \(client)")
-    let target = endpoint()
+    guard let target = endpointURL().flatMap(Endpoint.init(url:)) else { return }
     if Keychain.token(for: target, service: service) == nil { _ = appToken(target) }
 }
 

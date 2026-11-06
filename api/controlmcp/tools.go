@@ -428,7 +428,6 @@ func (s *Server) usage(ctx context.Context) (*usageResult, error) {
 	}, nil
 }
 
-// finish follows operation id to its end; a failed operation becomes "<verb> failed: <detail>".
 func (s *Server) finish(ctx context.Context, verb, id string, progress progressFunc) (*watchStream, error) {
 	w := &watchStream{ctx: ctx, progress: progress}
 	if err := s.boxes.WatchOperation(&controlv1.WatchOperationRequest{OperationId: id}, w); err != nil {

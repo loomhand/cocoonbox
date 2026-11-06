@@ -65,8 +65,7 @@ func (s *Service) ListSnapshots(ctx context.Context, ref *controlv1.BoxRef) (*co
 	resp := &controlv1.ListSnapshotsResponse{}
 	for _, e := range slices.Backward(entries) {
 		resp.Snapshots = append(resp.Snapshots, &controlv1.Snapshot{
-			Id: e.ID, SavedAtMs: e.SavedAtMs, Quiesced: e.Consistency == agentv1.Consistency_CONSISTENCY_QUIESCED.String(),
-			Files: e.Files, LogicalBytes: e.LogicalBytes, ChangedFiles: e.ChangedFiles, AddedBytes: e.UploadedBytes,
+			Id: e.ID, SavedAtMs: e.SavedAtMs, ChangedFiles: e.ChangedFiles, AddedBytes: e.UploadedBytes,
 		})
 	}
 	return resp, nil
@@ -133,9 +132,10 @@ func (s *Service) RestorePaths(ctx context.Context, req *controlv1.RestorePathsR
 		return nil, snapshotError(ctx, box, err, "read snapshot")
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_RESTORING_FILES, m.Revision, stateTimeout)
-	if started {
-		go s.runRestorePaths(op, user, m, e, paths)
+	if !started {
+		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", op.id)
 	}
+	go s.runRestorePaths(op, user, m, e, paths)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 

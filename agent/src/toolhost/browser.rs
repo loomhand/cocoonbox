@@ -1139,7 +1139,6 @@ struct TypeArgs {
 #[derive(Deserialize)]
 struct FillArgs {
     fields: Vec<FillField>,
-    #[serde(default)]
     click: Option<String>,
 }
 
@@ -1152,7 +1151,7 @@ struct FillField {
 
 #[derive(Deserialize)]
 struct ReadArgs {
-    #[serde(rename = "ref", default)]
+    #[serde(rename = "ref")]
     element: Option<String>,
     #[serde(default)]
     offset: usize,

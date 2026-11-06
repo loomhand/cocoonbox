@@ -1,7 +1,7 @@
 #!/bin/bash
 # Provisions a cocoon-macos guest as a desk box: the agent's serve as a LaunchDaemon, shuttle as a LaunchAgent in the Aqua
 # session with the agent's toolhost as its service plugin, the desk runtime and guide, /workspace and /run, and autologin.
-# Runs as root inside the guest from an unpacked copy of image/macos with vendor/ filled; idempotent. A reboot follows the
+# Runs as root inside the guest from an unpacked copy of image/ with image/macos/vendor/ filled; idempotent. A reboot follows the
 # first run, as /etc/synthetic.conf makes /workspace and /run only at boot. The shuttle app gets Accessibility, Screen
 # Recording, the capture consent and Full Disk Access once per image through UI input; the toolhost runs as its child.
 #   BOX_USER (default cocoon), BOX_PASSWORD: the desktop user that logs in automatically
@@ -101,9 +101,7 @@ shuttle() {
 	echo "$SHUTTLE_SHA256  $tarball" | shasum -a 256 -c --quiet -
 	tmp=$(mktemp -d)
 	tar -xzf "$tarball" -C "$tmp"
-	launchctl bootout "gui/$(id -u "$BOX_USER")/io.github.loomhand.cocoon-shuttle" 2>/dev/null || true
-	pkill -TERM -f "MacOS/cocoon-shuttle serve" || true
-	rm -rf "$SHUTTLE_APP" "/Applications/Cocoon Shuttle.app" /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist
+	rm -rf "$SHUTTLE_APP"
 	install -d -m 0755 "$(dirname "$SHUTTLE_APP")"
 	mv "$tmp/Shuttle.app" "$SHUTTLE_APP"
 	chown -R root:wheel "$SHUTTLE_APP"
@@ -180,8 +178,6 @@ check() {
 	[ -z "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUserScreenLocked 2>/dev/null)" ]
 	[ "$(sudo -u "$BOX_USER" defaults -currentHost read com.apple.screensaver idleTime)" = 0 ]
 	plutil -lint -s "/Library/LaunchAgents/$SHUTTLE_AGENT.plist" "/Library/LaunchDaemons/$DAEMON.plist"
-	[ ! -e "/Applications/Cocoon Shuttle.app" ]
-	[ ! -e /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist ]
 	echo check: ok
 }
 

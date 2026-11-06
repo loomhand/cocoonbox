@@ -289,53 +289,6 @@ func TestGCAndADeltaSaveInterleave(t *testing.T) {
 	}
 }
 
-func TestExpandWritesTheLayoutOfAnAPIWithoutDeltas(t *testing.T) {
-	env := newDeltaEnv(t)
-	p := statePath{user: alice, box: aliceBox}
-	for i := range 4 {
-		env.agent.files = manyFiles(64, i)
-		env.save(t)
-		if i == 0 {
-			env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
-		}
-	}
-	env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
-	before := map[string]map[string]bool{}
-	for _, id := range env.timelineIDs(t, p) {
-		rec, err := env.svc.state.record(env.ctx, p, id)
-		if err != nil {
-			t.Fatalf("record %s: %v", id, err)
-		}
-		before[id] = chunkSet(rec.Chunks)
-	}
-
-	n, err := ExpandState(env.ctx, env.store, env.keys, alice)
-	if err != nil || n != 3 {
-		t.Fatalf("ExpandState = %d, %v; want the three deltas", n, err)
-	}
-	key, _ := env.keys.StateKey(env.ctx, alice)
-	for id, chunks := range before {
-		var old struct {
-			timelineEntry
-			Chunks []chunk `json:"chunks"`
-		}
-		if err := json.Unmarshal(env.store.objects[p.record(id)], &old); err != nil || old.Base != "" || !maps.Equal(chunkSet(old.Chunks), chunks) {
-			t.Errorf("record %s for an old api: base %q, %v", id, old.Base, err)
-		}
-		if _, err := openSealed(key.Secret, id, env.store.objects[p.manifest(id)], manifestLimit); err != nil {
-			t.Errorf("manifest %s for an old agent: %v", id, err)
-		}
-		if env.store.has(p.manifest(id) + deltaSuffix) {
-			t.Errorf("manifest delta of %s survived", id)
-		}
-	}
-	for _, e := range env.timelineEntries(t, p) {
-		if e.Base != "" {
-			t.Errorf("timeline entry %s keeps base %s", e.ID, e.Base)
-		}
-	}
-}
-
 func TestMetadataBytesPerSave(t *testing.T) {
 	if os.Getenv("COCOONBOX_MEASURE") == "" {
 		t.Skip("COCOONBOX_MEASURE is unset")

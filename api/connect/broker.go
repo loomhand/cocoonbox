@@ -500,6 +500,9 @@ func uncertain(err error, ex exchange) bool {
 	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr.Op == "dial" {
 		return false
 	}
+	if _, refreshed := errors.AsType[*oauthError](err); refreshed {
+		return false
+	}
 	_, answered := errors.AsType[*mcpwire.Error](err)
 	return ex.status == 0 || ex.status/100 == 5 || (ex.status/100 == 2 && !answered)
 }

@@ -479,6 +479,9 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
             }
             call(layout, &req).await?
         }
+        "status" if a.value("repo").is_none() && !layout.socket.exists() => {
+            json!({"ok": true, "sessions": []})
+        }
         "status" => {
             let mut req = json!({"op": "status"});
             if let Some(r) = a.value("repo") {
@@ -551,11 +554,11 @@ fn read_index_file(path: &Path) -> Result<Index, String> {
 
 async fn stdin_text() -> Result<String, Fail> {
     tokio::task::spawn_blocking(|| {
-        let mut s = String::new();
+        let mut raw = Vec::new();
         std::io::stdin()
             .take(handover::MAX_BODY as u64 + 1)
-            .read_to_string(&mut s)
-            .map(|_| s)
+            .read_to_end(&mut raw)
+            .map(|_| String::from_utf8_lossy(&raw).into_owned())
             .map_err(|e| Fail::Usage(format!("read stdin: {e}")))
     })
     .await
@@ -580,9 +583,25 @@ fn snapshot_ref(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
+
+    #[tokio::test]
+    async fn status_without_an_inbox_socket_lists_no_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            state: dir.path().join("state"),
+            socket: dir.path().join("offload.sock"),
+            secrets: dir.path().join("secrets"),
+            workspace: dir.path().join("workspace"),
+            home: dir.path().to_path_buf(),
+            tmux: dir.path().join("tmux"),
+        };
+        let out = dispatch(&layout, vec!["status".to_owned()]).await;
+        assert!(
+            matches!(out, Ok(Some(ref v)) if *v == json!({"ok": true, "sessions": []})),
+            "{out:?}"
+        );
+    }
 
     #[test]
     fn keys_are_twelve_lowercase_hex() {

@@ -47,12 +47,12 @@ struct LiveScreenPane: View {
     }
 
     private var working: Bool {
-        model.operation.map { !$0.finished } ?? false
+        model.boxOperation.map { !$0.finished } ?? false
     }
 
     // message names what the box is doing while the last frame is dimmed.
     private var message: String {
-        if !model.boxRunning, let operation = model.operation, !operation.finished {
+        if !model.boxRunning, let operation = model.boxOperation, !operation.finished {
             return "\(operation.title)…"
         }
         switch model.screen.status {

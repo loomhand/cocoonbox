@@ -66,7 +66,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if len(puts) != 1 || puts[0].GetChunkId() != hexID("c4") {
 		t.Errorf("second upload puts = %v, want only c4", puts)
 	}
-	box, err := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := env.svc.get(env.ctx, aliceBox)
 	if err != nil || box.GetLastSavedAtMs() == 0 || box.GetLatestImage() != "desktop:v2" {
 		t.Errorf("box = %v, %v", box, err)
 	}
@@ -490,7 +490,8 @@ func TestARestoreThatOutlastsThePresignTTLStillFetchesItsFirstChunks(t *testing.
 	ctx, cancel := context.WithTimeout(t.Context(), stateTimeout)
 	defer cancel()
 
-	if _, err := l.restore(ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, "", noProgress); err != nil {
+	p := statePath{user: alice, box: aliceBox}
+	if _, err := l.restore(ctx, p, machines.Endpoint{}, headID(t, l, p), noProgress); err != nil {
 		t.Fatalf("restore over %s with a %s presign TTL: %v", time.Duration(skew.Load()), time.Minute, err)
 	}
 	if want := pageSize + 2; agent.fetched != want {
@@ -550,7 +551,7 @@ func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := svc.get(ctx, aliceBox)
 	if err != nil || box.GetLatestImage() != "cbcore:v1" {
 		t.Fatalf("box = %v, %v, want latest cbcore:v1 so no upgrade is offered", box, err)
 	}
@@ -571,7 +572,7 @@ func TestRebaseStaysInTheBoxFamilyUnlessTheOperatorAsks(t *testing.T) {
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := svc.get(ctx, aliceBox)
 	if err != nil || box.GetLatestImage() != "cbdroid:v3" {
 		t.Fatalf("box = %v, %v, want latest cbdroid:v3 so no upgrade is offered", box, err)
 	}
@@ -732,7 +733,7 @@ func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
 	if _, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve while restoring = %v, want Unavailable", err)
 	}
-	if box, _ := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+	if box, _ := env.svc.get(env.ctx, aliceBox); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Errorf("box while restoring = %v, want STARTING", box)
 	}
 	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
@@ -1237,6 +1238,7 @@ func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("save ended with %v", last)
 	}
+	time.Sleep(time.Millisecond)
 	return events
 }
 
@@ -1314,6 +1316,28 @@ func snapshotID(n int) string {
 	return fmt.Sprintf("%064x", n)
 }
 
+func headID(t *testing.T, l *stateLayer, p statePath) string {
+	t.Helper()
+	h, err := l.head(t.Context(), p)
+	if err != nil || h.Latest == "" {
+		t.Fatalf("head of %s = %+v, %v", p.box, h, err)
+	}
+	return h.Latest
+}
+
+func seed(t *testing.T, st *fakeStore, objects map[string]any) {
+	t.Helper()
+	for key, v := range objects {
+		if raw, ok := v.(string); ok {
+			st.objects[key] = []byte(raw)
+			continue
+		}
+		if err := putJSON(t.Context(), st, key, v); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+}
+
 // fakeStore calls before, when set, with the operation and key ahead of each store call.
 type fakeStore struct {
 	before func(op, key string)
@@ -1385,17 +1409,6 @@ func (s *fakeStore) Delete(_ context.Context, keys []string) error {
 		delete(s.objects, key)
 	}
 	s.deleted = append(s.deleted, keys...)
-	return nil
-}
-
-func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, ok := s.objects[src]
-	if !ok {
-		return store.ErrNotFound
-	}
-	s.objects[dst], s.modified[dst] = data, time.Now()
 	return nil
 }
 

@@ -50,7 +50,7 @@ func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {
 	}
 
 	cookie, code, state = env.begin(t, root, "mock", vendor)
-	if err := exec(env.dsn, "UPDATE connect_flows SET expires_at = now() - interval '1 second' WHERE connector = 'mock'"); err != nil {
+	if err := exec(t, env.dsn, "UPDATE connect_flows SET expires_at = now() - interval '1 second' WHERE connector = 'mock'"); err != nil {
 		t.Fatalf("expire: %v", err)
 	}
 	if loc := env.callback(t, cookie.Value, state, code); !strings.Contains(loc, "error=") {
@@ -184,7 +184,7 @@ func TestDeleteRevokesTheGrantsAndLeavesNoRowOfTheUser(t *testing.T) {
 	if err := env.users.PutWakeSchedule(t.Context(), wake, 1); err != nil {
 		t.Fatalf("PutWakeSchedule: %v", err)
 	}
-	if err := exec(env.dsn, `INSERT INTO connect_approvals (id, user_id, grant_id, tool, args_sha256, summary, expires_at)
+	if err := exec(t, env.dsn, `INSERT INTO connect_approvals (id, user_id, grant_id, tool, args_sha256, summary, expires_at)
 		SELECT 'ca_qa1', user_id, id, 'create_item', 'x', 's', now() + interval '10 minutes' FROM connect_grants WHERE user_id = '`+u.ID+`';
 		INSERT INTO connect_audit (user_id, connector, tool, door, caller, decision, outcome) VALUES ('`+u.ID+`', 'mock', 'list_items', 'mcp', 'mcp:test', 'allow', 'ok')`); err != nil {
 		t.Fatalf("approval and audit: %v", err)

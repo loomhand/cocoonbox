@@ -54,16 +54,13 @@ func TestSameRedirectIgnoresOnlyTheLoopbackPort(t *testing.T) {
 
 func TestRegisteredClientCarriesItsMetadataAndRefusesTampering(t *testing.T) {
 	s := &Service{key: []byte("k")}
-	id, err := s.register("Codex", []string{"http://127.0.0.1/callback"})
-	if err != nil {
-		t.Fatalf("register: %v", err)
-	}
+	id := s.register("Codex", []string{"http://127.0.0.1/callback"})
 	c, err := s.client(t.Context(), id)
 	if err != nil || c.name != "Codex" || c.host != "" || !c.allows("http://127.0.0.1:4000/callback") {
 		t.Fatalf("client = %+v, %v", c, err)
 	}
 	payload, mac, _ := strings.Cut(strings.TrimPrefix(id, dcrPrefix), ".")
-	forged, _ := (&Service{key: []byte("other")}).register("Codex", []string{"https://evil.example/cb"})
+	forged := (&Service{key: []byte("other")}).register("Codex", []string{"https://evil.example/cb"})
 	forgedPayload, _, _ := strings.Cut(strings.TrimPrefix(forged, dcrPrefix), ".")
 	for _, bad := range []string{dcrPrefix + forgedPayload + "." + mac, dcrPrefix + payload + ".AAAA", dcrPrefix + payload, "plain-id"} {
 		if _, err := s.client(t.Context(), bad); err == nil {

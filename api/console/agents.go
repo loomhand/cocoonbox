@@ -40,7 +40,6 @@ type accountChoice struct {
 	Account string `json:"account"`
 }
 
-// authorization is the page's call: the authorization request's query and, for an approval, the caps, the chosen boxes and the ticked connectors.
 type authorization struct {
 	Query      string   `json:"query"`
 	Boxes      []string `json:"boxes"`
@@ -51,15 +50,9 @@ type authorization struct {
 // EnableAgents serves the consent page of oauth.AuthorizePath, the Agents page, the Connect your agent page and their calls over agents.
 func (s *Server) EnableAgents(agents Agents) {
 	s.agents = agents
-	s.mux.HandleFunc("GET "+oauth.AuthorizePath, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/authorize.html")
-	})
-	s.mux.HandleFunc("GET "+agentsPage, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/agents.html")
-	})
-	s.mux.HandleFunc("GET "+setupPage, func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, static, "static/setup.html")
-	})
+	s.mux.HandleFunc("GET "+oauth.AuthorizePath, page("authorize.html"))
+	s.mux.HandleFunc("GET "+agentsPage, page("agents.html"))
+	s.mux.HandleFunc("GET "+setupPage, page("setup.html"))
 	s.mux.HandleFunc("POST "+Prefix+"api/oauth/check", s.signedIn(s.checkAuthorization))
 	s.mux.HandleFunc("POST "+Prefix+"api/oauth/approve", s.signedIn(s.approveAuthorization))
 	s.mux.HandleFunc("POST "+Prefix+"api/oauth/deny", s.signedIn(s.denyAuthorization))
@@ -181,7 +174,6 @@ func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// failAuthorization answers a refused request with its message and, when the client may hear it, where to send the browser.
 func (s *Server) failAuthorization(w http.ResponseWriter, r *http.Request, err error) {
 	refusal, refused := errors.AsType[*oauth.AuthorizeError](err)
 	if !refused {
@@ -207,7 +199,6 @@ func (s *Server) choices(user string) []choice {
 	return out
 }
 
-// connectorGrants maps the connector ids the user ticked to the grants of the user's active connectors, refusing any other id.
 func (s *Server) connectorGrants(ctx context.Context, user string, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -227,7 +218,6 @@ func (s *Server) connectorGrants(ctx context.Context, user string, ids []string)
 	return grants, nil
 }
 
-// accounts lists user's active connected accounts, none while Connect is off.
 func (s *Server) accounts(ctx context.Context, user string) ([]connect.Account, error) {
 	if s.connect == nil {
 		return nil, nil
@@ -235,7 +225,6 @@ func (s *Server) accounts(ctx context.Context, user string) ([]connect.Account, 
 	return s.connect.Accounts(ctx, user)
 }
 
-// decodeAuthorization reads the page's call and the authorization request its query carries.
 func decodeAuthorization(w http.ResponseWriter, r *http.Request) (oauth.Request, authorization, bool) {
 	var body authorization
 	if !decode(w, r, &body) {

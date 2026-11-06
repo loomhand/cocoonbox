@@ -26,7 +26,6 @@ const (
 	diskLowReason = "disk below reserve"
 )
 
-// apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound, 409 machines.ErrConflict and 429 machines.ErrCapacity.
 type apiError struct {
 	status  int
 	message string
@@ -137,7 +136,6 @@ func newClient(rawURL, token string) (*client, error) {
 	return &client{base: base, token: token, http: &http.Client{}}, nil
 }
 
-// claim claims with token, a tenant's or the root one.
 func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {
 	var resp claimResponse
 	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
@@ -191,19 +189,11 @@ func (c *client) owner(ctx context.Context, id, token string) (string, error) {
 	return resp.OwnerAddr, err
 }
 
-func (c *client) list(ctx context.Context) ([]row, error) {
+func (c *client) sandboxes(ctx context.Context, query url.Values) ([]row, error) {
 	var resp struct {
 		Sandboxes []row `json:"sandboxes"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", nil, nil, &resp)
-	return resp.Sandboxes, err
-}
-
-func (c *client) find(ctx context.Context, key, value string) ([]row, error) {
-	var resp struct {
-		Sandboxes []row `json:"sandboxes"`
-	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", url.Values{"metadata": {key + "=" + value}}, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", query, nil, &resp)
 	return resp.Sandboxes, err
 }
 
@@ -213,7 +203,6 @@ func (c *client) get(ctx context.Context, id string) (row, error) {
 	return r, err
 }
 
-// verb posts one lifecycle verb with the root token.
 func (c *client) verb(ctx context.Context, id, verb string, body any) error {
 	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, nil, body, nil)
 }
@@ -326,7 +315,6 @@ func (c *bufferedConn) CloseWrite() error {
 	return c.Close()
 }
 
-// nodeURL gives the http scheme to a node address the mesh names without one.
 func nodeURL(addr string) string {
 	if strings.Contains(addr, "://") {
 		return addr
@@ -343,11 +331,6 @@ func responseError(resp *http.Response) error {
 		body.Error = http.StatusText(resp.StatusCode)
 	}
 	return &apiError{status: resp.StatusCode, message: body.Error}
-}
-
-func isStatus(err error, status int) bool {
-	apiErr, ok := errors.AsType[*apiError](err)
-	return ok && apiErr.status == status
 }
 
 // transient reports whether a claim that failed with err may succeed on another node, as the sandboxd SDK decides.

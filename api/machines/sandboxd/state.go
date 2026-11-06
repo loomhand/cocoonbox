@@ -52,7 +52,7 @@ type entry struct {
 	// created stands in for the claim time until the claim row exists.
 	created time.Time
 	row     *row
-	// ownerAddr names the node that holds the claim as the mesh names it; an older api wrote "" for its entry node.
+	// ownerAddr names the node that holds the claim as the mesh names it.
 	ownerAddr string
 
 	op    string
@@ -126,7 +126,6 @@ func (e *entry) busy(now time.Time) bool {
 	return e.op != "" && now.Before(e.opUntil)
 }
 
-// begin marks e as running op from now on, as a new revision, held for lease.
 func (e *entry) begin(op string, now time.Time, lease time.Duration) {
 	e.op, e.opErr, e.opUntil = op, "", now.Add(lease)
 	e.revision++
@@ -143,9 +142,6 @@ func (e *entry) machine(disk uint32) machines.Machine {
 		Revision: e.revision,
 		Meta:     maps.Clone(e.meta),
 		Routed:   e.routed,
-	}
-	if m.Meta == nil {
-		m.Meta = map[string]string{}
 	}
 	if e.row != nil {
 		for k, v := range e.row.Metadata {

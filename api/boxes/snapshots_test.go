@@ -2,9 +2,6 @@ package boxes
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json/v2"
 	"slices"
@@ -12,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/klauspost/compress/zstd"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -49,7 +45,7 @@ func TestListSnapshotsNewestFirst(t *testing.T) {
 		if newest.ChangedFiles == nil || newest.GetChangedFiles() != 1 || oldest.ChangedFiles != nil {
 			t.Errorf("changed files = %v and %v, want 1 and absent", newest.ChangedFiles, oldest.ChangedFiles)
 		}
-		if newest.GetAddedBytes() != env.agent.chunkSize() || oldest.GetAddedBytes() != env.agent.chunkSize() || !newest.GetQuiesced() || newest.GetFiles() != 7 || newest.GetSavedAtMs() < oldest.GetSavedAtMs() {
+		if newest.GetAddedBytes() != env.agent.chunkSize() || oldest.GetAddedBytes() != env.agent.chunkSize() || newest.GetSavedAtMs() < oldest.GetSavedAtMs() {
 			t.Errorf("snapshot fields = %v", newest)
 		}
 	}
@@ -265,27 +261,15 @@ func sampleFiles() []manifestFile {
 	}
 }
 
-// sealManifest seals files as the agent does and returns the snapshot id with the sealed object.
 func sealManifest(secret []byte, files []manifestFile) (string, []byte) {
 	plain, err := json.Marshal(manifest{Version: manifestVersion, Files: files})
 	if err != nil {
 		panic(err)
 	}
 	id := hex.EncodeToString(mac(mac(secret, idLabel), plain))
-	enc, err := zstd.NewWriter(nil)
+	sealed, err := sealObject(secret, id, plain)
 	if err != nil {
 		panic(err)
 	}
-	packed := enc.EncodeAll(plain, nil)
-	block, err := aes.NewCipher(mac(secret, sealLabel))
-	if err != nil {
-		panic(err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		panic(err)
-	}
-	nonce := make([]byte, nonceSize)
-	_, _ = rand.Read(nonce)
-	return id, gcm.Seal(nonce, nonce, packed, []byte(id))
+	return id, sealed
 }

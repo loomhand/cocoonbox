@@ -7,10 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/keyring"
@@ -26,7 +23,7 @@ const (
 
 var errNotSplittable = errors.New("manifest is not compact JSON with one files array")
 
-// recordFile is a snapshot record as stored: Chunks is an array in a full record and a chunkDelta against Base in a delta record, which an api without delta records fails to decode.
+// recordFile is a snapshot record as stored: Chunks is a chunk array, or a chunkDelta against Base.
 type recordFile struct {
 	timelineEntry
 	Parent string         `json:"parent,omitempty"`
@@ -306,76 +303,6 @@ func (l *stateLayer) expandSnapshot(ctx context.Context, p statePath, key keyrin
 		return err
 	}
 	return l.store.Delete(ctx, []string{p.manifest(id) + deltaSuffix})
-}
-
-// deltaIDs returns the snapshots of p's box stored as a delta record or a manifest delta, sorted.
-func (l *stateLayer) deltaIDs(ctx context.Context, p statePath) ([]string, error) {
-	ids := map[string]bool{}
-	records, err := l.recordIDs(ctx, p, nil)
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range records {
-		var e timelineEntry
-		if err = getJSON(ctx, l.store, p.record(id), &e); err != nil {
-			return nil, err
-		}
-		if e.Base != "" {
-			ids[id] = true
-		}
-	}
-	listing, err := l.store.List(ctx, p.manifests())
-	if err != nil {
-		return nil, err
-	}
-	for _, obj := range listing {
-		if id, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, p.manifests()), deltaSuffix); ok && objectID.MatchString(id) {
-			ids[id] = true
-		}
-	}
-	return slices.Sorted(maps.Keys(ids)), nil
-}
-
-// ExpandState rewrites every delta record and manifest of user's boxes as full objects, the layout an api before delta records reads; run it with the api stopped.
-func ExpandState(ctx context.Context, st store.Store, keys keyring.Keyring, user string) (int, error) {
-	l := newStateLayer(nil, st, keys)
-	key := sync.OnceValues(func() (keyring.Key, error) { return keys.StateKey(ctx, user) })
-	boxes, err := l.boxesOf(ctx, user)
-	if err != nil {
-		return 0, err
-	}
-	expanded := 0
-	for _, box := range boxes {
-		p := statePath{user: user, box: box}
-		ids, err := l.deltaIDs(ctx, p)
-		if err != nil {
-			return expanded, err
-		}
-		for _, id := range ids {
-			k, kerr := key()
-			if kerr != nil {
-				return expanded, fmt.Errorf("state key: %w", kerr)
-			}
-			if err = l.expandSnapshot(ctx, p, k, id); err != nil {
-				return expanded, fmt.Errorf("expand %s of box %s: %w", id, box, err)
-			}
-			expanded++
-		}
-		tl, found, err := l.readTimeline(ctx, p)
-		if err != nil {
-			return expanded, err
-		}
-		if !found {
-			continue
-		}
-		for i := range tl.Snapshots {
-			tl.Snapshots[i].Base = ""
-		}
-		if err := putJSON(ctx, st, p.timeline(), tl); err != nil {
-			return expanded, err
-		}
-	}
-	return expanded, nil
 }
 
 // chunkDiff returns next as a delta against base, or false when the delta would list more than 1/deltaShare of base's chunks.

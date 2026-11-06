@@ -378,7 +378,7 @@ type shareRecord struct {
 	createdAt    time.Time
 	secret       string
 	secretSHA256 string
-	secretSealed []byte // the row's, until liveShares opens it
+	secretSealed []byte
 	cut          chan struct{}
 	moded        chan struct{}
 	timer        *time.Timer

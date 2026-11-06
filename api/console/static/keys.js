@@ -5,19 +5,9 @@ function sentAs(k) {
 }
 
 async function load() {
-  let keys;
-  try {
-    keys = await api("GET", "keys");
-  } catch (e) {
-    if (e.status !== 401) notice(e.message, true);
-    $("signed-out").hidden = false;
-    $("keys-section").hidden = true;
-    return;
-  }
-  const me = await api("GET", "me").catch(() => null);
-  if (me) $("whoami").textContent = me.user.name;
-  $("signed-out").hidden = true;
-  $("keys-section").hidden = false;
+  const page = await signedInPage("keys", "keys-section");
+  if (!page) return;
+  const keys = page.data;
   const body = $("keys");
   body.replaceChildren();
   for (const k of keys) {

@@ -5,7 +5,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 endpoint="${CB_ENDPOINT:?set CB_ENDPOINT to the https origin of the api}"
-if [ "${1:-}" = "--clean" ]; then
+if [[ ${1:-} == --clean ]]; then
   rm -rf .build dist
 fi
 source scripts/toolchain.sh

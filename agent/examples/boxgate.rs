@@ -44,7 +44,7 @@ const USAGE: &str =
   restore --manifest ID --dir DIR --url URL [--paths P,P --target NAME]
                                          call State.Restore, or RestorePaths with --paths
   mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD; an error answer exits 1
-  turn --text T [--model M]              create an agent, send T, print the transcript until the turn ends; a failed turn exits 1";
+  turn --text T                          create an agent, send T, print the transcript until the turn ends; a failed turn exits 1";
 const DEFAULT_SERVE: &str = "http://127.0.0.1:17443";
 const DEFAULT_BOX: &str = "cb-box";
 const DEFAULT_WAKE: &str = "w1";
@@ -58,7 +58,6 @@ const MAX_BODY: usize = 256 << 20;
 const DEFAULT_TIMEOUT_SECS: u64 = 900;
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(500);
 
-/// The edge's signing key and the box it signs for.
 struct Edge {
     key: SigningKey,
     box_id: String,
@@ -123,7 +122,6 @@ impl Edge {
     }
 }
 
-/// The command line after the subcommand.
 struct Args(Vec<String>);
 
 impl Args {
@@ -154,6 +152,64 @@ impl Args {
             Some(i) => self.0.split_off(i).into_iter().skip(1).collect(),
             None => std::mem::take(&mut self.0),
         }
+    }
+}
+
+struct Frame {
+    w: usize,
+    h: usize,
+    rgba: Vec<u8>,
+    seen: Vec<bool>,
+    covered: usize,
+}
+
+impl Frame {
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            w,
+            h,
+            rgba: vec![0; w * h * 4],
+            seen: vec![false; w * h],
+            covered: 0,
+        }
+    }
+
+    async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
+        let io = |e: std::io::Error| format!("rfb: {e}");
+        let kind = rd.read_u8().await.map_err(io)?;
+        if kind != 0 {
+            return Err(format!("unexpected server message {kind} before the frame"));
+        }
+        rd.read_u8().await.map_err(io)?;
+        let rects = rd.read_u16().await.map_err(io)?;
+        for _ in 0..rects {
+            let x = usize::from(rd.read_u16().await.map_err(io)?);
+            let y = usize::from(rd.read_u16().await.map_err(io)?);
+            let rw = usize::from(rd.read_u16().await.map_err(io)?);
+            let rh = usize::from(rd.read_u16().await.map_err(io)?);
+            let enc = rd.read_i32().await.map_err(io)?;
+            if enc != RFB_RAW {
+                return Err(format!("server sent encoding {enc}; asked for Raw only"));
+            }
+            let mut px = vec![0; rw * rh * 4];
+            rd.read_exact(&mut px).await.map_err(io)?;
+            for row in (0..rh).filter(|r| y + r < self.h) {
+                for col in (0..rw).filter(|c| x + c < self.w) {
+                    let (sx, at) = ((row * rw + col) * 4, (y + row) * self.w + x + col);
+                    self.rgba[at * 4..at * 4 + 4].copy_from_slice(&[
+                        px[sx + 2],
+                        px[sx + 1],
+                        px[sx],
+                        255,
+                    ]);
+                    if !self.seen[at] {
+                        self.seen[at] = true;
+                        self.covered += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -212,8 +268,6 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
                     "agent_version": r.agent_version,
                     "screen": format!("{}x{}", r.screen_width, r.screen_height),
                     "automation": pb::Automation::try_from(r.automation).map_or("unknown", |a| a.as_str_name()),
-                    "models": r.models,
-                    "default_main_model": r.default_main_model,
                 })
             );
         }
@@ -340,7 +394,6 @@ async fn exec(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
         .await
         .map_err(|e| format!("send start: {e}"))?;
     let feeder = tx.clone();
-    // detached: forwards local stdin until EOF, then sends the eof frame
     tokio::spawn(async move {
         let mut stdin = tokio::io::stdin();
         let mut buf = vec![0; EXEC_CHUNK];
@@ -424,67 +477,6 @@ fn window(s: &str) -> Result<pb::ExecWindow, String> {
     })
 }
 
-/// An RFB frame as RGBA, with the pixels the server has sent.
-struct Frame {
-    w: usize,
-    h: usize,
-    rgba: Vec<u8>,
-    seen: Vec<bool>,
-    covered: usize,
-}
-
-impl Frame {
-    fn new(w: usize, h: usize) -> Self {
-        Self {
-            w,
-            h,
-            rgba: vec![0; w * h * 4],
-            seen: vec![false; w * h],
-            covered: 0,
-        }
-    }
-
-    /// Reads one FramebufferUpdate of Raw rectangles into the frame.
-    async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
-        let io = |e: std::io::Error| format!("rfb: {e}");
-        let kind = rd.read_u8().await.map_err(io)?;
-        if kind != 0 {
-            return Err(format!("unexpected server message {kind} before the frame"));
-        }
-        rd.read_u8().await.map_err(io)?;
-        let rects = rd.read_u16().await.map_err(io)?;
-        for _ in 0..rects {
-            let x = usize::from(rd.read_u16().await.map_err(io)?);
-            let y = usize::from(rd.read_u16().await.map_err(io)?);
-            let rw = usize::from(rd.read_u16().await.map_err(io)?);
-            let rh = usize::from(rd.read_u16().await.map_err(io)?);
-            let enc = rd.read_i32().await.map_err(io)?;
-            if enc != RFB_RAW {
-                return Err(format!("server sent encoding {enc}; asked for Raw only"));
-            }
-            let mut px = vec![0; rw * rh * 4];
-            rd.read_exact(&mut px).await.map_err(io)?;
-            for row in (0..rh).filter(|r| y + r < self.h) {
-                for col in (0..rw).filter(|c| x + c < self.w) {
-                    let (sx, at) = ((row * rw + col) * 4, (y + row) * self.w + x + col);
-                    self.rgba[at * 4..at * 4 + 4].copy_from_slice(&[
-                        px[sx + 2],
-                        px[sx + 1],
-                        px[sx],
-                        255,
-                    ]);
-                    if !self.seen[at] {
-                        self.seen[at] = true;
-                        self.covered += 1;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Runs an RFB 3.8 handshake with security None, asks for one full Raw frame and writes it as a PNG.
 async fn snap<R, W>(
     rd: &mut R,
     wr: &mut W,
@@ -560,7 +552,6 @@ where
     Ok((width, height, String::from_utf8_lossy(&name).into_owned()))
 }
 
-/// Serves PUT and GET of `dir/<name>` over HTTP/1.1, one request per connection.
 async fn store(listen: &str, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let listener = TcpListener::bind(listen)
@@ -777,13 +768,11 @@ async fn mcp(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String> {
 
 async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
     let text = args.need("--text")?;
-    let model = args.take("--model").unwrap_or_default();
     let mut agents = AgentsClient::new(channel(serve).await?);
     let agent = agents
         .create(edge.signed(pb::CreateAgentRequest {
             name: "boxgate".into(),
             client_nonce: uuid::Uuid::new_v4().to_string(),
-            main_model: model,
         })?)
         .await
         .map_err(|e| format!("create agent: {e}"))?

@@ -14,10 +14,8 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	logger := log.WithFunc("boxes.Service.EnableShared")
 	s.ops.mu.Lock()
 	s.ops.shared = shared
-	if s.mirror != nil {
-		s.ops.mirror = func(rec cluster.Operation) {
-			s.mirror.Put(opKey+rec.ID, func(ctx context.Context) error { return shared.PutRunningOperation(ctx, rec) })
-		}
+	s.ops.mirror = func(rec cluster.Operation) {
+		s.mirror.Put(opKey+rec.ID, func(ctx context.Context) error { return shared.PutRunningOperation(ctx, rec) })
 	}
 	s.ops.mu.Unlock()
 	go s.ops.renew(ctx)
@@ -26,7 +24,7 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 		now = func() time.Time { return s.idle.now() }
 	}
 	s.reaches, s.userLocks = newReaches(ctx, shared, now), shared
-	go s.reaches.run(ctx, s.openBoxes)
+	go every(ctx, reachFlush, func() { s.reaches.flush(ctx, s.openBoxes()) })
 	go shared.Listen(ctx, cluster.ChannelOperations, func() {
 		if err := s.ops.reload(ctx, ""); err != nil {
 			logger.Warnf(ctx, "reload the shared operations: %v", err)

@@ -46,19 +46,6 @@ public enum Cocoonbox_Control_V1_Account: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "RevokeToken" metadata.
-        public enum RevokeToken: Sendable {
-            /// Request type for "RevokeToken".
-            public typealias Input = Cocoonbox_Control_V1_RevokeTokenRequest
-            /// Response type for "RevokeToken".
-            public typealias Output = Cocoonbox_Control_V1_RevokeTokenResponse
-            /// Descriptor for "RevokeToken".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Account"),
-                method: "RevokeToken",
-                type: .unary
-            )
-        }
         /// Namespace for "SignOutEverywhere" metadata.
         public enum SignOutEverywhere: Sendable {
             /// Request type for "SignOutEverywhere".
@@ -76,7 +63,6 @@ public enum Cocoonbox_Control_V1_Account: Sendable {
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ListDevices.descriptor,
             RevokeDevice.descriptor,
-            RevokeToken.descriptor,
             SignOutEverywhere.descriptor
         ]
     }
@@ -146,24 +132,6 @@ extension Cocoonbox_Control_V1_Account {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RevokeDeviceRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_RevokeDeviceResponse>
-
-        /// Handle the "RevokeToken" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > RevokeToken drops the personal token; device tokens stay.
-        ///
-        /// - Parameters:
-        ///   - request: A streaming request of `Cocoonbox_Control_V1_RevokeTokenRequest` messages.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_RevokeTokenResponse` messages.
-        func revokeToken(
-            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>
 
         /// Handle the "SignOutEverywhere" method.
         ///
@@ -237,24 +205,6 @@ extension Cocoonbox_Control_V1_Account {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeDeviceResponse>
 
-        /// Handle the "RevokeToken" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > RevokeToken drops the personal token; device tokens stay.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_RevokeTokenRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_RevokeTokenResponse` message.
-        func revokeToken(
-            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>
-
         /// Handle the "SignOutEverywhere" method.
         ///
         /// > Source IDL Documentation:
@@ -325,24 +275,6 @@ extension Cocoonbox_Control_V1_Account {
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_RevokeDeviceResponse
 
-        /// Handle the "RevokeToken" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > RevokeToken drops the personal token; device tokens stay.
-        ///
-        /// - Parameters:
-        ///   - request: A `Cocoonbox_Control_V1_RevokeTokenRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_RevokeTokenResponse` to respond with.
-        func revokeToken(
-            request: Cocoonbox_Control_V1_RevokeTokenRequest,
-            context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_RevokeTokenResponse
-
         /// Handle the "SignOutEverywhere" method.
         ///
         /// > Source IDL Documentation:
@@ -392,17 +324,6 @@ extension Cocoonbox_Control_V1_Account.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
-            forMethod: Cocoonbox_Control_V1_Account.Method.RevokeToken.descriptor,
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RevokeTokenRequest>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RevokeTokenResponse>(),
-            handler: { request, context in
-                try await self.revokeToken(
-                    request: request,
-                    context: context
-                )
-            }
-        )
-        router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Account.Method.SignOutEverywhere.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SignOutEverywhereRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SignOutEverywhereResponse>(),
@@ -435,17 +356,6 @@ extension Cocoonbox_Control_V1_Account.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_RevokeDeviceResponse> {
         let response = try await self.revokeDevice(
-            request: GRPCCore.ServerRequest(stream: request),
-            context: context
-        )
-        return GRPCCore.StreamingServerResponse(single: response)
-    }
-
-    public func revokeToken(
-        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse> {
-        let response = try await self.revokeToken(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -486,19 +396,6 @@ extension Cocoonbox_Control_V1_Account.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeDeviceResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeDeviceResponse>(
             message: try await self.revokeDevice(
-                request: request.message,
-                context: context
-            ),
-            metadata: [:]
-        )
-    }
-
-    public func revokeToken(
-        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>(
-            message: try await self.revokeToken(
                 request: request.message,
                 context: context
             ),
@@ -580,29 +477,6 @@ extension Cocoonbox_Control_V1_Account {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_RevokeDeviceResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeDeviceResponse>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "RevokeToken" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > RevokeToken drops the personal token; device tokens stay.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_RevokeTokenRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RevokeTokenRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_RevokeTokenResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func revokeToken<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_RevokeTokenResponse>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeTokenResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "SignOutEverywhere" method.
@@ -722,40 +596,6 @@ extension Cocoonbox_Control_V1_Account {
             )
         }
 
-        /// Call the "RevokeToken" method.
-        ///
-        /// > Source IDL Documentation:
-        /// >
-        /// > RevokeToken drops the personal token; device tokens stay.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_RevokeTokenRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RevokeTokenRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_RevokeTokenResponse` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func revokeToken<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RevokeTokenRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_RevokeTokenResponse>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeTokenResponse>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Cocoonbox_Control_V1_Account.Method.RevokeToken.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
         /// Call the "SignOutEverywhere" method.
         ///
         /// > Source IDL Documentation:
@@ -851,35 +691,6 @@ extension Cocoonbox_Control_V1_Account.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RevokeDeviceRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RevokeDeviceResponse>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "RevokeToken" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > RevokeToken drops the personal token; device tokens stay.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Cocoonbox_Control_V1_RevokeTokenRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func revokeToken<Result>(
-        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeTokenResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.revokeToken(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RevokeTokenRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RevokeTokenResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -981,39 +792,6 @@ extension Cocoonbox_Control_V1_Account.ClientProtocol {
             metadata: metadata
         )
         return try await self.revokeDevice(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "RevokeToken" method.
-    ///
-    /// > Source IDL Documentation:
-    /// >
-    /// > RevokeToken drops the personal token; device tokens stay.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func revokeToken<Result>(
-        _ message: Cocoonbox_Control_V1_RevokeTokenRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeTokenResponse>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_RevokeTokenRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.revokeToken(
             request: request,
             options: options,
             onResponse: handleResponse

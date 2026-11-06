@@ -100,11 +100,7 @@ func (s *Service) ServeRegister(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", err.Error())
 		return
 	}
-	id, err := s.register(name, req.RedirectURIs)
-	if err != nil {
-		writeOAuthError(w, http.StatusInternalServerError, "server_error", "registration failed")
-		return
-	}
+	id := s.register(name, req.RedirectURIs)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"client_id":                  id,
 		"client_id_issued_at":        time.Now().Unix(),
@@ -158,7 +154,6 @@ func (s *Service) serveDevice(w http.ResponseWriter, r *http.Request, c code) {
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": token, "token_type": "Bearer", scopeParam: AccountScope})
 }
 
-// verifies checks a PKCE S256 verifier against its challenge.
 func verifies(verifier, challenge string) bool {
 	if len(verifier) < minVerifierLen || len(verifier) > maxVerifierLen {
 		return false

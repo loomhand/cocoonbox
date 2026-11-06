@@ -334,15 +334,7 @@ impl Inbox {
         {
             return Err(Refusal::refused("a box CLI session runs for this repo"));
         }
-        let running = recs
-            .values()
-            .filter(|r| r.status != Status::Stopped)
-            .count();
-        if running >= MAX_SESSIONS {
-            return Err(Refusal::refused(format!(
-                "{running} box CLI sessions run in this box; at most {MAX_SESSIONS}"
-            )));
-        }
+        room(recs)?;
         let repo = req.repo.clone();
         let offload_id = req.offload_id.clone();
         let copy: Copy = with_index(&self.layout, move |index| {
@@ -392,7 +384,9 @@ impl Inbox {
         }
         let mut envs = vec![("COCOONBOX_OFFLOAD_REPO".to_owned(), rec.repo.clone())];
         let spec = Spec::load(&self.layout, &rec.repo).await?;
+        let stepping = self.steps.borrow().contains(&rec.repo);
         let report = match &spec {
+            Some(_) if stepping => env::load(&self.layout, &rec.repo).await?,
             Some(s) => Some(env::plan(&self.layout, &rec.repo, &rec.dir, s).await),
             None => None,
         };
@@ -435,7 +429,7 @@ impl Inbox {
         rec.queue.clear();
         rec.started_at_ms = crate::now_ms();
         rec.prompt_at_ms = rec.started_at_ms;
-        if let (Some(spec), Some(report)) = (spec, report) {
+        if let (false, Some(spec), Some(report)) = (stepping, spec, report) {
             let layout = self.layout.clone();
             let repo = rec.repo.clone();
             let dir = rec.dir.clone();
@@ -489,6 +483,9 @@ impl Inbox {
     async fn restart(&self, repo: &str) -> Result<Value, Refusal> {
         let index = read_index(&self.layout).await?;
         let mut recs = self.records.lock().await;
+        if recs.get(repo).is_some_and(|r| r.status == Status::Stopped) {
+            room(&recs)?;
+        }
         let Some(rec) = recs.get_mut(repo) else {
             return Err(Refusal::refused("no box CLI session for this repo"));
         };
@@ -699,9 +696,9 @@ impl Inbox {
             _ if blocked.is_some() => Status::Blocked,
             _ => Status::Idle,
         };
-        if let Some(text) = blocked {
-            self.note_outbox(rec, EntryKind::Blocked, cut(&text, BLOCKED_BODY))
-                .await?;
+        if let Some(mut text) = blocked {
+            text.truncate(text.floor_char_boundary(BLOCKED_BODY));
+            self.note_outbox(rec, EntryKind::Blocked, text).await?;
         }
         if rec.status == Status::Stopped {
             rec.queue.clear();
@@ -926,7 +923,6 @@ enum Request {
         wait_ms: u64,
     },
     Status {
-        #[serde(default)]
         repo: Option<String>,
     },
     Restart {
@@ -1163,7 +1159,6 @@ async fn turn_ended(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The last `TRANSCRIPT_TAIL` bytes of a transcript.
 async fn transcript_tail(path: &Path) -> Option<String> {
     let mut f = tokio::fs::File::open(path).await.ok()?;
     let len = f.metadata().await.ok()?.len();
@@ -1307,21 +1302,25 @@ async fn reply(wr: &mut OwnedWriteHalf, v: &impl Serialize) -> std::io::Result<(
 }
 
 /// The tmux target of the session's only pane, matched exactly.
+fn room(recs: &HashMap<String, Record>) -> Result<(), Refusal> {
+    let running = recs
+        .values()
+        .filter(|r| r.status != Status::Stopped)
+        .count();
+    if running >= MAX_SESSIONS {
+        return Err(Refusal::refused(format!(
+            "{running} box CLI sessions run in this box; at most {MAX_SESSIONS}"
+        )));
+    }
+    Ok(())
+}
+
 fn pane(rec: &Record) -> String {
     format!("={}:", rec.tmux())
 }
 
 fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
-}
-
-/// At most `max` bytes of `s`, cut at a character boundary.
-fn cut(s: &str, max: usize) -> String {
-    let mut end = s.len().min(max);
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_owned()
 }
 
 #[cfg(test)]
@@ -1483,12 +1482,6 @@ mod tests {
         let fed = tokio::time::timeout(Duration::from_secs(5), follow(&socket, &journal)).await;
         assert!(matches!(fed, Ok(Err(_))), "{fed:?}");
         drop(feed);
-    }
-
-    #[test]
-    fn cut_keeps_character_boundaries() {
-        assert_eq!(cut("aé", 2), "a");
-        assert_eq!(cut("abc", 10), "abc");
     }
 
     #[test]

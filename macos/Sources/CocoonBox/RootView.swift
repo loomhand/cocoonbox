@@ -240,8 +240,7 @@ struct SidebarView: View {
     private func commitRename(_ agent: Agent) {
         guard editingID == agent.id else { return }
         editingID = nil
-        let name = newName.trimmingCharacters(in: .whitespaces)
-        if !name.isEmpty, name != agent.name { model.renameAgent(agent, to: name) }
+        model.renameAgent(agent, to: newName)
     }
 
     private func startRename(_ session: LocalAgentSession) {
@@ -554,14 +553,17 @@ struct StateLayerControls: View {
     }
 
     static func saved(_ ms: Int64, now: Date) -> String {
-        guard ms > 0 else { return "Not saved yet" }
-        let minutes = Int(now.timeIntervalSince1970 - Double(ms) / 1000) / 60
-        switch minutes {
-        case ..<1: return "Saved just now"
-        case ..<60: return "Saved \(minutes) min ago"
-        case ..<(24 * 60): return "Saved \(minutes / 60) h ago"
-        default: return "Saved \(Date(timeIntervalSince1970: Double(ms) / 1000).formatted(date: .abbreviated, time: .shortened))"
-        }
+        ms > 0 ? "Saved " + ago(Date(timeIntervalSince1970: Double(ms) / 1000), now: now) : "Not saved yet"
+    }
+}
+
+func ago(_ at: Date, now: Date) -> String {
+    let minutes = Int(now.timeIntervalSince(at)) / 60
+    switch minutes {
+    case ..<1: return "just now"
+    case ..<60: return "\(minutes) min ago"
+    case ..<(24 * 60): return "\(minutes / 60) h ago"
+    default: return at.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
@@ -569,7 +571,7 @@ struct StateBadge: View {
     let state: BoxState?
 
     var body: some View {
-        Text(label)
+        Text(Self.label(state))
             .font(.caption.bold())
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -577,19 +579,8 @@ struct StateBadge: View {
             .foregroundStyle(color)
     }
 
-    private var label: String {
-        Self.label(state)
-    }
-
     static func label(_ state: BoxState?) -> String {
-        switch state {
-        case .starting: "STARTING"
-        case .running: "RUNNING"
-        case .hibernating: "HIBERNATING"
-        case .hibernated: "HIBERNATED"
-        case .failed: "FAILED"
-        default: "ABSENT"
-        }
+        (state ?? .unspecified).name.uppercased()
     }
 
     private var color: Color {

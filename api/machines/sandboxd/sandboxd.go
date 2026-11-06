@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"slices"
@@ -182,9 +183,6 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		switch {
 		case e == nil || (e.row == nil && !e.busy(now)):
 			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: maps.Clone(spec.Meta)}
-			if e.meta == nil {
-				e.meta = map[string]string{}
-			}
 			e.begin(opClaim, now, b.leaseFor)
 			action = machines.ActionCreated
 			return e, true
@@ -845,7 +843,7 @@ func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 	}
 	var r row
 	var addr string
-	if sandbox != "" && e.ownerAddr != "" {
+	if sandbox != "" {
 		r, addr, err = b.read(ctx, id, e.ownerAddr, sandbox)
 	} else {
 		r, addr, err = b.find(ctx, id)
@@ -879,7 +877,7 @@ func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
 		node, err := b.node(addr)
 		var rows []row
 		if err == nil {
-			rows, err = node.find(ctx, metaMachine, id)
+			rows, err = node.sandboxes(ctx, url.Values{"metadata": {metaMachine + "=" + id}})
 		}
 		switch {
 		case err != nil:
@@ -1146,7 +1144,7 @@ func (b *Backend) listMesh(ctx context.Context, addrs []string) (map[string][]ro
 		wg.Go(func() {
 			node, err := b.node(addr)
 			if err == nil {
-				lists[i], err = node.list(ctx)
+				lists[i], err = node.sandboxes(ctx, nil)
 			}
 			errs[i] = err
 		})
@@ -1237,9 +1235,9 @@ func (b *Backend) lostLocked(addr string, now time.Time) bool {
 	return ok && now.Sub(since) >= nodeLostAfter
 }
 
-// node returns the client of the node at addr, the entry node's for its own address and for the "" an older api wrote.
+// node returns the client of the node at addr, the entry node's for its own address.
 func (b *Backend) node(addr string) (*client, error) {
-	if addr == "" || addr == b.entryAddr {
+	if addr == b.entryAddr {
 		return b.api, nil
 	}
 	b.nodeMu.Lock()
@@ -1304,7 +1302,7 @@ func (b *Backend) renew(ctx context.Context) error {
 		if err == nil {
 			err = node.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire})
 		}
-		if err != nil && !isStatus(err, http.StatusConflict) {
+		if err != nil && !errors.Is(err, machines.ErrConflict) {
 			errs = append(errs, err)
 		}
 	}

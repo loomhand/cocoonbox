@@ -144,12 +144,12 @@ pub async fn mark(workspace: &Path, args: Value) -> Result<String, String> {
     }
 }
 
-/// `flows_wait {after}`: returns the count of flow writes once it passes `after`.
+/// `flows_wait {after}`: returns the count of flow writes once it differs from `after`.
 pub async fn wait(writes: &watch::Sender<u64>, args: Value) -> Result<String, String> {
     let after = args["after"].as_u64().unwrap_or(0);
     let mut rx = writes.subscribe();
     let seen = *rx
-        .wait_for(|n| *n > after)
+        .wait_for(|n| *n != after)
         .await
         .map_err(|e| format!("flow writes: {e}"))?;
     Ok(seen.to_string())
@@ -216,6 +216,12 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
     }
 }
 
+/// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
+#[cfg(not(target_os = "linux"))]
+pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
+    Err("no inotify on this system".to_owned())
+}
+
 /// Drops from `dir/INDEX` each flow whose `.json` file is gone, swapping in the rewritten file so that a reader never sees half of it and a folder being removed gains no entry.
 pub(super) async fn prune(dir: &Path) -> Result<(), String> {
     let _index = INDEX_LOCK.lock().await;
@@ -253,12 +259,6 @@ pub(super) async fn prune(dir: &Path) -> Result<(), String> {
         }
         _ => Ok(()),
     }
-}
-
-/// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
-#[cfg(not(target_os = "linux"))]
-pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
-    Err("no inotify on this system".to_owned())
 }
 
 fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {
@@ -371,6 +371,12 @@ mod tests {
             std::fs::read_to_string(flows.join("INDEX")).unwrap(),
             "b(): two\n"
         );
+    }
+
+    #[tokio::test]
+    async fn a_wait_past_a_restarted_count_answers_at_once() {
+        let writes = watch::channel(0).0;
+        assert_eq!(wait(&writes, json!({"after": 5})).await.unwrap(), "0");
     }
 
     #[cfg(target_os = "linux")]

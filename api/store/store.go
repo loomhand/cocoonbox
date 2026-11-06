@@ -16,8 +16,7 @@ var (
 
 // Presigned is a URL a box agent uses without holding store credentials.
 type Presigned struct {
-	URL     string
-	Headers map[string]string
+	URL string
 }
 
 // Object is one stored object as a listing returns it.

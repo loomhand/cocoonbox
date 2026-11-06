@@ -61,7 +61,8 @@ impl Client {
             state: Mutex::new(State {
                 session: None,
                 tools: Arc::default(),
-                stale: true,
+                changes: 1,
+                listed: 0,
                 retry_at: None,
             }),
         })
@@ -87,7 +88,7 @@ impl Client {
                     }
                     Err(e) => eprintln!("connect: list_changed stream: {e}"),
                 }
-                client.state().stale = true;
+                client.state().changes += 1;
                 if start.elapsed() >= RETRY {
                     delay = RETRY_MIN;
                 }
@@ -102,17 +103,18 @@ impl Client {
 
     /// The connector tools, listed again after a change; a failed list keeps the last one and waits before the next.
     pub async fn tools(&self) -> Arc<Vec<ToolSpec>> {
-        {
+        let changes = {
             let st = self.state();
-            if !st.stale || st.retry_at.is_some_and(|at| Instant::now() < at) {
+            if st.listed == st.changes || st.retry_at.is_some_and(|at| Instant::now() < at) {
                 return Arc::clone(&st.tools);
             }
-        }
+            st.changes
+        };
         match self.list().await {
             Ok(tools) => {
                 let mut st = self.state();
                 st.tools = Arc::new(tools);
-                st.stale = false;
+                st.listed = changes;
                 st.retry_at = None;
                 Arc::clone(&st.tools)
             }
@@ -179,12 +181,14 @@ impl Client {
 
     /// Sends one request, opening a session first and once more when the door ended it.
     async fn rpc(&self, method: &str, params: Value) -> Result<Value, String> {
+        let mut msg = json!({"jsonrpc": "2.0", "id": 1, "method": method});
+        msg["params"] = params;
         let session = self.session().await?;
-        match self.post(&session, method, &params).await {
+        match self.post(&session, &msg).await {
             Err(Gone) => {
                 self.forget(&session);
                 let session = self.session().await?;
-                self.post(&session, method, &params)
+                self.post(&session, &msg)
                     .await
                     .map_err(|_| "the door ended a new session".to_owned())?
             }
@@ -214,14 +218,8 @@ impl Client {
         Ok(session)
     }
 
-    async fn post(
-        &self,
-        session: &str,
-        method: &str,
-        params: &Value,
-    ) -> Result<Result<Value, String>, Gone> {
-        let msg = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
-        match self.send(Some(session), &msg).await {
+    async fn post(&self, session: &str, msg: &Value) -> Result<Result<Value, String>, Gone> {
+        match self.send(Some(session), msg).await {
             Ok(resp) if resp.status() == StatusCode::NOT_FOUND => Err(Gone),
             Ok(resp) => Ok(answer(resp).await),
             Err(e) => Ok(Err(e)),
@@ -260,7 +258,7 @@ impl Client {
             }
             return Err(format!("the door answered {}", resp.status()));
         }
-        self.state().stale = true;
+        self.state().changes += 1;
         Ok(resp)
     }
 
@@ -281,7 +279,7 @@ impl Client {
                 if let Some(data) = line.strip_prefix(b"data:") {
                     let data = String::from_utf8_lossy(data);
                     if data.contains(LIST_CHANGED) {
-                        self.state().stale = true;
+                        self.state().changes += 1;
                     } else if let Some((id, approve)) = approval_answer(&data) {
                         answered(&id, approve);
                     }
@@ -307,14 +305,14 @@ impl Client {
 struct State {
     session: Option<String>,
     tools: Arc<Vec<ToolSpec>>,
-    stale: bool,
+    changes: u64,
+    listed: u64,
     retry_at: Option<Instant>,
 }
 
 /// The door no longer knows the session.
 struct Gone;
 
-/// The result of a JSON-RPC answer, or its error as text.
 async fn answer(resp: reqwest::Response) -> Result<Value, String> {
     let status = resp.status();
     if status == StatusCode::UNAUTHORIZED {

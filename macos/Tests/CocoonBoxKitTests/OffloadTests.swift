@@ -410,7 +410,6 @@ final class Harness: @unchecked Sendable {
     let store: OffloadStore
     let connection: BoxConnection
     let cli: String
-    let endpoint: Endpoint
     private let input: Pipe
 
     static func shared() async throws -> Harness {
@@ -433,8 +432,9 @@ final class Harness: @unchecked Sendable {
         let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         cli = built.appendingPathComponent("cocoonbox-cli").path
         store = OffloadStore(support: macHome.appendingPathComponent("Library/Application Support/CocoonBox"))
-        (endpoint, input) = try await Self.mockBox(["--boot-ms", "100", "--workspace", workspace.path], log: root.appendingPathComponent("mockbox.log"),
+        let (endpoint, pipe) = try await Self.mockBox(["--boot-ms", "100", "--workspace", workspace.path], log: root.appendingPathComponent("mockbox.log"),
                                                    environment: Self.environment.merging(["HOME": boxHome.path, "PATH": bin.path + ":" + Self.environment["PATH"]!]) { $1 })
+        input = pipe
         connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
         for _ in 0..<100 {
             if let box = try? await connection.firstBox() {

@@ -13,10 +13,10 @@ cocoonbox gives each user a persistent cloud computer with an agent living in it
 | In-box agent `cocoonbox-agent` | **Rust**, single static binary (tokio, tonic, rusqlite) | per-VM RSS is density: ~20 MB vs a Node host's hundreds; same language as gw and cua-driver | Node/TS AI-SDK host |
 | Control plane + edge `cocoonbox-api` | **Go**, a systemd service on the bench host | sandboxd claim lifecycle behind the `machines` interface; routes app ↔ box | Rust |
 | Wire | **gRPC over HTTP/2** everywhere (tonic / grpc-go / grpc-swift 2); bidi streams carry events, RFB bytes and local-exec | one connection per app, streaming both ways, protobuf contracts shared by three languages | HTTP+SSE JSON, WebSocket per channel |
-| Screen executor | **trycua cua-driver v0.30.4** (MIT, Rust), `serve` on its 0600 unix socket | AT-SPI element tree + element-token clicks + pixel input, one daemon for Linux/Windows/macOS | cua computer-server (a11y stub), OSWorld server (benchmark-shaped, no auth) |
-| Desktop in guest | **real Xorg** with `xserver-xorg-video-dummy` at 1280×800 + `/dev/uinput`, XFCE, AT-SPI on, x11vnc on loopback | cua-driver's focus-free pixel input needs real Xorg + uinput; TigerVNC Xvnc cannot hotplug the MPX devices (`linux-mpx-recovery.md:41-42`) | Xvnc (foreground-only input) |
+| Screen executor | **cua-driver** ([loomhand/cua](https://github.com/loomhand/cua), MIT, Rust), a child of shuttle; the box has no cua-driver unit | AT-SPI element tree + element-token clicks + pixel input, one daemon for Linux/Windows/macOS | cua computer-server (a11y stub), OSWorld server (benchmark-shaped, no auth) |
+| Desktop in guest | **real Xorg** with `xserver-xorg-video-dummy` at 1280×800 + `/dev/uinput`, XFCE, AT-SPI on, Xorg's built-in VNC module (TigerVNC `vnc`) on 127.0.0.1:5900 | cua-driver's focus-free pixel input needs real Xorg + uinput; TigerVNC Xvnc cannot hotplug the MPX devices (`linux-mpx-recovery.md:41-42`) | Xvnc (foreground-only input) |
 | Browser | Google Chrome (.deb), CDP on loopback, `--force-renderer-accessibility` | structured channel ahead of pixels | snap chromium |
-| Models | **gw v0.2.6** on the bench host, SQLite ledger, bridge-only bind | tenant caps, one endpoint for every model provider | |
+| Models | **gw** (cocoonstack/gateway) on the bench host, SQLite ledger, bridge-only bind | tenant caps, one endpoint for every model provider | |
 | Machines | the cbsbx sandboxd instance on the bench host (§14; K3s + vk-cocoon + CocoonSet until 2026-10-01) | a claim = persistent box with hibernate/wake, warm pools, egress proxy and per-claim secrets | eru (host-local snapshots, no migration) |
 
 Hot-path cost: none. No change to cocoon, sandboxd or gw code; all of it is configuration plus new cocoonbox repos.
@@ -25,12 +25,12 @@ Hot-path cost: none. No change to cocoon, sandboxd or gw code; all of it is conf
 
 ```
 cocoonbox.app ─┐                              bench host
-cocoonboxd  ───┼─ gRPC/h2+TLS ─▶ cocoonbox-api (edge + control) ──▶ sandboxd claim ─▶ VM      
+cocoonboxd  ───┼─ gRPC/h2+TLS ─▶ cocoonbox-api (edge + control) ──▶ sandboxd claim ─▶ VM
                │                  │ routes by box_id, never sees payload secrets        │
                │                  └─ gRPC ─────────────────────────────────────────────▶│ cocoonbox-agent :7443
-               │                                                                        │  ├─ cua-driver (unix socket)
+               │                                                                        │  ├─ shuttle + cua-driver child
                │                                                                        │  ├─ Chrome CDP (loopback)
-               │                                                                        │  ├─ x11vnc :5900 (loopback, via agent)
+               │                                                                        │  ├─ Xorg VNC :5900 (loopback)
                │                                                                        │  ├─ stdio MCP servers (plugins)
                │                                                                        │  └─ proxy → host egress doors (§14.6, §16.3)
                │                                                                        └──▶ gw 10.203.0.1:18090 ─▶ OpenRouter / vendors
@@ -52,51 +52,24 @@ Models (resolved per role in agent config, all via gw):
 | Role | Default | Wire |
 |---|---|---|
 | main | a text model | `/v1/chat/completions` |
-| computer subagent | a vision model | `/v1/messages` when the upstream is the model provider's own API, else chat |
+| computer subagent | a vision model | chat; `anthropic/` models use `/v1/messages` when `GW_ANTHROPIC_WIRE=messages` |
 | summarize / memory | small cheap model | chat |
 
-Rule: the agent speaks the upstream's native wire; gw translation is not relied on (silent-distortion risk: cache_control, stop reasons, parallel tools). Images from tool results go into a following user image part for vision models and are replaced by text for text-only models.
+Rule: the wire is the per-deployment switch `GW_ANTHROPIC_WIRE` (default `chat`), for every `anthropic/` model in any role; with `chat`, gw translates. Images from tool results go into a following user image part for vision models and are replaced by text for text-only models.
 
 Privilege split: the loop runs as `cbagent`; tools (shell, files, browser, cua-driver, MCP servers) run as the desktop user `user` in its session. The model's shell cannot read the loop's database or config. The loop holds no real gw key either: gw calls go through the egress proxy, which injects the per-box gw key like any other surrogate, so a key leaked by a tool is worthless and the per-box tenant cap bounds any abuse.
 
-State: SQLite (`/var/lib/cocoonbox/agent.db`) for agents, transcript, approvals, installed plugins; `/workspace` for user files. Both survive hibernate (disk is in the snapshot).
+State: SQLite (`/var/lib/cocoonbox/agent.db`) for agents, transcript, nonces and flow sync rows; `/workspace` for user files. Both survive hibernate (disk is in the snapshot).
 
 ## 4. Interfaces
 
-Proto packages live in one repo (`cocoonbox/proto`), generated for Go, Rust and Swift. Sketch below; field lists are the contract to refine in M2.
-
-### 4.1 Control plane — `cocoonbox.control.v1.Boxes` (edge, per user)
-
-```proto
-service Boxes {
-  rpc Ensure(EnsureRequest) returns (Box);                 // create or wake; idempotent per (user, flavor)
-  rpc Get(GetBoxRequest) returns (Box);
-  rpc List(ListBoxesRequest) returns (ListBoxesResponse);
-  rpc Watch(WatchBoxesRequest) returns (stream ListBoxesResponse); // the list at once and after every change; never wakes a box
-  rpc Hibernate(BoxRef) returns (Operation);                // sandboxd hibernate
-  rpc Recreate(RecreateRequest) returns (Operation);        // preserve_data: snapshot /workspace+agent.db, fresh image
-  rpc WatchOperation(WatchRequest) returns (stream OperationEvent); // resumable by offset_key
-}
-message Box { string id = 1; State state = 2; string image = 3; Flavor flavor = 4; bool image_update_available = 5; }
-enum State { ABSENT = 0; STARTING = 1; RUNNING = 2; HIBERNATING = 3; HIBERNATED = 4; FAILED = 5; }
-message OperationEvent { string operation_id = 1; Phase phase = 2; string detail = 3; string offset_key = 4; int64 at_ms = 5; }
-enum Phase { BACKING_UP = 0; CREATING = 1; MOVING = 2; CLEANING_UP = 3; DONE = 4; FAILED_PHASE = 5; }
-```
-
-All box RPCs address `box_id` in metadata; the edge forwards `cocoonbox.agent.v1.*` calls to that box.
+The protos are `proto/` in this repo, generated for Go, Rust and Swift; contracts.md holds the services. The sketches of 2026-09-30 for `Boxes` (4.1), `Session` (4.2(a)) and `Agents` (4.4) are superseded by `proto/`.
 
 ### 4.2 Connect
 
 Three different things, three permission models (Muse's split):
 
-**(a) App ↔ box — `cocoonbox.agent.v1.Session`**
-```proto
-service Session {
-  rpc Hello(HelloRequest) returns (HelloResponse);          // box_public_key (X25519), agent version, capabilities
-  rpc Events(EventsRequest) returns (stream Event);         // channels + from_offset; transcript, agents, approvals, computer-action, box-disk
-  rpc Screen(stream ScreenClientFrame) returns (stream ScreenServerFrame); // RFB bytes to/from x11vnc; take-over = client input frames
-}
-```
+**(a) App ↔ box:** `cocoonbox.agent.v1.Session` (`proto/cocoonbox/agent/v1/session.proto`).
 
 **(b) Accounts:** superseded by §16. The in-VM vault sketched here kept credentials at rest in the VM.
 
@@ -114,26 +87,13 @@ service LocalExec {
 
 Superseded by §17.
 
-### 4.4 Agents — `cocoonbox.agent.v1.Agents`
-
-```proto
-service Agents {
-  rpc Create(CreateAgentRequest) returns (Agent);           // client_nonce dedupe
-  rpc List(ListAgentsRequest) returns (ListAgentsResponse);
-  rpc Send(SendRequest) returns (SendAccepted);             // prompt + attachments + selected plugin capabilities; client_nonce
-  rpc Transcript(TranscriptRequest) returns (TranscriptPage);
-  rpc Respond(RespondRequest) returns (Empty);              // approvals, widgets, "take over done, continue"
-  rpc Cancel(AgentRef) returns (Empty);
-}
-```
-
 ## 5. Guest image `cocoonbox-desktop:24.04`
 
 Cocoon OCI VM image (`vmlinuz` + `initrd.img` + rootfs) built from cocoon's `os-image/ubuntu/24.04` template:
 - cocoon-agent (`cocoon vm exec`) and systemd-networkd; no NetworkManager.
-- Xorg + `xserver-xorg-video-dummy` (1280×800 modeline), `uinput` module loaded at boot, XFCE, `at-spi2-core`, `toolkit-accessibility=true`, screensaver/power management off, x11vnc `-localhost -rfbport 5900`.
+- Xorg + `xserver-xorg-video-dummy` (1280×800 modeline), `uinput` module loaded at boot, XFCE, `at-spi2-core`, `toolkit-accessibility=true`, screensaver/power management off, Xorg's built-in VNC module (TigerVNC `vnc`) on 127.0.0.1:5900.
 - Google Chrome stable with CDP on loopback and a persistent profile.
-- cua-driver 0.30.4 as a systemd user unit (upstream has no Linux autostart, issue #3957) with `DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`.
+- cua-driver (loomhand/cua) as a child of shuttle; the box has no cua-driver unit.
 - `cocoonbox-agent` as a system unit and its toolhost as shuttle's service; users `cbagent` (runs the agent) and `user` (the desktop, owns `/workspace`). No credential vault in the VM (§16).
 - root locked, no sshd; debugging via `cocoon vm exec`.
 
@@ -150,10 +110,10 @@ The layout: the cbsbx sandboxd instance under `/srv/cb/sbx` (its own cocoon root
 | M2 | `cocoonbox-agent` v0 (Rust): gw client (chat + messages), shell/files, browser (CDP refs), computer subagent via cua-driver, Agents/Session gRPC, SQLite | from `grpcurl`: the text-model main agent runs Shell; delegates to the vision computer subagent which opens Mousepad and types text; browser task reads example.com H1 via refs | 4–6 d |
 | M3 | `cocoonbox-api` (Go): Boxes on CocoonSet, WatchOperation, edge routing by box_id, user tokens | `Ensure` from zero to RUNNING; `Hibernate`/`Ensure` round trip with a resumable operation stream; agent RPCs reach the box through the edge only | 3 d |
 | M4 | macOS app v0: sign-in, box state, agent list, streaming transcript, live view + take-over | RoyalVNCKit spike first (encodings against x11vnc: ZRLE/Tight); app shows the desktop at 1280×800 and the transcript live; measured: app RSS, time to first frame, input RTT | 4–5 d |
-| M4.5 | sandbox line evaluation | docs/m45-sandbox-eval.md: measured lifecycle, relay, egress, density, failure model; recommendation | done |
+| M4.5 | sandbox line evaluation | measured lifecycle, relay, egress, density, failure model; recommendation (§14) | done |
 | M4.6 | state layer (§11): user data to object storage, SaveState, Rebase | SaveState twice on a box (second incremental); Rebase v6 → next image keeps /workspace, a logged-in Chrome cookie and agent.db; sizes and timings recorded | in progress |
 | M4.7 | native agents: a plugin for the local agent CLIs (skill + commands + MCP config), a `cocoonbox` CLI (login, mcp-headers, box lifecycle), a control-plane MCP in the api (status, ensure, hibernate, save, rebase) | from each CLI, with the app closed: wake the box, do a GUI task, save, hibernate; no token in any config file | next |
-| M4.8 | sandboxd as the machine backend (§14), after the upstream PRs (per-claim env, dead-VMM restart) land | §14.9: M3 acceptance plus live view, MCP, Rebase, H3, identity, crash, dead-api and lost-machine runs on the sandboxd backend; default flipped; cocoonset kept as fallback | after PRs |
+| M4.8 | sandboxd as the machine backend (§14), after the upstream PRs (per-claim env, dead-VMM restart) land | §14.8: M3 acceptance plus live view, MCP, Rebase, H3, identity, crash, dead-api and lost-machine runs on the sandboxd backend; default flipped; cocoonset kept as fallback | after PRs |
 | M4.9 | proactive agents (§15): routines in the box, api alarms with wake-then-Tick, precheck, notices in the app, limits and kill switches, dual-meter budgets (§15.9, phases a–f) | §15.9 per phase; end to end: the HN digest routine wakes the hibernated box at 08:00, writes the digest, re-hibernates, and its notice shows in the app without a wake; per-run box-seconds and cost match sandboxd's and gw's own records | 8–10 d |
 | M5 | connect (§16): host-side broker with OAuth through the Mac, connector tools for both modes, per-tool policy and approvals; M5.2 git through egress injection. `cocoonboxd` local-exec (§4.2(c)) is tracked separately | §16.8: GitHub and Calendar connected; mode B with the box hibernated; mode A write approved in the app; no token in the guest, its hibernate image or the Mac's configs | 5–6 d, M5.2 2 d |
 | M6 | market (§17): pinned git catalog in the M4.7 plugin format, skills and secret-free stdio MCP servers in the box, visible in both modes; the catalog doubles as the local agents' marketplace | §17.8: a public agent-CLI plugin installs unchanged and works in a box turn and through the bridge; tampered, symlinked and secret-needing plugins refused; survives Rebase | 3–4 d, M6.2 3 d |
@@ -174,8 +134,8 @@ Open:
 
 | Risk | Mitigation |
 |---|---|
-| cua-driver is pre-release, ~1 release/day; open Linux bugs (#3774 background `type_text` silent drop, #3871 desktop freeze on Cinnamon) | pin 0.30.4; M1 spike is the gate; fall back to `delivery_mode: foreground` for typing; keep the executor behind our own `computer` tool so the backend can change |
-| Real Xorg + dummy + uinput in a cocoon guest unproven | M1 checks `/dev/uinput`, MPX device creation, x11vnc capture of the dummy screen before anything else |
+| cua-driver is pre-release, ~1 release/day; open Linux bugs (#3774 background `type_text` silent drop, #3871 desktop freeze on Cinnamon) | pin it (now through the shuttle archive); M1 spike is the gate; fall back to `delivery_mode: foreground` for typing; keep the executor behind our own `computer` tool so the backend can change |
+| Real Xorg + dummy + uinput in a cocoon guest unproven | M1 checks `/dev/uinput`, MPX device creation, VNC capture of the dummy screen before anything else |
 | RFB client cost on the hot path (resolved: RoyalVNCKit polled at 100 Hz; replaced by swift-rfb, idle 0.03% CPU) | spike encodings early in M4; our own Metal layer; H.264 (RFB encoding 50, done before in `cocoonstack/scrcpy-rfb`) later if bandwidth demands |
 | The main text model's tool-calling quality under a long tool list | per-role model map; acceptance uses one Shell call first |
 
@@ -204,7 +164,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
     - Fetch a chunk into the cache as soon as its URL arrives when its file is not ready yet, so no URL waits on the write order and the 10 min bound goes away.
 - **Save and restore speed (v15, measured 2026-10-02 on the bench host's dev box):**
   - Plan reuses a file's chunks when its size, mtime and ctime all match the stamp recorded at the last upload, without reading it. ctime is set by the kernel on every write, truncate, rename and chmod, so a write that restores size and mtime (npm extracts with a fixed 1985 mtime) is still reread. Quiesced plans reuse too.
-  - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk is never recorded, and SQLite files read through the online backup are never reused (WAL commits leave the main file's stamp unchanged).
+  - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk, and an SQLite file read through the online backup, is recorded for comparison only and never reused (WAL commits leave the main file's stamp unchanged).
   - Plan reads up to 4 files at a time. `-wal` and `-journal` sidecars go in a second pass, after their database.
   - Plan lists chunks in manifest order, so Restore pages arrive in the order files are written.
   - A plan whose manifest exceeds 256 MiB, the most a restore opens, fails with that reason instead of saving a snapshot no restore can read.
@@ -215,7 +175,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
 - **Known gaps (accepted 2026-09-30):**
   - Directory mtimes are not restored.
   - The first snapshot spools about the compressed state size to the box disk before Upload.
-  - A QUIESCED plan waits a fixed 30 s for a running turn, and that path has no test.
+  - A QUIESCED plan waits 30 s for a running turn, interrupts share MCP calls, waits 5 s more, then answers `UNAVAILABLE` (§23.4).
   - A write through a shared mmap to a page that is already dirty does not update ctime until writeback, so a plan can reuse a file whose mapped pages changed after the last read.
   - A restore that fails while filling staging leaves a partial `.cb-restore-*` directory. Both callers, Rebase and Restore, discard the new machine on failure, so it never reaches a serving box.
 
@@ -271,10 +231,7 @@ The adversary is the box's own user (`user`, unprivileged), or root inside one b
 A signature can't prove "request from box X" without a secret in X. The proof must come from the channel.
 - **Decided: H3 lands with M4.8 (sandboxd).** sandboxd already provides option C for this direction: the none lane, a per-VM `<vsock>_2049` egress door, and per-claim `guest: false` secrets (#268).
   - The gw key becomes a per-claim host-only secret, injected on the host side of that door. The guest never holds it, and no IP identifies the box.
-  - No vsock relay is built on the K8s path.
-- **Interim on the K8s path (until M4.8):** per-box gw keys with per-box caps, set in the gw config.
-  - The key in `agent.env` then belongs only to its own box and its own user, and its cap bounds any abuse.
-  - It is still at rest in that one box, which is the accepted gap until M4.8.
+- Until M4.8 the K8s path (removed 2026-10-01) ran per-box gw keys with per-box caps, at rest in `agent.env` of that one box.
 
 ### 12.3 Changes
 
@@ -282,7 +239,7 @@ A signature can't prove "request from box X" without a secret in X. The proof mu
 - **contracts.md:** drop `EDGE_TOKEN` and add `/run/cocoonbox-identity/identity` and the credential header. `GW_API_KEY` stays per box until M4.8.
 - **agent:** verify ed25519 (`ed25519-dalek`, about 40 KB) with the key from the identity file, and read that file.
 - **api:** sign with a per-(box, `wake_id`) cache; write the identity file through the backend's `Deliver` before reporting `RUNNING`; keep `wake_id` in the machine's meta.
-- **infra:** tmpfiles entry `d /run/cocoonbox-identity 0755 root root`; remove `EDGE_TOKEN` from `agent.env` and the golden; per-box gw keys and caps.
+- **infra:** the identity write creates `/run/cocoonbox-identity` 0755; remove `EDGE_TOKEN` from `agent.env` and the golden; per-box gw keys and caps.
 
 ## 13. Native agents without the app (M4.7)
 
@@ -301,7 +258,7 @@ Constraints:
 | Control MCP | api service layer, `https://<endpoint>/cocoonbox.mcp/control` | box lifecycle tools for the caller's own box, over the existing `Boxes` semantics |
 | Plugin | written by `cocoonbox plugin export DIR` (`CocoonBoxBridge/Plugin.swift`) | one directory with a manifest per client, a shared `.mcp.json` that runs `cocoonbox mcp`, a skill and slash commands |
 
-The CLI is Swift on CocoonBoxKit because it needs the Keychain and the app already solved endpoint parsing, the loopback-only plaintext rule, the HTTP/2 connection and the `Boxes` calls. That is vertical reuse inside one component (`macos/`), not coupling to another. It ships inside the app bundle (`CocoonBox.app/Contents/MacOS/cocoonbox`), and `cocoonbox install` links it into `~/.local/bin`; a standalone build works the same way for users who never open the app.
+The CLI is Swift on CocoonBoxKit because it needs the Keychain and the app already solved endpoint parsing, the loopback-only plaintext rule, the HTTP/2 connection and the `Boxes` calls. That is vertical reuse inside one component (`macos/`), not coupling to another. It ships inside the app bundle (`CocoonBox.app/Contents/Helpers/cocoonbox`), and `cocoonbox install` links it into `~/.local/bin`; a standalone build works the same way for users who never open the app.
 
 ### 13.2 How a client reaches the box: a local stdio bridge
 
@@ -316,11 +273,11 @@ Every client runs the same MCP server entry, with no URL and no token in it:
 Why a bridge rather than pointing clients at the HTTPS endpoint directly (what the app's Connect sheet does today):
 - **One recipe for all three clients.** The three agent CLIs all run stdio servers the same way. The direct recipes differ per client: `headersHelper` or `${VAR}` for `claude`, `bearer_token_env_var` for `codex`, `${env:VAR}` for `cursor-agent`. The last two need the token in an environment variable of the shell that starts the client.
 - **A hibernated box.** A client connects to its MCP servers at startup. A hibernated box has no `/mcp` to answer, so a direct client marks the server failed and never lists the box tools. The bridge answers `initialize` and `tools/list` itself (below) and wakes the box on the first box-tool call.
-- **Stable identity.** The bridge passes the client's `initialize` through unchanged, so the box still records the session as `mcp:claude-code` (or `codex-mcp-client`, or the third CLI's own name) and the app shows it under External.
+- **Stable identity.** The bridge passes the client's `initialize` through unchanged, so the box still records the session as `mcp:claude-code` (or `codex-mcp-client`, or the third CLI's own name) and the app shows it under External. (Superseded by §23.1: the owner's MCP sessions are not tracked.)
 
 The cost is one local stdio hop per message, next to a 230 ms WAN round trip; the bridge holds one HTTP/2 connection for both endpoints.
 
-**Tool list while the box is down.** The box tool names and input schemas are the contract, so the bridge can answer `tools/list` without the box. It caches the box's own `tools/list` answer (not secret) in `~/Library/Caches/cocoonbox/tools-<host>-<box>.json` whenever the box is running, falls back to a copy compiled into the CLI, and sends `notifications/tools/list_changed` when the live list differs. Lifecycle tools come from the control MCP, or from a compiled-in copy when the edge is unreachable.
+**Tool list while the box is down.** The box tool names and input schemas are the contract, so the bridge can answer `tools/list` without the box. It caches the box's own `tools/list` answer (not secret) in `~/Library/Caches/cocoonbox/tools-<host>-<box>.json` whenever the box is running, falls back to a copy compiled into the CLI, and sends `notifications/tools/list_changed` when the live list differs. Lifecycle tools are a compiled-in copy of the control MCP's list.
 
 **Connector tools (§16).** At `initialize` the bridge also opens a session to `/cocoonbox.mcp/connect` with the client's own `initialize`, and holds that door's GET stream. Its `tools/list` answer appends the door's tools, after waiting at most 3 s for the first list. A connector tool whose name a control or box tool already has is left out, with a line on stderr. On the door's `list_changed` the bridge lists again, and sends `notifications/tools/list_changed` when the connector tools differ from those the client last listed. A call to a listed connector tool goes to the door and wakes no box. When the door fails, the bridge serves the other tools and retries with backoff, from 1 s up to 60 s. A 401, 403, 404 or 405 from an api without the door ends the retries.
 
@@ -332,15 +289,7 @@ The cost is one local stdio hop per message, next to a 230 ms WAN round trip; th
 
 ### 13.3 Control MCP (api)
 
-The api serves it itself; the edge does not proxy it to a box. Auth is the user token, which the api checks the way it checks `Boxes`, and every tool acts only on the caller's own box. Tools (names are the contract; add them to contracts.md):
-
-| Tool | Arguments | Result |
-|---|---|---|
-| `box_status` | – | state, image, latest_image, last_saved_at_ms, box id |
-| `box_ensure` | `wait` (default true) | final state; progress notifications from `WatchOperation` while waiting |
-| `box_hibernate` | – | operation result; progress notifications |
-| `box_save` | – | operation result with bytes; says the browser closes during the save |
-| `box_upgrade` | `confirm: true` (required) | operation result; refused without `confirm`, with the text "running programs restart; files, logins and agent history are kept" |
+The api serves it itself; the edge does not proxy it to a box. Auth is the user token, which the api checks the way it checks `Boxes`, and every tool acts only on the caller's own box. The tools, their arguments and their results are in contracts.md "Control MCP".
 
 These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `WatchOperation`, so the api keeps one implementation of the lifecycle. The CLI's own `cocoonbox status|ensure|hibernate|save|upgrade` commands call `Boxes` over gRPC directly, as the app does.
 
@@ -358,7 +307,7 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 | `cocoonbox setup claude\|codex\|cursor [--print]` | installs the plugin, or prints the manual config for that client |
 | `cocoonbox install` | links the CLI into `~/.local/bin` |
 
-**Keychain sharing with the app.** Both use service `io.github.loomhand.cocoonbox` with the endpoint URL as the account. With a Developer ID signature, app and CLI share one keychain access group, so neither prompts. Until then, builds are ad hoc signed and every rebuild has a new code hash. So `cocoonbox login` writes its own item, and `cocoonbox login --from-app` copies the app's token once, after a single "Always Allow".
+**Keychain sharing with the app.** The app uses service `io.github.loomhand.cocoonbox` and the CLI `io.github.loomhand.cocoonbox.cli`, each with the endpoint URL as the account. With a Developer ID signature, app and CLI share one keychain access group, so neither prompts. Until then, builds are ad hoc signed and every rebuild has a new code hash. So `cocoonbox login` writes its own item, and `cocoonbox login --from-app` copies the app's token once, after a single "Always Allow".
 
 ### 13.5 Plugin packaging
 
@@ -451,7 +400,7 @@ Upload stays under ssh's rate. One 1 MiB window in flight over a 250 ms RTT allo
 
 ## 14. M4.8: sandboxd as the machine backend
 
-Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) and on three upstream PRs: cocoonstack/sandbox#268 (per-claim env), cocoonstack/sandbox#269 (dead-VMM restart) and cocoonstack/cocoon#274 (`vm list` verifies the VMM PID). Only `api/` and `image/` change. The agent and the app do not, except for one optional proto field (§14.8).
+Design, 2026-10-01. It builds on the M4.5 measurements and on three upstream PRs: cocoonstack/sandbox#268 (per-claim env), cocoonstack/sandbox#269 (dead-VMM restart) and cocoonstack/cocoon#274 (`vm list` verifies the VMM PID). Only `api/` and `image/` change. The agent and the app do not, except for one optional proto field, not built (§14.8).
 
 ### 14.1 Box ↔ claim, and where it persists
 
@@ -477,20 +426,19 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 - Each image release ships as a flat rootfs for `cocoon image import` into the sandboxd node, `cbdesk:vN`. `image/cut.sh` builds it from a VM booted from the previous template (docs/bench.md, New image cut).
 - Additions to the image:
   - silkd and its unit;
-  - `http(s)_proxy=127.0.0.1:3128` drop-ins on the agent, toolhost and session units;
+  - `http(s)_proxy=127.0.0.1:3128` drop-ins on the agent, session and shuttle units (system and user) and the offload inbox;
   - `systemd-networkd-wait-online` masked;
   - a static `agent.env` whose gw key is a placeholder (14.5).
 - Kernel: the image's own Ubuntu kernel, until `CONFIG_INPUT_UINPUT` is in the sandbox kernel.
 - The default image is a pool `{template: cbdesk:vN, net: none, size: xlarge, warm: K, warmup: [wait for Xorg, session, toolhost, :5900, :7443]}`. A warm clone is then a finished desktop with the agent up.
 - Each `rebase_images` entry is a pool with `warm: 0`. The key is registered and the golden is built, so a rebase claim clones from the golden instead of cold-booting, and nothing idles warm.
 - `Spec.Image` names the template. Boxes on an older image keep their claim; the pool only matters for new claims.
-- Disk gap: sandboxd cold-boots goldens with cocoon's default disk (10 GiB), while our flavor says 40 GiB. This needs an upstream pool field for the golden's disk size (14.7). Until then, the acceptance run uses 10 GiB and records it.
 
 ### 14.3 Lifecycle mapping
 
 | `Machines` | sandboxd | Latency (M4.5, nested) |
 |---|---|---|
-| `Ensure`, no claim | `POST /v1/claim {template, size, ttl_seconds: 3600, on_expire: archive, metadata, env}` | warm 1 ms + env delivery |
+| `Ensure`, no claim | `POST /v1/claim {template, net: none, size, ttl_seconds: 3600, on_expire: archive, metadata}` | warm 1 ms + env delivery |
 | `Ensure`, hibernated or archived | `POST /v1/sandboxes/{id}/wake`; the new incarnation is then provisioned (14.5) | 0.26 s / 1.7 s + about 0.3 s to ready |
 | `Ensure`, failed | `POST …/wake` (#269: a cold boot of the claim's disk) | boot time |
 | `Hibernate` | `POST …/hibernate` | 23–50 s (writes the 8 GiB memory file) |
@@ -595,11 +543,11 @@ The service layer computes each incarnation's identity and hands it to the backe
 
 | Upstream (cocoonstack, mechanism only) | State |
 |---|---|
-| per-claim env, `guest: false` secrets | sandbox#268, in review |
-| dead-VMM cold restart, failed claims, `vmm_exit` / `vmm_restart` events | sandbox#269, in review |
-| `vm list` verifies the VMM PID | cocoon#274, in review |
-| re-deliver the claim env after a cold restart; VMM exits from cocoon daemon's event stream | in #269, stacked on #268 |
-| golden disk size per pool (`storage_gib` → `cocoon vm run --storage`) | branch ready, not yet a PR |
+| per-claim env, `guest: false` secrets | sandbox#268, merged |
+| dead-VMM cold restart, failed claims, `vmm_exit` / `vmm_restart` events | sandbox#269, merged |
+| `vm list` verifies the VMM PID | cocoon#274, merged |
+| re-deliver the claim env after a cold restart; VMM exits from cocoon daemon's event stream | in #269, merged |
+| golden disk size per pool (`storage` → `cocoon vm run --storage`) | merged; cbsbx pools set 40G |
 | a per-claim boot counter in the sandbox row (claim, wake, unarchive, cold restart) | to open: one counter field; `Incarnation` derives from it |
 | `CONFIG_INPUT_UINPUT` in the sandbox kernel | optional; the image kernel works meanwhile |
 | binary `port_forward` framing | only if many full-rate viewers per node |
@@ -617,57 +565,11 @@ Stays in cocoonbox:
 
 sandboxd learns nothing about users, tiers or cocoonbox.
 
-### 14.8 Changes and order
+### 14.8 Changes, order and acceptance
 
-1. Upstream: #268 and #269 merged, the env re-delivery hook in, and a cocoon release carrying #274. Then the disk-size pool field.
-2. **contracts.md:**
-   - the static `agent.env` (placeholder gw key, no `EDGE_TOKEN`);
-   - "Agent listen" on loopback via the relay;
-   - the sandboxd section replacing "Boxes ↔ cluster" for this backend.
-3. **api:**
-   - `Endpoint` in `machines`, the edge, MCP and `dialer`, landing first with cocoonset unchanged in behaviour;
-   - `Deliver`, `SetMeta` and `Incarnation` in `machines/sandboxd`;
-   - then `machines/sandboxd`;
-   - then config `backend: sandboxd | cocoonset`;
-   - then restore-on-missing.
-4. **image:** the rootfs build for `cocoon image import`, and the additions in 14.2 and 14.5.
-5. **infra:**
-   - the cocoonbox sandboxd instance on the bench host (its own port, data_dir, cocoon root with `run_dir` on the NVMe, fenced cores);
-   - the pool and egress config;
-   - per-user gw keys.
-6. **Optional proto:** `Box.restarted_at_ms`, so the app can say "your box restarted, memory was lost". Without it, the app only sees a reconnect.
-7. **Migration:** per user, SaveState on cocoonset, then `Ensure` on sandboxd, which restores through restore-on-missing. cocoonset stays configured as the fallback until the acceptance run passes. Then the default flips.
+Built in this order: the upstream PRs; `Endpoint` in `machines`, the edge, MCP and `dialer`; `Deliver`, `SetMeta` and `Incarnation`; the `machines/sandboxd` backend; restore-on-missing; the image additions of 14.2 and 14.5; the cbsbx instance on the bench host. The optional proto field `Box.restarted_at_ms` was not built.
 
-### 14.9 Acceptance run on the bench host
-
-Every step runs through the public edge, with the app or grpcurl, on the sandboxd backend. Each step records its timings.
-
-1. **M3 acceptance as it stands:**
-   - `Ensure` from zero to `RUNNING`;
-   - a `Hibernate` / `Ensure` round trip on a resumable operation stream;
-   - agent RPCs reach the box only through the edge.
-2. **Live view:** the app renders 1280×800 through `Session.Screen` over the relay. Record fps, time to first frame, input RTT, and sandboxd CPU per viewer.
-3. **MCP:** from a local agent CLI with the app closed, wake the box, do a GUI task, save, hibernate (M4.7's run).
-4. **State layer:**
-   - SaveState, then Rebase vN → vN+1 on sandboxd;
-   - `/workspace`, a logged-in Chrome cookie and `agent.db` are kept.
-5. **H3:**
-   - a gw call from the box appears in gw's log under that user's own key;
-   - the key string is absent from the guest's `/proc/*/environ`, `/etc`, `/run` and disk, and from the box's hibernate memory file on the host;
-   - `GET …/env` blanks it.
-6. **Identity:**
-   - a credential for another `box_id` or an old `wake_id` is rejected;
-   - after a wake, the identity file carries the new `wake_id` before `RUNNING`.
-7. **Crash:**
-   - `kill -9` of the box's CH brings the box back to `RUNNING` with the marker kept, and the app reconnects by itself;
-   - four kills leave it `Failed`, and `Ensure` recovers it.
-8. **Dead api:**
-   - with the api stopped past the lease, the box is archived;
-   - with the api started, `Ensure` wakes it from the archive, state kept.
-9. **Lost machine:** release the claim behind the service's back. `Ensure` restores from the state layer, and the loss window is reported.
-10. **Flip:** `backend: sandboxd` is the default, and `backend: cocoonset` still serves an existing CocoonSet box.
-
-The flip ran on 2026-09-30. On 2026-10-01 the cocoonset backend, the `backend` key and the K3s stack were removed; sandboxd is the only backend.
+The acceptance run on the bench host repeated M3's acceptance and ran live view, MCP, the state layer, H3, identity, crash, dead-api and lost-machine checks on the sandboxd backend. Every user moved with a quiesced save on cocoonset and an `Ensure` on sandboxd, which restored through restore-on-missing (bench.md). The flip ran on 2026-09-30. On 2026-10-01 the cocoonset backend, the `backend` key and the K3s stack were removed; sandboxd is the only backend.
 
 ## 15. Proactive agents
 
@@ -740,7 +642,7 @@ Hot path: none. The alarm index is a min-heap in the api's service layer, off th
   - Routines the agent creates start `active` only inside the default grant and the frequency floor. Otherwise they start `pending_approval` (15.5).
 - **App management:** `cocoonbox.agent.v1.Routines` through the edge offers `List`, `Update` (pause, resume, grant, delete), `RunNow` and `Runs`. The app and MCP clients manage routines through it.
   - `Tick` and `Deliver` sit on a separate service, `RoutineControl`, which the edge refuses by prefix as it refuses `State`.
-  - Two services are needed because the agent cannot tell an api call from a client call: both carry the same edge-signed credential (`agent/src/identity.rs:56`). The edge's prefix rule (`api/edge/proxy.go:35`, `:81-83`) is the only gate.
+  - Two services are needed because the agent cannot tell an api call from a client call: both carry the same edge-signed credential (`agent/src/identity.rs`). The edge's prefix rule (`stateServicePrefix` in `api/edge/proxy.go`) is the only gate.
 - **Mode B:** runs have no mode B, because the model and the subscription stay on the Mac, which is usually closed while the user is away.
   - A mode-B client (a local agent CLI) can manage routines through three MCP tools: `routine_list`, `routine_create` and `routine_pause`.
   - The routines it creates then run in mode A with the box's model, under the same grant and budget.
@@ -899,19 +801,19 @@ An alarm Tick streams until every run it started has ended. A heartbeat Tick ret
 
 Scope:
 - `agent/src/store.rs`:
-  - `routines` and `routine_runs` go into `SCHEMA` (:12-42). `CREATE TABLE IF NOT EXISTS` covers new tables; there is no migration mechanism, and none is needed for them.
-  - `restore_from` (:276) re-applies `SCHEMA`. Today it swaps in the restored database without it, so a restored pre-routines `agent.db` would lack the tables until the next process start.
-  - `delete_rows` (:416) also deletes the agent's routines.
+  - `routines` and `routine_runs` go into `SCHEMA`. `CREATE TABLE IF NOT EXISTS` covers new tables; there is no migration mechanism, and none is needed for them.
+  - `restore_from` already re-applies `SCHEMA`, so a restored pre-routines `agent.db` gets the tables.
+  - `delete_rows` also deletes the agent's routines.
   - `queue_turn`, which builds the user entry at :201-210, takes an `origin`.
 - `agent/src/runner.rs`:
-  - New `queue_routine` next to `send` (:115). It enqueues on the same per-agent slot (`slot`, :373), skipping attachments and auto-title. `send` is the only enqueue path today.
-  - `run_turn` (:399): a `max_run_s` sleep arm in the `select!` (:425-429) for routine turns, which ends them as `timeout`. Today no turn has a wall time; the only limits are steps (40 main, 30 computer) and the model client's 180 s read timeout.
-  - `take_over` (:555): a routine turn waits at most 10 min, then ends as `waiting_for_user`. Today `rx.await` (:571) has no timeout; the turn lets go of the turns read lock while it waits.
-  - Usage per model (main and computer, `computer.rs:92`) goes into the run row. `TurnEnd` keeps one sum, as now.
-  - `main_tool` (:533-546): the grant check for `delegate_computer` and `request_take_over`, which never reach the dispatcher. The tool list (:473-477) and the system prompt (`prompts.rs:3-18`) show only granted tools.
+  - New `queue_routine` next to `send`. It enqueues on the same per-agent slot (`slot`), skipping attachments and auto-title. `send` is the only enqueue path today.
+  - `run_turn`: a `max_run_s` sleep arm in its `select!` for routine turns, which ends them as `timeout`. Today no turn has a wall time; the only limits are steps (40 main, 300 for a plan, 30 computer) and the model client's 180 s read timeout.
+  - `take_over`: a routine turn waits at most 10 min, then ends as `waiting_for_user`. Today the approval wait (`ask`) has no timeout; the turn lets go of the turns read lock while it waits.
+  - Usage per model (main and computer) goes into the run row. `TurnEnd` keeps one sum, as now.
+  - `main_tool`: the grant check for `delegate_computer` and `request_take_over`, which never reach the dispatcher. The tool list and the system prompt (`prompts.rs`) show only granted tools.
 - `agent/src/dispatch.rs`:
-  - `Caller` (:64) gains `grant: Option<&Grant>`.
-  - `execute` (:122) refuses any tool outside the grant's allowlist before `self.tools.run` (:138). It returns `ToolOutput::error` through `record_result`, so the refusal lands in the transcript.
+  - `Caller` gains `grant: Option<&Grant>`.
+  - `execute` refuses any tool outside the grant's allowlist before `self.tools.run`. It returns `ToolOutput::error` through `record_result`, so the refusal lands in the transcript.
   - Write paths are normalized and checked under `/workspace`, because `files::resolve` accepts absolute paths.
   - The same allowlist then applies to every mode-A turn, which closes the §18 item "Allowlist the tools the mode-A runner forwards".
   - The internal toolhost names it keeps out include `credential_fill` and `active_origin` (§20), which only `Session.FillCredential` and `Session.ActiveOrigin` call.
@@ -920,11 +822,11 @@ Scope:
   - the in-box firer under the lease;
   - catch-up, coalescing, failure backoff;
   - the `RoutineControl.Tick` server, with the clock offset `now_ms − guest now` taken at each Tick.
-- `agent/src/tools.rs`: the `schedule` tool in `main_tools` (:10), with the `observe` grant only.
+- `agent/src/tools.rs`: the `schedule` tool in `main_tools`, with the `observe` grant only.
 - `agent/src/server.rs`:
-  - `serve_on` (:319) registers `Routines` and `RoutineControl` behind `EdgeAuth`;
-  - `recover` after a restore (:287) also closes running runs as `interrupted`.
-- api: `edge/proxy.go` refuses `/cocoonbox.agent.v1.RoutineControl/` next to `stateServicePrefix` (:35, :81-83).
+  - `serve_on` registers `Routines` and `RoutineControl` behind `EdgeAuth`;
+  - `recover` after a restore also closes running runs as `interrupted`.
+- api: `edge/proxy.go` refuses `/cocoonbox.agent.v1.RoutineControl/` next to `stateServicePrefix`.
 
 Acceptance:
 - `cargo test` cases:
@@ -945,34 +847,34 @@ Left out: the api side, the precheck, notices.
 #### M4.9b Alarms: wake, Tick, re-hibernate (api)
 
 Scope:
-- New `api/boxes/routines.go`: `RunAlarms(ctx, cfg)`, a min-heap of `{box, next_wake_at_ms}` in the service layer. `main.go` starts it next to `RunScheduler` (:198).
+- New `api/boxes/routines.go`: `RunAlarms(ctx, cfg)`, a min-heap of `{box, next_wake_at_ms}` in the service layer. `main.go` starts it next to `RunScheduler`.
 - `RoutineAgents` is an interface beside `StateAgents`. The dialer implements it as a sibling of `Dialer.state`, on the shared `dialer.Pool`.
 - Routines need the state layer. The dialer is built only when `state.bucket` is set (`enableState` in `main.go`), and the notices of 9d live in the store, so `validate` refuses `routines` without the state layer.
-- **Per-box record** `<box>/proactive.json` in the state store, written only by the api through `putJSON` and `getJSON` (`statelayer.go:359-376`):
+- **Per-box record** `<box>/proactive.json` in the state store, written only by the api through `putJSON` and `getJSON` (`statelayer.go`):
   - fields: `next_wake_at_ms`, `paused`, the day counters, `last_seen_ms` and the away state;
   - at start, the api rebuilds the heap from `machines.List("")` and these objects;
-  - claim meta (`SetMeta`) is rejected for this record: a Rebase makes a new machine and drops its meta (`rebase.go:55`), and every meta write re-emits `Watch`.
+  - claim meta (`SetMeta`) is rejected for this record: a Rebase makes a new machine and drops its meta, and every meta write re-emits `Watch`.
 - **Alarm path:**
-  1. Wrap the context with `auth.WithUser`, because the loop has no caller (as in `controlmcp.go:84`).
-  2. `Ensure` (`boxes.go:46`), then `waitRunning` (`rebase.go:103`).
+  1. Wrap the context with `auth.WithUser`, because the loop has no caller (as `api/controlmcp` does).
+  2. `Ensure`, then `waitReady` (`rebase.go`).
   3. `Tick{reason: ALARM}`, read to its end.
   
-  If a hibernate is still in flight, the path waits for `HIBERNATED` first. Otherwise sandboxd `Ensure` returns `ActionNone` (`machines/sandboxd/sandboxd.go:114-115`), and the CREATING operation would wait 10 min.
+  If a hibernate is still in flight, the path waits for `HIBERNATED` first. Otherwise sandboxd `Ensure` returns `ActionNone` (`machines/sandboxd/sandboxd.go`), and the CREATING operation would wait 10 min.
 - **Re-hibernate:** when the stream ends, no client is attached and no operation is active (`ops.activeFor`), the api runs:
   1. a live save (`startSave`), waiting for it to finish (open decision 4);
   2. a `PRE_HIBERNATE` Tick;
   3. `Hibernate`.
   
-  `Hibernate` does not check `activeFor` and would supersede a save (`operation.go:162-164`), so the alarm path waits. For the same reason a Tick is never an operation.
-- **Heartbeat:** every 5 min, Tick each ready box (`ready`, `provision.go:153`) of `routines.users`, in the shape of the `saveStale` loop (`save.go:57-77`).
-- **Pre-hibernate Tick** in `Hibernate` (`boxes.go:146-149`, before `s.machines.Hibernate`), with a 2 s timeout. If it fails, the box hibernates anyway and keeps its last alarm.
-- **Attachment:** nothing tracks clients today, and `accesslog.go` logs only `Boxes` calls.
-  - The edge counts open `Session.Events` and `Session.Screen` streams per box in `pump` (`edge/proxy.go:102-111`), and stamps MCP requests (`edge/mcp.go:77-83`).
+  `Hibernate` does not check `activeFor` and would supersede a save (`operation.go`), so the alarm path waits. For the same reason a Tick is never an operation.
+- **Heartbeat:** every 5 min, Tick each ready box (`ready`, `provision.go`) of `routines.users`, in the shape of the `saveStale` loop (`save.go`).
+- **Pre-hibernate Tick** in `Hibernate` (`boxes.go`, before `s.machines.Hibernate`), with a 2 s timeout. If it fails, the box hibernates anyway and keeps its last alarm.
+- **Attachment:** today the edge records a reach through `Resolver.Reached` for every routed call except `Session.Events` and an MCP GET (15.13); nothing counts open streams.
+  - The edge counts open `Session.Events` and `Session.Screen` streams per box in `pump` (`edge/proxy.go`), and stamps MCP requests (`edge/mcp.go`).
   - It reports through a `Presence` interface declared in `boxes` and wired in `main`, so the edge still imports no service code.
   - A box is attached while such a stream is open, or for 10 min after an MCP call.
   - When a client attaches during an alarm run, the box becomes user-driven and stays up.
   - The edge's own count is used, not the box's: a box-reported flag would let `user` (who has sudo) keep the box up at our cost.
-- **Config:** a `Routines` block in `config.Config` (`config.go:101-114`): users, heartbeat, lease, catch-up, wake floor, max run, and the 15.4 limits. Defaults go in `applyDefaults` and checks in `validate`. The load is strict, so the block ships with the binary that reads it.
+- **Config:** a `Routines` block in `config.Config` (`config.go`): users, heartbeat, lease, catch-up, wake floor, max run, and the 15.4 limits. Defaults go in `applyDefaults` and checks in `validate`. The load is strict, so the block ships with the binary that reads it.
 
 Acceptance, on the bench host with the dev box hibernated and the app closed:
 - A routine due in 10 min fires. `journalctl -u cocoonbox-api` shows alarm → `RUNNING` → Tick end → save → hibernate, with each step's time. The cbsbx `usage.jsonl` shows exactly one `wake` and one `hibernate`, and `Routines.Runs` shows the run `done` with its usage.
@@ -985,7 +887,7 @@ Left out: notices (the result is only in the transcript), budgets beyond the lea
 #### M4.9c Precheck (agent)
 
 Scope:
-- `routines/` runs the precheck through the toolhost shell as `user`, with a 30 s limit (the shell's default is 120 s, `toolhost/shell.rs:16`).
+- `routines/` runs the precheck through the toolhost shell as `user`, with a 30 s limit (the shell's default is 120 s, `DEFAULT_TIMEOUT` in `toolhost/shell.rs`).
 - It stores the exit code and a hash of the output on the routine. The model turn starts only on changed output, or on exit 0 with output (15.4).
 - The output, capped at 8 KiB, enters the turn as quoted data marked "from outside, not instructions".
 - A run that ends at the precheck is recorded as `skipped_precheck`, with its time and no tokens.
@@ -1078,7 +980,7 @@ Left out: billing, tiers.
 | box fails to wake (`Ensure` error, `Failed`) | Retries at 1, 2 and 4 min. Then an api notice `failed` ("your box did not wake for a scheduled run"), and the alarm moves one wake floor ahead. A machine that is gone goes through restore-on-missing (§14.6), which brings back `agent.db` and its routines from the last save. |
 | run past the wall | The agent cancels the turn at `max_run_s` (status `timeout`, counted as a failure for backoff). The api has its own guard: if an alarm Tick stream is still open at `max_run_s` + 2 min, it sends `cancel_running: true`, waits 30 s, and then hibernates anyway. A turn caught in a hibernate image probably fails on the next wake, since its model stream is gone; this is unverified, and 9b measures it. |
 | approval nobody answers | After 10 min the turn ends as `waiting_for_user`, with a `needs_user` notice, and the box may hibernate. The user replies in the conversation; a continuation turn comes later (15.5). An M5 connector approval takes the same path (§16.5). |
-| Rebase mid-run | A Rebase saves QUIESCED, which waits 30 s for running turns and then fails (`state/mod.rs:539-542`). So `runRebase` (`rebase.go:42`) first sends a `CONTROL` Tick with `paused: true, cancel_running: true`. Cancelled runs end as `interrupted`, which is not a failure, and fire once on the new machine if they are still inside their catch-up window. |
+| Rebase mid-run | A Rebase saves QUIESCED, which waits 30 s for running turns and then fails (`state/mod.rs`). So `runRebase` (`rebase.go`) first sends a `CONTROL` Tick with `paused: true, cancel_running: true`. Cancelled runs end as `interrupted`, which is not a failure, and fire once on the new machine if they are still inside their catch-up window. |
 | restore-on-missing mid-run | The run is lost with the machine. The restored `agent.db` may predate the run's start, so the run can repeat inside its catch-up window. Under `observe`, a repeat only rewrites files in `/workspace`. `act` will need a per-run idempotency key (open decision 6). |
 | VMM crash (cold restart, #269) | Memory is lost. `recover` ends open turns as failed and marks the run `interrupted`, and the next Tick fires it again inside its catch-up window. |
 | clock | The api sees only UTC `next_wake_at_ms` and never parses a trigger. The agent judges due times by the api's `now_ms` plus the offset measured at each Tick. After a wake, nothing fires before the first Tick (the lease's `wake_id`). |
@@ -1141,7 +1043,7 @@ A user asked for a routine at 09:00 while the Mac is closed. This is the alarm o
   - nothing reached the box since that wake;
   - the box is running with no operation (a save, a Rebase); otherwise the api waits.
 
-  A reach is any call the edge routes to the box once `Resolve` succeeds (agent gRPC, MCP, the screen, a share's viewer; `Resolver.Reached`), or the owner's `Ensure`. It makes the box user-driven, and the box stays up until someone hibernates it. The api's own calls are no reach: provisioning and saves skip the edge, the alarm's `Ensure` carries a context mark, and ending a share's sessions calls `Resolve` without `Reached`.
+  A reach is any call the edge routes to the box once `Resolve` succeeds (agent gRPC, MCP, the screen, a share's viewer; `Resolver.Reached`), or the owner's `Ensure`. It makes the box user-driven, and the box stays up until someone hibernates it or `user_idle_hibernate` does (contracts.md "Idle user boxes"). The api's own calls are no reach: provisioning and saves skip the edge, the alarm's `Ensure` carries a context mark, and ending a share's sessions calls `Resolve` without `Reached`.
 - **Hot path:** each routed edge call and each `Ensure` takes one mutex and one map write. The claim path is untouched.
 - **Restart:** `next_at`, `last_wake_at` and `sleep_at` persist, so a restart keeps the next wake and a pending hibernate. The pass after a reach clears `sleep_at`, so a hand-over survives a restart too. Only a reach in the last 15 s before a restart is lost; the restart cuts every edge stream, and clients that reconnect count again.
 - **Cron:** robfig/cron v3, five fields, run on the wall clock of `tz`. Alone, the library skips a spring-forward time and fires a fall-back time twice (2026-03-08 02:30 and 2026-11-01 01:30 in America/New_York). On the wall clock, a skipped time fires once at the end of the gap, and a repeated time fires once at its first occurrence, as 15.10 asks. `time.Date` picks the second occurrence east of UTC (Europe/Berlin, Australia/Sydney), so the code looks for the earlier instant itself; the tests cover New York, Berlin and Sydney. `SetWakeSchedule` refuses a cron whose next 512 times come closer than the floor.
@@ -1314,7 +1216,7 @@ Connector tools are MCP tools, served by the broker.
   - Notion `mcp.notion.com/mcp`;
   - Linear `mcp.linear.app/mcp`;
   - Google Workspace `*mcp.googleapis.com` (developer preview).
-- **No per-vendor code.** The broker is a generic MCP client. A catalog entry holds only the MCP URL and, for GitHub and Google, our OAuth client and scopes. A vendor without a hosted MCP server gets no adapter; it waits for per-claim credential rules (below).
+- **No per-vendor code**, except the built-in Google Tasks tools (`api/connect/googletasks.go`). The broker is a generic MCP client. A catalog entry holds only the MCP URL and, for GitHub and Google, our OAuth client and scopes. A vendor without a hosted MCP server gets no adapter; it waits for per-claim credential rules (below).
 - **Tool names** are `<connector>_<tool>`, within `^[a-zA-Z0-9_-]{1,64}$`. The broker keeps the upstream's `readOnlyHint` and `destructiveHint` annotations.
 
 Doors:
@@ -1366,9 +1268,9 @@ Limits, from sandboxd's code:
 
 Every other connector stays broker-only.
 
-**Per-claim credential rules (available since sandboxd e0e27fc, cocoonstack/sandbox#302).** Today every injected host and secret is node config, so each new vendor would be a config change on every node, which puts cocoonbox's catalog into infra. The upstream primitive is a per-claim credential list (`{hosts, header, value}`), set through the API, validated as a subset of the pool's intercepted hosts, persisted with the claim, redacted on read and never delivered to the guest (connect-research.md §4). With it, a vendor without MCP becomes a catalog entry, and its logic runs in the box as a CLI, SDK or script. Such grants get vendor-scope approval only, and the app says so at connect time. Filed as cocoonstack/sandbox#301 (2026-10-03).
+**Per-claim credential rules (available since sandboxd e0e27fc, cocoonstack/sandbox#302).** Today every injected host and secret is node config, so each new vendor would be a config change on every node, which puts cocoonbox's catalog into infra. The upstream primitive is a per-claim credential list (`{hosts, header, value}`), set through the API, validated as a subset of the pool's intercepted hosts, persisted with the claim, redacted on read and never delivered to the guest. With it, a vendor without MCP becomes a catalog entry, and its logic runs in the box as a CLI, SDK or script. Such grants get vendor-scope approval only, and the app says so at connect time. Filed as cocoonstack/sandbox#301 (2026-10-03).
 
-With #302, M5.2 uses claim env entries with `inject` instead of pool `secret` rules: the node config keeps only `egress_ca` and the `intercept: true` rules for the GitHub hosts, and the api sets and rotates the values per claim (rotation works on a hibernated claim). `egress_ca` loads only at a sandboxd start and only when a pool intercepts. `cbsbx-conf` writes it whenever `/etc/cocoonbox/egress-ca/root.crt` exists, so an image cut keeps it. Placeholder gating (sandbox #307, 858a80e) keeps the injection off the box Chrome's github.com traffic. The recipe:
+With #302, M5.2 uses claim env entries with `inject` instead of pool `secret` rules: the node config keeps `egress_ca` and one `{host *, intercept inject}` rule on the web ports, and the api sets and rotates the values per claim (rotation works on a hibernated claim). `egress_ca` loads only at a sandboxd start and only when a pool intercepts. `cbsbx-conf` writes it whenever `/etc/cocoonbox/egress-ca/root.crt` exists, so an image cut keeps it. Placeholder gating (sandbox #307, 858a80e) keeps the injection off the box Chrome's github.com traffic. The recipe:
 
 - `GH_GIT`: value `Basic <base64(x-access-token:<token>)>`, `inject {hosts: [github.com], header: Authorization, placeholder: "Basic @GH_GIT@"}`. Only git requests carry the placeholder that the proxy replaces.
 - The placeholder header is switched on at run time, not baked into the image. Without a matching inject rule, git would send `Authorization: Basic @GH_GIT@` to github.com itself, and GitHub answers 400 even for a public repository. The switch:
@@ -1471,7 +1373,7 @@ Gmail and Drive:
 - General use needs Google's verification plus a CASA assessment, renewed every year.
 - `drive.file` is not restricted.
 
-Google's Workspace MCP servers are in developer preview, and our account is not enrolled (2026-10-05). Google Calendar is therefore a grant-only connector: Connect, refresh, revoke and Activity work, it serves no tools, and programs in the box will use it through per-claim credential rules (16.3, an `inject` entry for `www.googleapis.com` with `Authorization: Bearer <token>`). The broker gets no adapter.
+Google's Workspace MCP servers are in developer preview, and our account is not enrolled (2026-10-05). Google Calendar is therefore a grant-only connector: Connect, refresh, revoke and Activity work, it serves no tools, and programs in the box will use it through per-claim credential rules (16.3, an `inject` entry for `www.googleapis.com` with `Authorization: Bearer <token>`). The broker gets no adapter; Google Tasks, added later, is served by the api itself (`api/connect/googletasks.go`).
 
 Connector events for §15.2's triggers (GitHub webhooks, Gmail push) arrive at the broker. They are not in the first cut.
 
@@ -1549,7 +1451,7 @@ Decided:
 1. Gmail and Drive read ship in the first cut as an unverified Google app (at most 100 users, with the warning screen). Verification and CASA come before general use.
 2. In mode B, `ask` is the client's own permission prompt (16.5).
 
-Decided 2026-10-03, from connect-research.md §5:
+Decided 2026-10-03:
 1. The broker is a generic MCP client of vendor-hosted MCP servers, with no per-vendor adapters (16.3).
 2. GitHub egress injection (M5.2) is in the first cut, on today's sandboxd (16.3).
 3. Per-claim credential rules are a later upstream sandboxd primitive, an open item to file as a cocoonstack/sandbox issue (16.3).
@@ -1764,7 +1666,7 @@ Open (deferred to the backlog):
 - **M4.9 proactive agents** (§15): the whole build plan (9a–f) waits here, with its decisions settled in §15.12.
 - **Keychain prompt on every app rebuild.** The ad hoc signature changes with each build, so the login keychain asks again. With an Apple Developer account, sign with Developer ID, which also enables notarization, and move the token to the data protection keychain behind Touch ID (`SecAccessControl` `.userPresence`). Until then the prompt stays.
 - **Batch small chunks in state transfers** (agent state layer and api). Restore is one presigned GET per chunk through the sandboxd proxy, so time grows with the chunk count, not the bytes: a 1298-chunk restore took about 11 s against 2 s for a 519-chunk one (2026-10-01). Pack small chunks into larger objects (for example, a pack per save with an index in the manifest, ranges read with one GET), and raise the transfer concurrency. Measure the restore of a 1300-chunk box before and after.
-- **gw: look up keys by owner, and store a hash instead of the key** (upstream gw mechanism; cocoonstack/gateway#137 and #138). Done 2026-10-01: the bench host runs gw HEAD 3ab7a722, which filters `GET /admin/keys?owner=` before paging and stores and reports keys by `ak_id` only. The api lists a machine's keys by owner, lets gw generate each key and revokes by `ak_id`.
+- **gw: look up keys by owner, and store a hash instead of the key** (upstream gw mechanism; cocoonstack/gateway#137 and #138). Done 2026-10-01: the bench host runs gw HEAD 3ab7a722, which filters `GET /admin/keys?owner=` before paging and stores and reports keys by `ak_id` only. The api lists a user's keys by owner, lets gw generate each key and revokes by `ak_id`.
 
 ## 19. Several boxes per user
 
@@ -1835,8 +1737,8 @@ Reconciled with §22–§26 before building:
 
 - **Box record.** A `boxes` table (users migration 0004: `id`, `owner` → `users ON DELETE CASCADE`, `name`, `created_at`, `UNIQUE (owner, name)`), kept in memory next to the token index, so ownership on the edge path is one map lookup and a scan of at most 16 boxes. The migration gives every existing user its box `cb-<12 hex of sha256(user id)>`, named `main`; `users.Create` inserts the same first box for every new user. Every other box id is `cb-` and 12 random hex, so a new box never inherits the state prefix of a deleted one. A name is 1 to 32 of `a-z 0-9 - _`, starting with a letter or digit and never with `cb-`, so a `box` argument is never ambiguous between a name and an id.
 - **Machine → box.** The api no longer derives the box from the user: a machine's box is its id cut at `-r` (Rebase and restore machines are `<box>-r<base36>`). The serving machine of a box is still its oldest machine. The identity file, the credential, scheduled saves and the restore lock all follow the machine's box.
-- **Quota.** The total is the user's max boxes (`users.max_boxes`, at most the admin's cap); `AddBox` counts under a `FOR UPDATE` lock on the user's row, so parallel creates cannot pass it together. Lowering max boxes below the user's box count is refused. The tenant's `max_claims` stays max boxes + 1, which a hibernated box's claim counts against. The running limit is the user's own `max_running` when an admin set one (users migration 0005, nullable, 1 to max boxes; the console admin table sets it, empty returns the user to the default, the user's page shows it, and `PATCH /cb/api/me` with it answers 403), else api config `max_running_boxes` (default 1). Lowering max boxes below the user's own running limit is refused; lower the limit first. A start (an `Ensure` that creates or wakes a machine, every `Create`) is refused with `FAILED_PRECONDITION`, `box <name> (<id>) is running, and 1 may run at a time; hibernate it first`, while that many other boxes are starting, running or hibernating. A per-user lock spans the check and the claim. The api never hibernates a box on its own.
-- **`Ensure{box_id}`.** An empty id is the user's first (oldest) box, and adds a box named `main` when the user has deleted all of them, so old clients keep working. A box without a machine is listed with `BOX_STATE_UNSPECIFIED` (absent) instead of being left out; `Get` returns it the same way instead of `NOT_FOUND`.
+- **Quota.** The total is the user's max boxes (`users.max_boxes`, at most the admin's cap); `AddBox` counts under a `FOR UPDATE` lock on the user's row, so parallel creates cannot pass it together. Lowering max boxes below the user's box count is refused. The tenant's `max_claims` is max boxes + min(agent boxes, `max_agent_boxes`) + 1, which a hibernated box's claim counts against. The running limit is the user's own `max_running` when an admin set one (users migration 0005, nullable, 1 to max boxes; the console admin table sets it, empty returns the user to the default, the user's page shows it, and `PATCH /cb/api/me` with it answers 403), else api config `max_running_boxes` (default 1). Lowering max boxes below the user's own running limit is refused; lower the limit first. A start (an `Ensure` that creates or wakes a machine, every `Create`) is refused with `FAILED_PRECONDITION`, `box <name> (<id>) is running, and 1 may run at a time; hibernate it first`, while that many other boxes are starting, running or hibernating. A per-user lock spans the check and the claim. The api never hibernates a box on its own.
+- **`Ensure{box_id}`.** An empty id is the user's first (oldest) box, and adds a box named `main` when the user has deleted all of them, so old clients keep working. A box without a machine is listed with `BOX_STATE_UNSPECIFIED` (absent) instead of being left out.
 - **Delete** is an operation (`PHASE_DELETING`): a quiesced save when the box is running and ready (a failed save keeps the box), then every machine of the box is removed, then the row, and the box's live share is revoked in the same transaction, which cuts its sessions (§23). A hibernated or failed box is deleted without a wake, so what stays in the store until the GC purges it is its last save. A delete is refused while another operation runs on the box, and `Ensure`/`Hibernate` are refused during it.
 - **gw key.** Keys are per user since §22.4 (owner = user id, issued at sign-up, revoked at user deletion). Deleting a box releases its claim, and with it the host-only `GW_KEY` env of that claim; the key itself stays, even for the user's last box, since the next box's machine needs it.
 - **Owner MCP sessions are not tracked (§23).** 19.2's per-box `mcp:<client>` agent is dropped: the bridge routes by `box`, the box records nothing for the owner, and the CLI keeps its own history.
@@ -1867,8 +1769,8 @@ boundaries.md invariant 2 allows exactly this shape: "inside the VM only in memo
    - it is not an MCP tool;
    - neither the box's loop nor a local agent can call it or see its arguments;
    - it never appears in a transcript, an event or a log.
-3. **Fill.** The toolhost picks the Chrome tab whose top-level origin equals `origin` (scheme, host and port) and fills the page's sign-in form through CDP (the focused field, else the first username/password pair), then submits if asked.
-   - A tab on any other origin is refused, so a phishing page or a redirect gets nothing.
+3. **Fill.** The toolhost attaches to Chrome's active tab (else the last used, else the first) and fills the page's sign-in form through CDP (the focused field, else the first username/password pair), then submits if asked.
+   - A tab whose top-level origin (scheme, host and port) is not `origin` is refused, so a phishing page or a redirect gets nothing.
    - The values live in the agent and toolhost memory for this call only, and are zeroed after.
 4. **Keep it off disk.** The image sets Chrome's `PasswordManagerEnabled=false` (managed policy), so Chrome never offers to save the password. The resulting cookies follow the browser-session rule.
 
@@ -1974,7 +1876,7 @@ The two invariants hold:
 - the gw key is still injected at egress and never enters a VM;
 - tenant tokens never leave the api.
 
-Sealed values (as built, 22.4): AES-256-GCM directly under the master key (a 32-byte file on the bench host), additional data `users|<id>|<column>`. There is no per-user data key, no envelope and no master key rotation path yet; the §16.1.1 envelope replaces this when Connect lands.
+Sealed values (as built, 22.4): AES-256-GCM directly under the master key (a 32-byte file on the bench host), additional data `users|<id>|<column>`. There is no per-user data key, no envelope and no master key rotation path; the users columns stay under the master key (Connect's §16.1.1 envelope covers only its grants).
 
 ### 22.2 What it needs upstream
 
@@ -2014,11 +1916,11 @@ Decided and built:
 - **Accounts come from an admin or from signup**: the console's admin page (create with an initial password, disable or enable, reset the password, delete, per-user settings) or the root CLI on the host (`cocoonbox-api user add|passwd|token-sha256`, secrets on stdin); and, while an admin has signup on, a person's first sign-in with GitHub, with a seat cap, a queue and invites (contracts "Sign-in with GitHub and signup"). Signup is off by default.
 - **One personal token per user, plus device tokens.** The personal token (once "API token") is what a user pastes; the console shows it once on regenerate, which invalidates the old one. A browser sign-in of the CLI or the app gets a device token of its own instead, so a regenerate no longer signs those out (contracts "Browser sign-in and device tokens"). Only sha256 values are stored.
 - **User id = owner key.** One opaque id is the machine owner (`cb_owner`), the box id input (`cb-<12 hex of sha256(id)>`), the gw key owner and the sandboxd tenant name. New users get `u-<12 hex>`, never reused, since a reused tenant name inherits the old tenant's claims and templates. The migrated users kept their old name as id, so their box ids and state keys did not change. Their token hashes were imported from api.yaml, so neither app had to sign in again.
-- **Sealing.** The gw key and the tenant token are sealed with AES-256-GCM directly under one 32-byte master key file (root 0600, `LoadCredential`), with additional data `users|<id>|<column>`, so a value copied onto another row does not open. There is no envelope and no rotation path yet: rotating the master key means resealing both columns of every row. The 16.1.1 per-user data key envelope replaces it when Connect lands.
+- **Sealing.** The gw key and the tenant token are sealed with AES-256-GCM directly under one 32-byte master key file (root 0600, `LoadCredential`), with additional data `users|<id>|<column>`, so a value copied onto another row does not open. There is no envelope and no rotation path yet: rotating the master key means resealing both columns of every row. The users columns stay under the master key; the 16.1.1 envelope covers only Connect's grants.
 - **gw key per user:** issued at creation (owner = user id, tenant `cocoonbox-boxes`), revoked at deletion, installed as the claim's `guest: false` `GW_KEY` on each new machine's first boot. A machine made before the switch keeps its per-machine key until it is replaced; the api no longer revokes those, so they are revoked by hand.
-- **Tenant per user:** `PUT /v1/tenants/{id}` with the user's token, `max_claims` = max boxes + 1 (the +1 is the old machine a Rebase keeps until the new one serves; the api's own count is the one box per user that the box id enforces), and `egress_class` = `sandboxd.tenant_egress_class`. A tenant without an egress class reaches nothing on a pool with a policy, and sandboxd before cocoonstack/sandbox#292 cannot give an API tenant one; so machines claim under the user's tenant only while that setting is non-empty, and before #292 they stay root claims stamped with `cb_owner`. The api reconciles every tenant at start.
+- **Tenant per user:** `PUT /v1/tenants/{id}` with the user's token, `max_claims` = max boxes + min(agent boxes, `max_agent_boxes`) + 1 (the +1 is the old machine a Rebase keeps until the new one serves), and `egress_class` = `sandboxd.tenant_egress_class`. A tenant without an egress class reaches nothing on a pool with a policy, and sandboxd before cocoonstack/sandbox#292 cannot give an API tenant one; so machines claim under the user's tenant only while that setting is non-empty, and before #292 they stay root claims stamped with `cb_owner`. The api reconciles every tenant at start.
 - **Listing stays on the root index**, refreshed every 2 s, not a tenant-token request per call, since Resolve is on the edge path. A tenant claim's owner comes from sandboxd's `tenant` stamp, which outranks the api's own metadata; root claims made before the switch keep being found by `cb_owner` and adopted until replaced, so the switch never created or restored a second machine.
-- **Daily model budget per user** (§22.2, built 2026-10-02): tenant `cocoonbox-boxes` sets `user_daily_cost_quota_micros: 5000000` as every user's default, keeps the $50/day pool, drops the per-key cap and sets `require_key_owner`. The api gives admins an `"unlimited"` override at creation and at the startup reconcile when they have none, drops a user's override at deletion, and lets the admin page set a user's cap (dollars, unlimited, or inherit); the user page shows the cap and today's spend (the ledger since UTC midnight). Hot path: none in the api; gw does one in-process override lookup per request with an attributed user.
+- **Daily model budget per user** (§22.2, built 2026-10-02): tenant `cocoonbox-boxes` sets `user_daily_cost_quota_micros: 5000000` as every user's default, keeps a $500/day pool, drops the per-key cap and sets `require_key_owner`. The api gives admins an `"unlimited"` override at creation and at the startup reconcile when they have none, drops a user's override at deletion, and lets the admin page set a user's cap (dollars, unlimited, or inherit); the user page shows the cap and today's spend (the ledger since UTC midnight). Hot path: none in the api; gw does one in-process override lookup per request with an attributed user.
 - **Settings per user:** residential exit (default off; only the admin page flips it; `PATCH /cb/api/me` with `residential` answers 403; `ApplyExit` runs after the row is committed) and max boxes (the admin sets the cap, default 1, at most 16; the user picks up to it).
 - **Scheduled saves cover every box**; `state.scheduled_users` is gone with the `users` list (no back-compat).
 - **Storage:** database `cocoonbox` on the bench host's PostgreSQL, role `cocoonbox-api`, peer authentication over the unix socket; migrations are embedded and run at start under `pg_advisory_lock`.
@@ -2047,7 +1949,7 @@ Hot path: none. Save and restore read one sealed key per request instead of one 
 As built (api 185e1bf, b8de45e; switched 2026-10-02):
 - **Key:** columns `users.state_key_id` (plain) and `users.state_key_sealed` (AES-256-GCM under the master key, additional data `users|<id>|state_key`), migration 0002. The key id is stored because the agent ignores its `known-chunks.json` stamps under another key id and the api ignores an index under another key id; keeping the box key's id kept both. `Create` draws a key (id `users:<id>:<unix>`); a user without a key cannot save or restore (no key is created on first use, so a user that missed the migration fails loudly instead of starting a second key). Deleting the user drops the row and with it the key; since 49ad10b3 it also removes every object under `<user id>/`.
 - **Layout and locks** as above. A save or restore holds the box's lock; the index write is a read-modify-write under a lock on `<user>/index.json`, so two boxes of one user save in parallel and neither drops the other's chunks.
-- **Migration:** `cocoonbox-api state migrate [-keyring DIR]`, safe to rerun at any time. Per user it imports `<keyring>/<box>.json` into the row (a no-op when the row holds that key, an error when it holds another; a user without a file and without a key gets a new one), copies every object of `<box>/` missing under the new layout with CopyObject, writes the union of both indexes, and moves the new head only forward (by `saved_at_ms`). It reads the old head and index before listing, so everything they name is copied. Unknown objects or indexes under different key ids stop it.
+- **Migration:** the boxes of that time moved to this layout on 2026-10-02, with their keys and chunk ids unchanged.
 - **Commit failures** (185e1bf): the commit writes the index first (its chunks are stored once Upload returns), then the record, then the head, each retried 3 times (1 s, 2 s). If a commit still fails after a successful Upload, the agent's known chunks are ahead of the index, and the next save's Upload is refused with InvalidArgument (`plan again without a parent`). The api then plans once more without a parent, which spools every chunk. The heal keeps no state, so it survives an api restart; it costs one full read of the tree, once.
 
 Acceptance on the bench host:
@@ -2126,7 +2028,7 @@ Decisions made while building, on top of 23.1 and 23.2:
   - It takes the principal only from the verified credential. The edge token and v1 are the owner.
   - Agents and State refuse a share principal with `PERMISSION_DENIED`, and so does every Session method except `Screen`.
   - An MCP session is bound to the principal that opened it: another principal, including another user of the same share, gets 404 for its session id.
-  - `tools/list` and `tools/call` follow the mode of each request's credential. A read share gets `screenshot`, `computer_state`, `read_file`, `list_dir`, `browser_snapshot` and `browser_read`, with files only under `/workspace` (23.6); a write share gets all 13 remote tools. A refused call gets JSON-RPC `-32602`.
+  - `tools/list` and `tools/call` follow the mode of each request's credential. A read share gets `screenshot`, `computer_state`, `read_file`, `list_dir`, `browser_snapshot` and `browser_read`, with files only under `/workspace` (23.6); a write share gets every remote tool. A refused call gets JSON-RPC `-32602`.
   - Share sessions declare `listChanged: true`. When a request carries a mode other than the one the session last listed tools in, the session's GET stream sends `notifications/tools/list_changed`.
   - On a write switch, the edge also cuts the share's open GET streams (`Moded`). The client reconnects at once with the new mode and gets the notification, so a client that listed read-only tools learns about `shell` without a restart. POST exchanges are not cut, so a running tool call survives a switch.
 - **Ending.** Revoke, regenerate and expiry close `Cut`. The edge cancels every open MCP exchange of the share, and every share page bridge, at once. The api then calls `Agents.End{share_id}` on the box, best effort: a hibernated box keeps the share's sessions until its agent's idle reaper closes them. That call closes the share's sessions, and their agents go idle. The app's End button calls `Agents.End{agent_id}`. A guest whose session the owner ended can open a new one while the share lives; revoke to keep them out.
@@ -2226,7 +2128,7 @@ Hot path: none on the screen or edge path. Wake gains one disk attach and mount;
 
 Decided 2026-10-03. The user picks a point in time and gets back the files they had then. The state layer (§11) already keeps every save, so the history is in the store; what is missing is retention, garbage collection and a way to restore part of a snapshot into the running box.
 
-### 25.1 Today (verified 2026-10-03)
+### 25.1 Before the time capsule (verified 2026-10-03)
 
 - **Every save is kept forever.** The store interface has no delete (`api/store/store.go`), nothing in `api/boxes` removes a record, a manifest or a chunk, and the bucket has no lifecycle rule and no versioning. The scheduler saves every running box every 15 min, whether or not anything changed (`saveStale` in `api/boxes/save.go`).
 - **One long-lived box**, read with `mcli` on the bench host:
@@ -2236,7 +2138,7 @@ Decided 2026-10-03. The user picks a point in time and gets back the files they 
   
   History therefore costs 1.1 GiB of chunks and 1.3 GiB of metadata. Each record repeats the whole chunk list (5.3 MiB at this size), and each manifest the whole file list (3.2 MiB), even for a save with no change. 11 stored chunks are referenced by no record (commits that failed after Upload).
 - **Snapshots form one parent chain.** Walking `parent` from the head reaches all 158 records and ends at the one without a parent; no record has two children. Each manifest is complete (every file with its chunks), so a snapshot restores without its parents, and dropping one from the middle breaks no other.
-- **Restoring an older snapshot is manual:** release the machine, rewrite `head.json`, restart the api, then Ensure (bench.md). `stateLayer.restore` takes a snapshot id, but every caller passes the head.
+- **Restoring an older snapshot is manual:** release the machine, rewrite `head.json` (with `cluster.shared`, the box's `box_heads` row instead), restart the api, then Ensure (bench.md). `stateLayer.restore` takes a snapshot id, but every caller passes the head.
 - **The agent's Restore has no path filter.** It stages every root whole, quiesces, swaps every root and agent.db, and restarts the desktop (`agent/src/state/mod.rs:268-347`).
 
 ### 25.2 Decisions
@@ -2277,12 +2179,12 @@ Sweep (per user, after the prune):
 
 Why it is safe against the agent's stamp reuse: the agent's known chunks are those of its last upload, which is the box's head, and the head is always kept. If they are ever ahead of the index, the existing heal applies (Upload refused, plan again without a parent, §22.5).
 
-Cost: the mark reads every kept record, about 5 MiB each at that box's size, so it runs once a day and never under the lock. The lock covers the new records, one index write and the deletes; that user's saves wait for it. The locks are in-process, like today's save locks; several api replicas need them in PostgreSQL first.
+Cost: the mark reads every kept record, about 5 MiB each at that box's size, so it runs once a day and never under the lock. The lock covers the new records, one index write and the deletes; that user's saves wait for it. The locks are in-process; with `cluster.shared`, saves and the GC also take the per-user database lock.
 
 The store interface gains `Delete` (S3 `DeleteObjects`), and `List`, which the migration already used, moves into it and returns each object's size.
 
 As built (2026-10-03):
-- **One user lock instead of every box lock.** The design took every box lock of the user. A box whose first save starts after the sweep lists the boxes would hold none of them, so the lock is a per-user `RWMutex`: saves take it shared after their box lock (lock order: box, user, index), the sweep takes it exclusively and takes no box lock. Restores take only the box lock: they read a kept snapshot, whose chunks the sweep never deletes, and a prune of the same box waits for them.
+- **One user lock instead of every box lock.** The design took every box lock of the user. A box whose first save starts after the sweep lists the boxes would hold none of them, so the lock is a per-user `RWMutex`: saves take it shared after their box lock (lock order: box, user, index), the sweep takes it exclusively and takes no box lock. With `cluster.shared`, both also take the per-user database lock. Restores take only the box lock: they read a kept snapshot, whose chunks the sweep never deletes, and a prune of the same box waits for them.
 - **Prune runs in the pass, not after each save.** One switch (`dry_run`, the allowlist) then covers every delete, and a save pays nothing for it. Between passes a box keeps at most one interval of extra snapshots.
 - **Kept set** = the rule + the head + pinned snapshots. A Rebase pins its snapshot from its save to the end of its restore; a restore into a missing machine pins the head it restores. A head or pin missing from the timeline stops that user's pass with an error, before any delete.
 - **The parent chain.** Records keep `parent`; pruning leaves it pointing at a removed record, and nothing follows it. The api plans each save on the head, which is always kept. The agent reads `parent` only to decide whether its stamps apply (`agent/src/state/mod.rs`) and never looks it up; `rec.Parent` is written and never read; the manifest's sealed `parent` is informational. If the sweep removes a chunk the agent still counts as known (only after a commit that failed), the 185e1bf heal plans again without a parent (test `TestASaveAfterPruningPlansOnTheHead`).
@@ -2323,7 +2225,7 @@ Hot path: none on claim, screen or edge. A save pays one map entry per re-read f
 - **agent:** `PlanResponse.changed_files`; `State.Browse`; the scoped `Restore`.
 - **app:** a timeline (time, files changed, bytes added) and a path picker, with Restore; the result opens in the box's file manager.
 
-Sketch; the fields are the contract to refine (as built: no `State.Browse` and no `TransferProgress.needed`; `State.RestorePaths` takes the scope; `TransferProgress.target` = 7; `EntryKind` values `ENTRY_KIND_FILE|DIR|SYMLINK`; `BrowseSnapshotResponse.truncated` past 5000 entries; see 25.4):
+Sketch; the fields are the contract to refine (as built: no `State.Browse` and no `TransferProgress.needed`; `State.RestorePaths` takes the scope; `TransferProgress.target` = 7; `EntryKind` values `ENTRY_KIND_FILE|DIR|SYMLINK`; `BrowseSnapshotResponse.truncated` past 5000 entries; `Snapshot` without `quiesced`, `files` and `logical_bytes`; see 25.4):
 
 ```proto
 service Boxes {           // clients, through the edge
@@ -2374,14 +2276,13 @@ Hot path: none on the claim, screen or edge path. A commit writes one more small
 
 Decided and built 2026-10-03. Each record repeated the full chunk list (5.3 MiB on the box of 25.1) and each manifest the full file list (3.2 MiB), so a save wrote about 8.5 MiB of metadata and every kept snapshot stored it again.
 
-- **Delta records, at the save.** A save of a user whose policy sets delta (`cocoonbox-api user set NAME -delta`) writes its record against a base: the newest full snapshot of the box saved on the same UTC day. The record keeps its timeline fields and parent, names the base in `base`, and its `chunks` is `{"added": [...], "removed": [...]}` instead of the list; an api without delta records fails to decode that field instead of reading an empty list. A full record is written for the first save of a UTC day, for a change (chunks added plus removed) larger than 1/4 of the base's chunks, which keeps a delta under about half a full record, and for a box without a timeline; it becomes the next base. The api keeps the base record in memory per box once it has read it, so a save after the first one against a base reads nothing more; a full record a save just wrote is read back once when the next save takes it as its base.
+- **Delta records, at the save.** A save of a user whose policy sets delta (`cocoonbox-api user set NAME -delta`) writes its record against a base: the newest full snapshot of the box saved on the same UTC day. The record keeps its timeline fields and parent, names the base in `base`, and its `chunks` is `{"added": [...], "removed": [...]}` instead of the list. A full record is written for the first save of a UTC day, for a change (chunks added plus removed) larger than 1/4 of the base's chunks, which keeps a delta under about half a full record, and for a box without a timeline; it becomes the next base. The api keeps the base record in memory per box once it has read it, so a save after the first one against a base reads nothing more; a full record a save just wrote is read back once when the next save takes it as its base.
 - **Manifest deltas, by the GC.** The agent still uploads its full manifest; nothing changes in the agent, so every agent version works. The prune turns the full manifest of every kept delta snapshot, except the head and pinned ones, into `manifests/<id>.d`: the base's file records as copy runs plus the records the base lacks, verbatim, sealed under the user key with `<id>.d` as associated data. It deletes the full manifest only after the delta rebuilds it byte for byte. A reader rebuilds the exact plaintext and checks its keyed hash against the snapshot id, so integrity is as before. A restore (Rebase, a missing machine, RestorePaths) first writes the full manifest back (`materialize`); the next pass compacts it again. The GC therefore now reads the user's state key, in memory for the pass.
 - **Pruning across bases.** Every delta is one step from a full base, never a chain. The timeline names each snapshot's base. When the prune drops a base that one kept snapshot needs, it rewrites that snapshot full (record and manifest) and then deletes the base; a dropped base that several kept snapshots need keeps its objects, out of the timeline. So a kept snapshot always has its base. With one base per UTC day and the daily rule, each past day ends as one full snapshot; the rewrite costs what the dropped base freed.
 - **Locks** as in 25.3: a save and a prune of one box serialize on the box lock, so a save never picks a base that a running prune drops, and a prune never sees half a delta.
 - **Measured** (`COCOONBOX_MEASURE=1 go test -run TestMetadataBytesPerSave ./boxes`, 100,000 files with one chunk each, 40 changed per save; the fake's chunk sizes make a full record 8.9 MB here against 5.3 MiB on the box of 25.1). Written per save: record 8,900,327 B full against 579 and 735 B as deltas; the manifest (3.9 MB) and `index.json` (6.7 MB) are unchanged at the save. After one GC pass the snapshot before the head keeps 735 B of record and a 2,100 B manifest delta instead of 8.9 + 3.9 MB. Commit CPU in process with 104,000 chunks: 22 ms for the delta with the base in memory against 19.5 ms for marshalling the full record, and the store write falls from 9.2 MB to 6.4 KB.
 - **On dev's box** (the bench host, 2026-10-03, about 540 chunks): a full record is 47,297 B and a delta 7,337 B; after a pass a kept delta snapshot stores 7.3 KB of record and a 4.7 KB manifest delta instead of 47.3 + 37.6 KB. A restore from a compacted snapshot through the real agent read the manifest the api wrote back.
 - **Still per save:** the full manifest upload until the next pass, and the whole `index.json` (6.7 MB at 100,000 chunks) whenever the save adds a chunk, which a live save nearly always does. The index is now the largest metadata write; an append-only index compacted by the sweep is the next step.
-- **Rollback is explicit.** An api without delta records cannot read them, and its prune would delete bases that kept deltas need. Stop the api, run `cocoonbox-api state expand [-user ID]`, which rewrites every delta record and manifest delta as full objects and clears the bases in the timeline, then install the older binary. Checked with the ac0de79 code on layouts written by this code: on the expanded layout it restores the head, saves, and runs a GC pass that deletes exactly the garbage chunks; on an unexpanded one its restore and its sweep fail on the delta record before any chunk delete, but its prune deletes the dropped base, which is why expand comes first.
 
 Hot path: none on claim, screen or edge. A delta save does less store I/O than before and a few ms more CPU; a restore of a compacted snapshot rebuilds and writes one manifest first. Compaction runs in the GC pass.
 
@@ -2392,7 +2293,6 @@ Decided 2026-10-03. Several agents (mode-A loops and MCP sessions) run in one bo
 ### 26.1 The problem (verified 2026-10-03; since 2c9841ad every desktop tool runs on shuttle, and the toolhost holds no input mutex)
 
 - **One tab for every agent.** Every `browser_*` call attaches to `first_page(targets)`, the first tab of the one Chrome (`agent/src/toolhost/browser.rs:369-399`, `:637`). Two agents' `browser_type` calls land in the same tab.
-- **One lock for every agent.** `Browser.run` takes one `lock` for every browser call (`browser.rs:227`), and the cua client takes one `input` mutex for every action (`agent/src/toolhost/cua.rs:29`, `:135`, `:197`, `:253`). Calls never interleave, but they take turns on the same tab and the same focus.
 - **One desktop.** Xorg `:0` (`image/rootfs/etc/systemd/system/cocoonbox-xorg.service:8`), one VNC port (`cocoonbox-xorg.conf:34`), one cua-driver, one Chrome, one CDP port. `computer_act` on Chrome picks the window by pid, and a window has one active tab.
 
 ### 26.2 Stage 1: an own Chrome window per agent
@@ -2423,18 +2323,18 @@ Hot path: one map lookup per browser call; no new process, no memory beyond the 
 - The polkit rule (`image/rootfs/etc/polkit-1/rules.d/60-cocoonbox-cbagent.rules`) widens to let `cbagent` start and stop `cocoonbox-xorg@*`, `xfwm4@*` and `cua-driver@*`.
 
 **Allocation and release:**
-- Keyed by the caller: mode A's agent id `ag-…`, and the MCP session id for MCP calls (`agent/src/mcp.rs:177-196`), which stays the key once owner sessions are no longer tracked as agents (§23.1).
+- Keyed by the caller: mode A's agent id `ag-…`, and the MCP session id for MCP calls (`agent/src/mcp.rs`), which stays the key once owner sessions are no longer tracked as agents (§23.1).
 - Allocated on the agent's first `computer_*` call, not when the agent is created: agents that never use the desktop cost nothing.
-- Released when the MCP session closes (10 min idle, client DELETE, shutdown; `mcp.rs:219-235`), when the agent is deleted (`agent/src/runner.rs:206-240`), and after 30 min with no `computer_*` call and no viewer attached. Release stops the display's units; what ran on it is gone.
+- Released when the MCP session closes (10 min idle, client DELETE, shutdown), when the agent is deleted, and after 30 min with no `computer_*` call and no viewer attached. Release stops the display's units; what ran on it is gone.
 - `serve` owns the agent-to-display table and passes the display on each toolhost call. The toolhost keeps a cua client, an input mutex and the shells' `DISPLAY` per display.
-- **No switching.** The display is injected by dispatch like the cua session label (`agent/src/dispatch.rs:132-137`); no tool takes a display argument. `:0` is reached only through the hand-over (26.3).
+- **No switching.** The display is injected by dispatch like the cua session label (`agent/src/dispatch.rs`); no tool takes a display argument. `:0` is reached only through the hand-over (26.3).
 
 **Caps and fallback:**
-- A per-box cap on private displays, 3 by default on the 4 vCPU / 8 GiB box (`api/machines/sandboxd/state.go:34`), and no new display while MemAvailable is below 1.5 GiB.
+- A per-box cap on private displays, 3 by default on the 4 vCPU / 8 GiB box (`xlarge` in `api/machines/sandboxd/state.go`), and no new display while MemAvailable is below 1.5 GiB.
 - When none is free, `computer_*` fails with "no private display free" and the agents holding one. It never falls back to `:0`, which would bring the collision back. The app can end another agent's display.
 
 **App view and take-over:**
-- `ScreenOpen` (`proto/cocoonbox/agent/v1/session.proto:119`) gains `display`; `serve` dials `127.0.0.1:5900+display`. The edge forwards frames as it does today.
+- `ScreenOpen` (`proto/cocoonbox/agent/v1/session.proto`) gains `display`; `serve` dials `127.0.0.1:5900+display`. The edge forwards frames as it does today.
 - Selecting an agent shows its display. A strip shows `:0` and each held display. `ComputerAction` markers are drawn only on their agent's display.
 - Take-over is per display. While the user holds display N, the agent's `computer_act` on N returns "the user has control" (the take-over holds N's input mutex). Clipboard is per X server and per RFB connection already.
 
@@ -2569,7 +2469,7 @@ toolhost: /workspace/flows  ◄──►  serve: Syncer ──box door──► 
   - leaves a changed local file alone, so the push sends it.
 
   For a flow the library dropped, it removes the box's unchanged copy and forgets the row. When a `.json` file changed, it rebuilds `INDEX` with `gui_plan {reindex: true}`, which reuses the executor's own index format and commits to the flows git. A pull is bounded at 3 s; on a failure the box keeps its files.
-- **Push:** runs in the background 500 ms after `gui_plan`, `script_run`, `write_file`, `edit_file`, `shell` or `upload`, and 500 ms after any other write of a flow file, which the toolhost sees through inotify on `/workspace/flows` (a desktop app's save, `rsh`), following the folder when a restore replaces it. It scans the folder and PUTs each file whose hash differs from its row. Content that the library refuses (a bad name, too large, a full library) is not sent again until it changes. The same watch sees a flow deleted or moved out, and the toolhost then drops it from `INDEX` in place, so `gui_plan {flows: true}` lists what is on disk.
+- **Push:** runs in the background 500 ms after `gui_plan`, `script_run`, `write_file`, `edit_file`, `shell` or `upload`, and 500 ms after any other write of a flow file, which the toolhost sees through inotify on `/workspace/flows` (a desktop app's save, `rsh`), following the folder when a restore replaces it. It scans the folder and PUTs each file whose hash differs from its row. Content that the library refuses (a bad name, too large, a full library) is not sent again until it changes. The same watch sees a flow deleted or moved out, and the toolhost then drops it from `INDEX` (contracts.md "Flow library"), so `gui_plan {flows: true}` lists what is on disk.
 - **Which files:** regular files directly in `/workspace/flows` named `[A-Za-z0-9][A-Za-z0-9._-]*` (at most 96 characters) and ending in `.json` or `.mts`, at most 128 KiB each, UTF-8. `INDEX`, `.runs.jsonl`, `.pending.json` and the git folder stay local.
 
 ### 28.3 Decisions

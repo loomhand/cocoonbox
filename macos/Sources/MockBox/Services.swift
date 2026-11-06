@@ -44,10 +44,6 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         try await world.delete(box: request.boxID)
     }
 
-    func get(request: Cocoonbox_Control_V1_GetBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Box {
-        try await owned(request.boxID)
-    }
-
     func list(request: Cocoonbox_Control_V1_ListBoxesRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListBoxesResponse {
         let boxes = await world.boxes
         return .with {
@@ -135,7 +131,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     let world: MockWorld
 
     func create(request: Cocoonbox_Agent_V1_CreateAgentRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_Agent {
-        await world.createAgent(name: request.name, nonce: request.clientNonce, model: request.mainModel)
+        await world.createAgent(name: request.name, nonce: request.clientNonce)
     }
 
     func list(request: Cocoonbox_Agent_V1_ListAgentsRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ListAgentsResponse {
@@ -185,7 +181,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
 struct SharesService: Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
     let world: MockWorld
 
-    func create(request: Cocoonbox_Control_V1_CreateShareRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    func create(request: Cocoonbox_Control_V1_CreateShareRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Share {
         try await world.createShare(request)
     }
 
@@ -198,7 +194,7 @@ struct SharesService: Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
         try await world.setShareWrite(id: request.shareID, write: request.write)
     }
 
-    func regenerate(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+    func regenerate(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Share {
         try await world.regenerateShare(id: request.shareID)
     }
 
@@ -213,7 +209,6 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
     static let signInOrigin = "https://accounts.example.com"
 
     let world: MockWorld
-    var credentials = true
     var workspace = FileManager.default.temporaryDirectory
 
     func hello(request: Cocoonbox_Agent_V1_HelloRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_HelloResponse {
@@ -221,19 +216,15 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
             $0.agentVersion = "mockbox-0.1"
             $0.screenWidth = 1280
             $0.screenHeight = 800
-            $0.models = ["deepseek/deepseek-v4.1-flash", "anthropic/claude-sonnet-5"]
-            $0.defaultMainModel = "deepseek/deepseek-v4.1-flash"
         }
     }
 
     func activeOrigin(request: Cocoonbox_Agent_V1_ActiveOriginRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ActiveOriginResponse {
-        guard credentials else { throw RPCError(code: .unimplemented, message: "") }
-        return .with { $0.origin = Self.signInOrigin }
+        .with { $0.origin = Self.signInOrigin }
     }
 
     // fillCredential logs which fields a real box would fill, never their values.
     func fillCredential(request: Cocoonbox_Agent_V1_FillCredentialRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse {
-        guard credentials else { throw RPCError(code: .unimplemented, message: "") }
         guard request.origin == Self.signInOrigin else {
             throw RPCError(code: .failedPrecondition, message: "the active tab is on \(Self.signInOrigin), not \(request.origin)")
         }

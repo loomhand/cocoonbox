@@ -242,9 +242,7 @@ import Testing
         let creator = try await BridgeClient(mock)
         _ = try await creator.tool("shell", ["box": "core1", "command": "true"])
         creator.close()
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("link-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let path = directory.appendingPathComponent("a.sock").path
+        let path = try Harness.temporary("link").appendingPathComponent("a.sock").path
         let server = try AgentLinkServer(path: path, queue: DispatchQueue(label: "test"), defaultBox: { _ in nil }) { _, _, _ in }
         defer { server.close() }
 

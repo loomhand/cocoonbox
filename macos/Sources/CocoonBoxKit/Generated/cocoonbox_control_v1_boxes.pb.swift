@@ -234,8 +234,6 @@ public nonisolated struct Cocoonbox_Control_V1_Box: Sendable {
   /// Clears the value of `flavor`. Subsequent reads from it will return its default value.
   public mutating func clearFlavor() {self._flavor = nil}
 
-  public var failureReason: String = String()
-
   public var createdAtMs: Int64 = 0
 
   /// Time of the latest user-state snapshot in object storage; 0 before the first.
@@ -379,18 +377,6 @@ public nonisolated struct Cocoonbox_Control_V1_RebaseRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Cocoonbox_Control_V1_GetBoxRequest: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var boxID: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
 public nonisolated struct Cocoonbox_Control_V1_ListBoxesRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -455,8 +441,6 @@ public nonisolated struct Cocoonbox_Control_V1_OperationEvent: Sendable {
 
   public var offsetKey: String = String()
 
-  public var atMs: Int64 = 0
-
   public var boxState: Cocoonbox_Control_V1_BoxState = .unspecified
 
   /// Transfer progress while saving or restoring; 0 otherwise.
@@ -478,14 +462,7 @@ public nonisolated struct Cocoonbox_Control_V1_Snapshot: Sendable {
 
   public var savedAtMs: Int64 = 0
 
-  public var quiesced: Bool = false
-
-  public var files: UInt64 = 0
-
-  public var logicalBytes: UInt64 = 0
-
-  /// Files new, changed or removed since the save before; absent for saves by
-  /// agents older than this field.
+  /// Files new, changed or removed since the save before; absent for saves by older agents.
   public var changedFiles: UInt64 {
     get {_changedFiles ?? 0}
     set {_changedFiles = newValue}
@@ -851,7 +828,7 @@ nonisolated extension Cocoonbox_Control_V1_Flavor: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Box"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{3}failure_reason\0\u{3}created_at_ms\0\u{3}last_saved_at_ms\0\u{3}latest_image\0\u{1}name\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{4}\u{2}created_at_ms\0\u{3}last_saved_at_ms\0\u{3}latest_image\0\u{1}name\0\u{b}failure_reason\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -863,7 +840,6 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
       case 2: try { try decoder.decodeSingularEnumField(value: &self.state) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.image) }()
       case 4: try { try decoder.decodeSingularMessageField(value: &self._flavor) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.failureReason) }()
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.createdAtMs) }()
       case 7: try { try decoder.decodeSingularInt64Field(value: &self.lastSavedAtMs) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.latestImage) }()
@@ -890,9 +866,6 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     try { if let v = self._flavor {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
     } }()
-    if !self.failureReason.isEmpty {
-      try visitor.visitSingularStringField(value: self.failureReason, fieldNumber: 5)
-    }
     if self.createdAtMs != 0 {
       try visitor.visitSingularInt64Field(value: self.createdAtMs, fieldNumber: 6)
     }
@@ -913,7 +886,6 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if lhs.state != rhs.state {return false}
     if lhs.image != rhs.image {return false}
     if lhs._flavor != rhs._flavor {return false}
-    if lhs.failureReason != rhs.failureReason {return false}
     if lhs.createdAtMs != rhs.createdAtMs {return false}
     if lhs.lastSavedAtMs != rhs.lastSavedAtMs {return false}
     if lhs.latestImage != rhs.latestImage {return false}
@@ -1150,36 +1122,6 @@ nonisolated extension Cocoonbox_Control_V1_RebaseRequest: SwiftProtobuf.Message,
   }
 }
 
-nonisolated extension Cocoonbox_Control_V1_GetBoxRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".GetBoxRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}box_id\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.boxID.isEmpty {
-      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 1)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Cocoonbox_Control_V1_GetBoxRequest, rhs: Cocoonbox_Control_V1_GetBoxRequest) -> Bool {
-    if lhs.boxID != rhs.boxID {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
 nonisolated extension Cocoonbox_Control_V1_ListBoxesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListBoxesRequest"
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
@@ -1290,7 +1232,7 @@ nonisolated extension Cocoonbox_Control_V1_WatchOperationRequest: SwiftProtobuf.
 
 nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OperationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}operation_id\0\u{1}phase\0\u{1}detail\0\u{3}offset_key\0\u{3}at_ms\0\u{3}box_state\0\u{3}done_bytes\0\u{3}total_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}operation_id\0\u{1}phase\0\u{1}detail\0\u{3}offset_key\0\u{4}\u{2}box_state\0\u{3}done_bytes\0\u{3}total_bytes\0\u{b}at_ms\0\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1302,7 +1244,6 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
       case 2: try { try decoder.decodeSingularEnumField(value: &self.phase) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.detail) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.offsetKey) }()
-      case 5: try { try decoder.decodeSingularInt64Field(value: &self.atMs) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.boxState) }()
       case 7: try { try decoder.decodeSingularUInt64Field(value: &self.doneBytes) }()
       case 8: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
@@ -1324,9 +1265,6 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
     if !self.offsetKey.isEmpty {
       try visitor.visitSingularStringField(value: self.offsetKey, fieldNumber: 4)
     }
-    if self.atMs != 0 {
-      try visitor.visitSingularInt64Field(value: self.atMs, fieldNumber: 5)
-    }
     if self.boxState != .unspecified {
       try visitor.visitSingularEnumField(value: self.boxState, fieldNumber: 6)
     }
@@ -1344,7 +1282,6 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
     if lhs.phase != rhs.phase {return false}
     if lhs.detail != rhs.detail {return false}
     if lhs.offsetKey != rhs.offsetKey {return false}
-    if lhs.atMs != rhs.atMs {return false}
     if lhs.boxState != rhs.boxState {return false}
     if lhs.doneBytes != rhs.doneBytes {return false}
     if lhs.totalBytes != rhs.totalBytes {return false}
@@ -1355,7 +1292,7 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
 
 nonisolated extension Cocoonbox_Control_V1_Snapshot: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Snapshot"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}saved_at_ms\0\u{1}quiesced\0\u{1}files\0\u{3}logical_bytes\0\u{3}changed_files\0\u{3}added_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}saved_at_ms\0\u{4}\u{4}changed_files\0\u{3}added_bytes\0\u{b}quiesced\0\u{b}files\0\u{b}logical_bytes\0\u{c}\u{3}\u{3}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1365,9 +1302,6 @@ nonisolated extension Cocoonbox_Control_V1_Snapshot: SwiftProtobuf.Message, Swif
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
       case 2: try { try decoder.decodeSingularInt64Field(value: &self.savedAtMs) }()
-      case 3: try { try decoder.decodeSingularBoolField(value: &self.quiesced) }()
-      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.files) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.logicalBytes) }()
       case 6: try { try decoder.decodeSingularUInt64Field(value: &self._changedFiles) }()
       case 7: try { try decoder.decodeSingularUInt64Field(value: &self.addedBytes) }()
       default: break
@@ -1386,15 +1320,6 @@ nonisolated extension Cocoonbox_Control_V1_Snapshot: SwiftProtobuf.Message, Swif
     if self.savedAtMs != 0 {
       try visitor.visitSingularInt64Field(value: self.savedAtMs, fieldNumber: 2)
     }
-    if self.quiesced != false {
-      try visitor.visitSingularBoolField(value: self.quiesced, fieldNumber: 3)
-    }
-    if self.files != 0 {
-      try visitor.visitSingularUInt64Field(value: self.files, fieldNumber: 4)
-    }
-    if self.logicalBytes != 0 {
-      try visitor.visitSingularUInt64Field(value: self.logicalBytes, fieldNumber: 5)
-    }
     try { if let v = self._changedFiles {
       try visitor.visitSingularUInt64Field(value: v, fieldNumber: 6)
     } }()
@@ -1407,9 +1332,6 @@ nonisolated extension Cocoonbox_Control_V1_Snapshot: SwiftProtobuf.Message, Swif
   public static func ==(lhs: Cocoonbox_Control_V1_Snapshot, rhs: Cocoonbox_Control_V1_Snapshot) -> Bool {
     if lhs.id != rhs.id {return false}
     if lhs.savedAtMs != rhs.savedAtMs {return false}
-    if lhs.quiesced != rhs.quiesced {return false}
-    if lhs.files != rhs.files {return false}
-    if lhs.logicalBytes != rhs.logicalBytes {return false}
     if lhs._changedFiles != rhs._changedFiles {return false}
     if lhs.addedBytes != rhs.addedBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

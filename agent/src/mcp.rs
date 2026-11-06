@@ -119,14 +119,12 @@ impl Mcp {
             Automation::Minimal | Automation::Android => Vec::new(),
             Automation::Desk => DESK_RESOURCES.to_vec(),
         };
-        if automation.plans() {
-            resources.extend(plugins.iter().flat_map(|p| &p.resources).map(|r| Resource {
-                uri: Cow::Owned(r.uri.clone()),
-                path: Cow::Owned(r.path.display().to_string()),
-                mime: Cow::Owned(r.mime.clone()),
-                description: Cow::Owned(r.description.clone()),
-            }));
-        }
+        resources.extend(plugins.iter().flat_map(|p| &p.resources).map(|r| Resource {
+            uri: Cow::Owned(r.uri.clone()),
+            path: Cow::Owned(r.path.display().to_string()),
+            mime: Cow::Owned(r.mime.clone()),
+            description: Cow::Owned(r.description.clone()),
+        }));
         Arc::new(Self {
             rt,
             gate,
@@ -153,7 +151,6 @@ impl Mcp {
     pub fn spawn_reaper(self: &Arc<Self>) {
         let mcp = Arc::clone(self);
         let period = (self.idle / 2).min(MAX_REAP_PERIOD);
-        // detached: runs for the life of the process
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(period);
             loop {
@@ -323,13 +320,10 @@ impl Mcp {
                 }
                 let agent = self
                     .rt
-                    .create_agent(pb::CreateAgentRequest {
-                        name,
-                        main_model: "external".to_owned(),
-                        client_nonce: String::new(),
-                    })
+                    .journal
+                    .create(name, "external".to_owned(), String::new())
                     .await
-                    .map_err(|e| internal(e.message().to_owned()))?;
+                    .map_err(internal)?;
                 let turn_id = self
                     .rt
                     .journal

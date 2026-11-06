@@ -84,8 +84,6 @@ import Testing
     }
 
     private func socketPath() throws -> String {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("link-\(UUID().uuidString.prefix(8))")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("a.sock").path
+        try Harness.temporary("link").appendingPathComponent("a.sock").path
     }
 }

@@ -47,10 +47,6 @@ struct AccountService: Cocoonbox_Control_V1_Account.SimpleServiceProtocol {
         return .init()
     }
 
-    func revokeToken(request: Cocoonbox_Control_V1_RevokeTokenRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_RevokeTokenResponse {
-        .init()
-    }
-
     func signOutEverywhere(request: Cocoonbox_Control_V1_SignOutEverywhereRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_SignOutEverywhereResponse {
         print("account=signed-out-everywhere")
         return .init()

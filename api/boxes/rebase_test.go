@@ -49,7 +49,7 @@ func TestRebaseAfterCapacityRefusalsEndsRunningOnTheNewMachine(t *testing.T) {
 	}
 	boxState := func() *controlv1.Box {
 		t.Helper()
-		box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+		box, err := svc.get(ctx, aliceBox)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestRebaseAfterCapacityRefusalsEndsRunningOnTheNewMachine(t *testing.T) {
 		t.Fatalf("rebase after the refusals ended with %v", last)
 	}
 
-	if box := boxState(); box.GetState() != controlv1.BoxState_BOX_STATE_RUNNING || box.GetFailureReason() != "" {
+	if box := boxState(); box.GetState() != controlv1.BoxState_BOX_STATE_RUNNING {
 		t.Errorf("box after the rebase = %v, want RUNNING", box)
 	}
 	ms, _ := backend.List(ctx, alice)

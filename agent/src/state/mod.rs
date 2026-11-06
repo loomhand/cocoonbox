@@ -356,7 +356,7 @@ impl StateEngine {
         let get = first
             .manifest
             .ok_or_else(|| StateError::Invalid("missing manifest url".to_owned()))?;
-        let sealed = self.get(&get.url).await?;
+        let sealed = get_retrying(&self.http, &get.url).await?;
         let plain = keys.open(&get.chunk_id, &sealed, MANIFEST_LIMIT)?;
         let manifest: Manifest =
             serde_json::from_slice(&plain).map_err(|e| format!("decode manifest: {e}"))?;
@@ -629,7 +629,9 @@ impl StateEngine {
                 .await?;
                 match first {
                     Some(plain) => Ok(plain),
-                    None => read_cached(cache, &id).await,
+                    None => tokio::fs::read(cache.join(&id))
+                        .await
+                        .map_err(|e| format!("read cached chunk {id}: {e}")),
                 }
             }
         }
@@ -1016,10 +1018,6 @@ impl StateEngine {
         Ok(size)
     }
 
-    async fn get(&self, url: &str) -> Result<Bytes, String> {
-        get_retrying(&self.http, url).await
-    }
-
     async fn fetch_chunk(
         &self,
         keys: &Arc<Keys>,
@@ -1032,8 +1030,7 @@ impl StateEngine {
             .acquire()
             .await
             .map_err(|e| format!("transfer slot: {e}"))?;
-        let sealed = self
-            .get(url)
+        let sealed = get_retrying(&self.http, url)
             .await
             .map_err(|e| format!("chunk {id}: {e}"))?;
         let size = sealed.len() as u64;
@@ -1097,7 +1094,6 @@ struct Filled {
 struct Known {
     key_id: String,
     chunks: HashSet<String>,
-    #[serde(default)]
     files: HashMap<String, Reuse>,
 }
 
@@ -1109,7 +1105,6 @@ struct Reuse {
     ctime_ns: i64,
     chunks: Vec<(String, u64)>,
     /// Read through an SQLite backup or changed within `REUSE_AGE_MS` of the walk: compared for `changed_files`, never reused.
-    #[serde(default)]
     compare_only: bool,
 }
 
@@ -1376,7 +1371,7 @@ pub fn default_roots(home: &Path, workspace: &Path) -> Vec<Root> {
 }
 
 /// Caches, browser runtime files and restore leftovers never go into a snapshot.
-pub fn excludes() -> Excludes {
+fn excludes() -> Excludes {
     let own = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect();
     Excludes {
         prefixes: own(&EXCLUDED_PREFIXES),
@@ -1519,7 +1514,6 @@ fn logical_path<'a>(_roots: &'a [Root], _rest: &str) -> Option<(&'a Root, String
     None
 }
 
-/// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
 fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
     let plain = serde_json::to_vec(manifest).map_err(|e| format!("encode manifest: {e}"))?;
     if plain.len() as u64 > MANIFEST_LIMIT {
@@ -1531,6 +1525,7 @@ fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
     Ok(plain)
 }
 
+/// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
 fn referenced(m: &Manifest) -> Vec<String> {
     let mut seen = HashSet::new();
     m.files
@@ -1540,12 +1535,6 @@ fn referenced(m: &Manifest) -> Vec<String> {
         .filter(|id| seen.insert(id.as_str()))
         .cloned()
         .collect()
-}
-
-async fn read_cached(cache: &Path, id: &str) -> Result<Vec<u8>, String> {
-    tokio::fs::read(cache.join(id))
-        .await
-        .map_err(|e| format!("read cached chunk {id}: {e}"))
 }
 
 fn store_client(connect: Duration, read: Duration) -> Result<reqwest::Client, String> {
@@ -1785,22 +1774,8 @@ mod tests {
                 rpc::write_frame(&mut s, &out).await.unwrap();
             }
         });
-        let turns = Arc::new(RwLock::new(()));
-        let engine = StateEngine::new(
-            rpc::Client::new(socket),
-            Store::open(&dir.path().join("agent.db")).unwrap(),
-            default_roots(Path::new("/home/user"), Path::new("/workspace")),
-            dir.path().join("work"),
-            Pause {
-                turns: Arc::clone(&turns),
-                guests: Arc::default(),
-                wait: Duration::from_secs(30),
-            },
-            None,
-            false,
-        )
-        .await
-        .unwrap();
+        let engine = test_engine(dir.path(), socket).await;
+        let turns = Arc::clone(&engine.pause.turns);
         let gate = Arc::clone(&turns).write_owned().await;
         let started = tokio::time::Instant::now();
         let _resume = engine.resume(
@@ -1870,21 +1845,7 @@ mod tests {
             .unwrap();
         runtime.block_on(async {
             let dir = tempfile::tempdir().unwrap();
-            let engine = StateEngine::new(
-                rpc::Client::new(dir.path().join("toolhost.sock")),
-                Store::open(&dir.path().join("agent.db")).unwrap(),
-                default_roots(Path::new("/home/user"), Path::new("/workspace")),
-                dir.path().join("work"),
-                Pause {
-                    turns: Arc::default(),
-                    guests: Arc::default(),
-                    wait: Duration::from_secs(30),
-                },
-                None,
-                false,
-            )
-            .await
-            .unwrap();
+            let engine = test_engine(dir.path(), dir.path().join("toolhost.sock")).await;
             let keys = Arc::new(Keys::derive(&[7u8; 32]).unwrap());
             let plain = b"chunk body".to_vec();
             let id = keys.id(&plain).unwrap();
@@ -1943,21 +1904,7 @@ mod tests {
         }
         std::fs::write(work.join("agent-db-3.db"), b"db").unwrap();
         std::fs::write(work.join(KNOWN_FILE), b"{}").unwrap();
-        StateEngine::new(
-            rpc::Client::new(dir.path().join("toolhost.sock")),
-            Store::open(&dir.path().join("agent.db")).unwrap(),
-            default_roots(Path::new("/home/user"), Path::new("/workspace")),
-            work.clone(),
-            Pause {
-                turns: Arc::default(),
-                guests: Arc::default(),
-                wait: Duration::from_secs(30),
-            },
-            None,
-            false,
-        )
-        .await
-        .unwrap();
+        test_engine(dir.path(), dir.path().join("toolhost.sock")).await;
         let left: Vec<_> = std::fs::read_dir(&work)
             .unwrap()
             .map(|e| e.unwrap().file_name())

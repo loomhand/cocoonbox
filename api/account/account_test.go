@@ -51,17 +51,9 @@ func TestRevokesActOnTheCallerOnly(t *testing.T) {
 	if _, err := srv.RevokeDevice(alice, &controlv1.RevokeDeviceRequest{DeviceId: "dev_app"}); err != nil || us.revoked != "alice/dev_app" {
 		t.Errorf("RevokeDevice = %v, revoked %q", err, us.revoked)
 	}
-	if _, err := srv.RevokeToken(alice, &controlv1.RevokeTokenRequest{}); err != nil || us.tokenRevoked != "alice" {
-		t.Errorf("RevokeToken = %v, revoked %q", err, us.tokenRevoked)
-	}
 	us.err = errors.New("read user_tokens: connection refused")
-	for _, err := range []error{
-		func() error { _, err := srv.ListDevices(alice, &controlv1.ListDevicesRequest{}); return err }(),
-		func() error { _, err := srv.RevokeToken(alice, &controlv1.RevokeTokenRequest{}); return err }(),
-	} {
-		if st := status.Convert(err); st.Code() != codes.Internal || st.Message() == us.err.Error() {
-			t.Errorf("a store failure = %v, want Internal without its text", err)
-		}
+	if _, err := srv.ListDevices(alice, &controlv1.ListDevicesRequest{}); status.Code(err) != codes.Internal || status.Convert(err).Message() == us.err.Error() {
+		t.Errorf("a store failure = %v, want Internal without its text", err)
 	}
 }
 
@@ -99,12 +91,11 @@ func as(t *testing.T, us *fakeUsers, token string) context.Context {
 }
 
 type fakeUsers struct {
-	devices      map[string]string
-	used         time.Time
-	revoked      string
-	tokenRevoked string
-	order        string
-	err          error
+	devices map[string]string
+	used    time.Time
+	revoked string
+	order   string
+	err     error
 }
 
 func newFakeUsers() *fakeUsers {
@@ -139,14 +130,6 @@ func (f *fakeUsers) RevokeDevice(_ context.Context, id, device string) error {
 		return users.ErrNotFound
 	}
 	f.revoked = id + "/" + device
-	return nil
-}
-
-func (f *fakeUsers) RevokeToken(_ context.Context, id string) error {
-	if f.err != nil {
-		return f.err
-	}
-	f.tokenRevoked = id
 	return nil
 }
 

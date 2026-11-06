@@ -54,7 +54,7 @@ guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoon
 guest "$VM" -- sh -c '/usr/local/bin/cocoonbox-agent toolhost-service 2>&1 | grep -q SHUTTLE_SERVICE_SOCKET' || { echo "$AGENT has no toolhost-service" >&2; exit 1; }
 
 step "seal"
-guest "$VM" -- bash -c 'set -e; grep -q " localhost.localdomain" /etc/hosts || echo "127.0.0.1 localhost.localdomain" >> /etc/hosts; rm -rf /var/lib/apt/lists/* /root/.bash_history; apt-get clean; journalctl --rotate >/dev/null; journalctl --vacuum-time=1s >/dev/null; ! systemctl -q is-active docker.service; [ -z "$(ls -A /var/lib/redroid-data)" ]; sync'
+guest "$VM" -- bash -c 'set -e; grep -q " localhost.localdomain" /etc/hosts || echo "127.0.0.1 localhost.localdomain" >> /etc/hosts; rm -rf /var/lib/apt/lists/* /root/.bash_history; apt-get clean; journalctl --rotate >/dev/null; journalctl --vacuum-time=1s >/dev/null; systemctl -q is-active docker.service && exit 1; [ -z "$(ls -A /var/lib/redroid-data)" ]; sync'
 step "stop"
 "$COCOON" vm stop "$VM"
 step "export $TARBALL"

@@ -15,7 +15,6 @@ A persistent cloud computer per user, with a resident agent that any model can d
 - [Boundaries](boundaries.md): the layering each component follows and what crosses each boundary
 - [Box image](image.md): the recipe, the cut, versions and pins, and publishing
 - [Android box](android.md): the phone in a box, its screen, clipboard and network
-- [Measurements and lessons](bench.md): clone, wake, hibernate, restore, VNC and image-cut measurements on the bench host
-- [Sandbox backend evaluation](m45-sandbox-eval.md), [cua-driver spike](cua-driver-spike.md), [Connect research](connect-research.md)
+- [Measurements and lessons](bench.md): wake, hibernate, restore, VNC and image-cut measurements on the bench host
 
 Source: [github.com/loomhand/cocoonbox](https://github.com/loomhand/cocoonbox)

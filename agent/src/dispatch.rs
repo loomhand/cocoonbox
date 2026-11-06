@@ -70,28 +70,19 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    /// Creates a dispatcher over `tools` that writes history to `journal`.
-    pub fn new(tools: Arc<dyn Tools>, journal: Arc<Journal>) -> Self {
+    /// Creates a dispatcher over `tools` that writes history to `journal` and syncs `flows` around the calls that read or write them.
+    pub fn new(
+        tools: Arc<dyn Tools>,
+        journal: Arc<Journal>,
+        flows: Option<Arc<Syncer>>,
+        plugins: Vec<String>,
+    ) -> Self {
         Self {
             tools,
             journal,
-            flows: None,
-            plugins: Vec::new(),
+            flows,
+            plugins,
         }
-    }
-
-    /// Syncs saved flows with the library around the calls that read or write them.
-    #[must_use]
-    pub fn with_flows(mut self, flows: Option<Arc<Syncer>>) -> Self {
-        self.flows = flows;
-        self
-    }
-
-    /// Treats the tools named `plugins` as script tools for the flow sync.
-    #[must_use]
-    pub fn with_plugins(mut self, plugins: Vec<String>) -> Self {
-        self.plugins = plugins;
-        self
     }
 
     /// Records a call and runs it.
@@ -318,8 +309,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let journal = Arc::new(Journal::new(Store::open(&dir.path().join("a.db")).unwrap()));
         let tools = Arc::new(MockTools::default());
-        let dispatcher =
-            Dispatcher::new(Arc::clone(&tools) as Arc<dyn Tools>, Arc::clone(&journal));
+        let dispatcher = Dispatcher::new(
+            Arc::clone(&tools) as Arc<dyn Tools>,
+            Arc::clone(&journal),
+            None,
+            Vec::new(),
+        );
         (dir, tools, journal, dispatcher)
     }
 

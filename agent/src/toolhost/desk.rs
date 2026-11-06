@@ -1,6 +1,4 @@
-//! The desk on shuttle: its point lookups for grounding, and the `desk` command.
-
-use serde_json::{Value, json};
+//! The `desk` command: a desk verb of shuttle from a shell.
 
 use desk_core::text::cli_args;
 
@@ -8,32 +6,6 @@ use super::rpc::{Call, Client};
 
 const DEFAULT_SOCKET: &str = "/run/cocoonbox/desk.sock";
 const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, unanswered, wait, snapshot, find, read, press, act, at, key, type, click, scroll, drag, still, focus, close, launch, shot, screen, web";
-
-/// The desk shuttle serves.
-pub struct Desk {
-    shuttle: Client,
-}
-
-impl Desk {
-    /// A desk whose point lookups go to `shuttle`.
-    pub fn new(shuttle: Client) -> Self {
-        Self { shuttle }
-    }
-
-    /// The element of the focused window at the screen point `(x, y)`, as the `at` op answers.
-    pub async fn at_point(&self, x: i32, y: i32) -> Result<Value, String> {
-        let call = Call {
-            agent_id: String::new(),
-            tool: "desk_at".to_owned(),
-            args: json!({"x": x, "y": y}),
-        };
-        let out = self.shuttle.desk(&call, super::rpc::DESK_DEADLINE).await?;
-        if out.is_error {
-            return Err(out.text);
-        }
-        serde_json::from_str(&out.text).map_err(|e| format!("at: {e}"))
-    }
-}
 
 /// `cocoonbox-agent desk VERB [key=value ...|JSON]`: calls shuttle's `desk_VERB` at `SHUTTLE_SOCKET` and prints its result.
 pub async fn cli(args: Vec<String>) -> u8 {

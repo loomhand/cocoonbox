@@ -49,6 +49,9 @@ const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 const PLAN_PAGE: usize = 2048;
 
+type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
+type PlanStream = tokio_stream::Iter<std::vec::IntoIter<Result<pb::PlanResponse, Status>>>;
+
 /// Admits only the owner's calls: a share reaches the box through MCP alone.
 #[derive(Clone)]
 pub struct EdgeAuth {
@@ -222,12 +225,7 @@ impl Session for SessionSvc {
         &self,
         _req: Request<pb::HelloRequest>,
     ) -> Result<Response<pb::HelloResponse>, Status> {
-        let cfg = &self.rt.cfg;
-        let mut models = vec![cfg.model_main.clone()];
-        if cfg.model_computer != cfg.model_main {
-            models.push(cfg.model_computer.clone());
-        }
-        let (automation, (screen_width, screen_height)) = match cfg.automation {
+        let (automation, (screen_width, screen_height)) = match self.rt.cfg.automation {
             Automation::Minimal => (pb::Automation::Unspecified, SCREEN),
             Automation::Desk => (pb::Automation::Desk, SCREEN),
             Automation::Android => (pb::Automation::Android, ANDROID_SCREEN),
@@ -236,8 +234,6 @@ impl Session for SessionSvc {
             agent_version: env!("CB_AGENT_VERSION").to_owned(),
             screen_width,
             screen_height,
-            models,
-            default_main_model: cfg.model_main.clone(),
             automation: automation.into(),
         }))
     }
@@ -337,17 +333,6 @@ impl Session for SessionSvc {
     }
 }
 
-#[derive(Deserialize)]
-struct Filled {
-    #[serde(default)]
-    filled: Vec<String>,
-    #[serde(default)]
-    submitted: bool,
-}
-
-type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
-type PlanStream = tokio_stream::Iter<std::vec::IntoIter<Result<pb::PlanResponse, Status>>>;
-
 /// `cocoonbox.agent.v1.State`, called by the api to move user state to and from object storage.
 pub struct StateSvc {
     rt: Arc<Runtime>,
@@ -430,6 +415,14 @@ impl State for StateSvc {
             engine.restore_paths(reqs, tx).await
         })))
     }
+}
+
+#[derive(Deserialize)]
+struct Filled {
+    #[serde(default)]
+    filled: Vec<String>,
+    #[serde(default)]
+    submitted: bool,
 }
 
 /// Binds `AGENT_LISTEN` and serves until SIGTERM or SIGINT.

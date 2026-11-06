@@ -126,11 +126,12 @@ impl Runtime {
         let rt = Arc::new(Self {
             model,
             router,
-            dispatcher: Arc::new(
-                Dispatcher::new(tools, Arc::clone(&journal))
-                    .with_flows(flows)
-                    .with_plugins(cfg.plugins.iter().map(|p| p.name.clone()).collect()),
-            ),
+            dispatcher: Arc::new(Dispatcher::new(
+                tools,
+                Arc::clone(&journal),
+                flows,
+                cfg.plugins.iter().map(|p| p.name.clone()).collect(),
+            )),
             journal,
             main_tools: loop_tools(false, &cfg),
             main_vision_tools: loop_tools(true, &cfg),
@@ -177,15 +178,10 @@ impl Runtime {
         Ok(())
     }
 
-    /// Creates an agent; an empty model selects the box default, an empty name waits for the first message.
+    /// Creates an agent on the box's main model; an empty name waits for the first message.
     pub async fn create_agent(&self, req: pb::CreateAgentRequest) -> Result<pb::Agent, Status> {
-        let model = if req.main_model.is_empty() {
-            self.cfg.model_main.clone()
-        } else {
-            req.main_model
-        };
         self.journal
-            .create(req.name, model, req.client_nonce)
+            .create(req.name, self.cfg.model_main.clone(), req.client_nonce)
             .await
             .map_err(Status::internal)
     }
@@ -526,7 +522,7 @@ impl Runtime {
             state: Mutex::new(SlotState::default()),
         });
         slots.insert(agent_id.to_owned(), Arc::clone(&slot));
-        // detached worker: runs this agent's turns in order for the life of the process
+        // detached worker: runs this agent's turns in order until the agent is deleted
         tokio::spawn(worker(
             Arc::clone(self),
             agent_id.to_owned(),

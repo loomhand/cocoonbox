@@ -1,16 +1,13 @@
 #!/bin/bash
-# Sourced by the other scripts. Some Command Line Tools installs keep files
-# from an older release (a second SwiftBridging module map and stale
-# PackageDescription private interfaces) that break every Foundation import
-# and every manifest. This masks them without touching /Library; no-op when
-# the toolchain is clean.
+# Sourced by the other scripts: masks the stale files some Command Line Tools installs keep (a second SwiftBridging
+# module map, private PackageDescription interfaces) without touching /Library; no-op on a clean toolchain.
 
 CLT=/Library/Developer/CommandLineTools
-[ "$(xcode-select -p 2>/dev/null)" = "$CLT" ] || return 0
+[[ "$(xcode-select -p 2>/dev/null)" == "$CLT" ]] || return 0
 FIX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.build/toolchain-fix"
 
 stale_modulemap="$CLT/usr/include/swift/module.modulemap"
-if [ -f "$stale_modulemap" ] && [ -f "$CLT/usr/include/swift/bridging.modulemap" ]; then
+if [[ -f $stale_modulemap && -f $CLT/usr/include/swift/bridging.modulemap ]]; then
   mkdir -p "$FIX_DIR/usr/bin"
   ln -sfn "$CLT/usr/lib" "$FIX_DIR/usr/lib"
   : >"$FIX_DIR/empty.modulemap"
@@ -30,7 +27,7 @@ fi
 if compgen -G "$CLT/usr/lib/swift/pm/ManifestAPI/*.swiftmodule/*.private.swiftinterface" >/dev/null; then
   mkdir -p "$FIX_DIR/pm"
   for api in ManifestAPI PluginAPI; do
-    if [ ! -d "$FIX_DIR/pm/$api" ]; then
+    if [[ ! -d $FIX_DIR/pm/$api ]]; then
       cp -R "$CLT/usr/lib/swift/pm/$api" "$FIX_DIR/pm/$api"
       rm -f "$FIX_DIR/pm/$api"/*.swiftmodule/*.private.swiftinterface
     fi

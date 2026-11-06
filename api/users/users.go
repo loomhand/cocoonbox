@@ -2,7 +2,6 @@
 package users
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -149,34 +148,6 @@ type Options struct {
 	FirstBoxID func(user string) string
 }
 
-// record is a user row with the values the console never sees.
-type record struct {
-	User
-	tokenSHA256 string
-	devices     []deviceToken
-	gwAKID      string
-	gwKey       []byte
-	tenantToken []byte
-	stateKeyID  string
-	stateKey    []byte
-}
-
-type life struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-type credLife struct {
-	life
-	refs int
-}
-
-// tokenOwner is the user a token serves and, for a device token, its device id.
-type tokenOwner struct {
-	user   string
-	device string
-}
-
 // Service owns the users, boxes and shares tables and an in-memory index that serves every token, box and share check.
 type Service struct {
 	store        *store
@@ -208,8 +179,8 @@ type Service struct {
 	lives      map[string]life
 	creds      map[string]*credLife
 	tombs      map[string]time.Time
-	grantsOwn  func(credential string) bool
-	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
+	grantsOwn  grantOwner
+	grantsLive liveGrants
 
 	ensuring chan struct{}
 }
@@ -747,41 +718,11 @@ func (s *Service) StateKey(_ context.Context, id string) (keyring.Key, error) {
 	if err != nil {
 		return keyring.Key{}, err
 	}
-	if r.stateKeyID == "" {
-		return keyring.Key{}, fmt.Errorf("user %s has no state key", id)
-	}
 	secret, err := s.seal.open(r.stateKey, userData(id, columnStateKey))
 	if err != nil {
 		return keyring.Key{}, err
 	}
 	return keyring.Key{ID: r.stateKeyID, Secret: []byte(secret)}, nil
-}
-
-// SetStateKey gives user id the state key k; it is a no-op when the user holds k and an error when it holds another key.
-func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) error {
-	if len(k.Secret) != keyring.KeySize || k.ID == "" {
-		return fmt.Errorf("%w: a state key has an id and %d bytes", ErrInvalid, keyring.KeySize)
-	}
-	r, err := s.record(id)
-	if err != nil {
-		return err
-	}
-	if r.stateKeyID != "" {
-		held, err := s.StateKey(ctx, id)
-		if err != nil {
-			return err
-		}
-		if held.ID != k.ID || !bytes.Equal(held.Secret, k.Secret) {
-			return fmt.Errorf("%w: user %s holds state key %s", ErrExists, id, held.ID)
-		}
-		return nil
-	}
-	r.stateKeyID, r.stateKey = k.ID, s.seal.seal(string(k.Secret), userData(id, columnStateKey))
-	if err := s.store.setStateKey(ctx, r); err != nil {
-		return err
-	}
-	s.published(ctx, "set the state key of "+id)
-	return s.Load(ctx)
 }
 
 // Policy returns user id's policy; an unknown user has the zero one.
@@ -845,7 +786,7 @@ func (s *Service) EndCredential(ctx context.Context, credential string) {
 }
 
 // KeepGrants registers live, which reports which of the grant ids owns names still exist, so a reconnecting listener ends the calls of the rest.
-func (s *Service) KeepGrants(owns func(credential string) bool, live func(ctx context.Context, ids []string) (map[string]bool, error)) {
+func (s *Service) KeepGrants(owns grantOwner, live liveGrants) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.grantsOwn, s.grantsLive = owns, live
@@ -1122,6 +1063,38 @@ func (s *Service) records() []record {
 	defer s.mu.RUnlock()
 	return slices.SortedFunc(maps.Values(s.byID), func(a, b record) int { return strings.Compare(a.Name, b.Name) })
 }
+
+// record is a user row with the values the console never sees.
+type record struct {
+	User
+	tokenSHA256 string
+	devices     []deviceToken
+	gwAKID      string
+	gwKey       []byte
+	tenantToken []byte
+	stateKeyID  string
+	stateKey    []byte
+}
+
+type life struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+type credLife struct {
+	life
+	refs int
+}
+
+// tokenOwner is the user a token serves and, for a device token, its device id.
+type tokenOwner struct {
+	user   string
+	device string
+}
+
+type grantOwner func(credential string) bool
+
+type liveGrants func(ctx context.Context, ids []string) (map[string]bool, error)
 
 // outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
 func outsideUser(idp, id string) error {

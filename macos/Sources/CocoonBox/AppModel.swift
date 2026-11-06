@@ -227,7 +227,6 @@ final class AppModel {
         Perf.mark("local_agent", "default \(session.kind.rawValue) \(box.name)")
     }
 
-    // noteCall records a local agent's box-tool call.
     private func noteCall(agent: String, box: String, at: Date) {
         guard let session = localAgents.first(where: { $0.id.uuidString == agent }) else { return }
         localCalls[session.id, default: [:]][box] = at
@@ -392,8 +391,7 @@ final class AppModel {
     func createShare(ttlSeconds: Int64, userNames: [String], write: Bool) async {
         guard let connection, let box else { return }
         do {
-            let created = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
-            share = created.share
+            share = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
             markShare("created")
         } catch {
             report("share", error)
@@ -414,8 +412,7 @@ final class AppModel {
     func regenerateShare() async {
         guard let connection, let current = share else { return }
         do {
-            let fresh = try await connection.regenerateShare(shareID: current.id)
-            share = fresh.share
+            share = try await connection.regenerateShare(shareID: current.id)
             markShare("regenerated")
         } catch {
             report("regenerate share", error)
@@ -607,6 +604,7 @@ final class AppModel {
     private func disconnect() {
         stopAgentSide()
         operationTask?.cancel()
+        operation = nil
         boxesTask?.cancel()
         boxesTask = nil
         boxesLive = false
@@ -648,7 +646,7 @@ final class AppModel {
         connectors.filter { $0.status == "needs_reconnect" }.map(\.name)
     }
 
-    // refreshConnectors keeps the last list when the call fails: Connect is optional, and an older api lacks it.
+    // refreshConnectors keeps the last list when the call fails: Connect is optional.
     func refreshConnectors() async {
         guard let connection, let list = try? await connection.listConnectors() else { return }
         connectors = list
@@ -806,7 +804,7 @@ final class AppModel {
     }
 
     private func upgradeNow(_ box: Box) {
-        guard let connection, !box.latestImage.isEmpty, box.latestImage != box.image else { return }
+        guard let connection else { return }
         busy = true
         let target = box.latestImage
         Task {
@@ -866,7 +864,7 @@ final class AppModel {
         }
     }
 
-    private func record(operationEvent event: OperationEvent) async {
+    private func record(operationEvent event: OperationEvent) {
         guard var progress = operation, progress.id == event.operationID else { return }
         progress.events.append(event)
         progress.replacing = progress.replacing || event.phase == .restoring
@@ -921,11 +919,11 @@ final class AppModel {
         let generation = agentGeneration
         for attempt in 0..<8 {
             do {
-                let response = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
+                let response = try await connection.hello()
                 guard !Task.isCancelled, generation == agentGeneration else { return }
                 hello = response
-                if let boxID, let hello { automations[boxID] = hello.automation }
-                Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
+                if let boxID { automations[boxID] = response.automation }
+                Perf.mark("hello", "agent=\(response.agentVersion) screen=\(response.screenWidth)x\(response.screenHeight)")
                 return
             } catch {
                 if Task.isCancelled { return }
