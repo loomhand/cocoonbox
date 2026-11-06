@@ -103,22 +103,23 @@ impl Client {
     /// The connector tools, listed again after a change; a failed list keeps the last one and waits before the next.
     pub async fn tools(&self) -> Arc<Vec<ToolSpec>> {
         {
-            let st = self.state();
+            let mut st = self.state();
             if !st.stale || st.retry_at.is_some_and(|at| Instant::now() < at) {
                 return Arc::clone(&st.tools);
             }
+            st.stale = false;
         }
         match self.list().await {
             Ok(tools) => {
                 let mut st = self.state();
                 st.tools = Arc::new(tools);
-                st.stale = false;
                 st.retry_at = None;
                 Arc::clone(&st.tools)
             }
             Err(e) => {
                 eprintln!("connect: list tools: {e}");
                 let mut st = self.state();
+                st.stale = true;
                 st.retry_at = Some(Instant::now() + RETRY);
                 Arc::clone(&st.tools)
             }
