@@ -150,6 +150,10 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
 	}
+	go b.loop(ctx, renewInterval, func(ctx context.Context) error {
+		_, err := b.snapshot(ctx)
+		return err
+	})
 	return b, nil
 }
 
@@ -973,6 +977,11 @@ func (b *Backend) refresh(ctx context.Context) error {
 		return err
 	}
 	now := time.Now()
+	for id, e := range known {
+		if e.op != "" && !e.busy(now) {
+			b.endLapsed(ctx, id)
+		}
+	}
 	var g errgroup.Group
 	g.SetLimit(probeFanout)
 	for _, e := range known {
@@ -985,6 +994,18 @@ func (b *Backend) refresh(ctx context.Context) error {
 	}
 	_ = g.Wait()
 	return nil
+}
+
+func (b *Backend) endLapsed(ctx context.Context, id string) {
+	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil || e.op == "" || e.busy(time.Now()) {
+			return e, false
+		}
+		e.op = ""
+		return e, true
+	}); err != nil {
+		log.WithFunc("sandboxd.Backend.endLapsed").WithField("machine", id).Warnf(ctx, "end the lapsed op: %v", err)
+	}
 }
 
 func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {
