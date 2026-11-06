@@ -180,6 +180,11 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	release, err := l.lockShared(ctx, p.user)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
@@ -690,6 +695,13 @@ func (l *stateLayer) userLock(user string) *sync.RWMutex {
 		l.users[user] = m
 	}
 	return m
+}
+
+func (l *stateLayer) lockShared(ctx context.Context, user string) (func(), error) {
+	if l.shared == nil {
+		return func() {}, nil
+	}
+	return l.shared.Lock(ctx, "state:"+user)
 }
 
 // batches splits missing into runs of at most pageSize chunks and maxBatchBytes; nothing missing gives one empty batch for the manifest.

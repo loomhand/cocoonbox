@@ -85,6 +85,11 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 // collect prunes every box of user and purges the expired state of the boxes live denies, asked after the listing since a box saves only while live and no box id is reused, then deletes the chunks that no kept snapshot references.
 func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, now time.Time, live func(box string) bool) (gcReport, error) {
 	var r gcReport
+	release, err := l.lockShared(ctx, user)
+	if err != nil {
+		return r, err
+	}
+	defer release()
 	boxes, err := l.boxesOf(ctx, user)
 	if err != nil {
 		return r, err
