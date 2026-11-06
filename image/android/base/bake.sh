@@ -1,6 +1,5 @@
 #!/bin/bash
-# Builds the redroid image of redroid.Dockerfile and bakes a created redroid container of it into docker-data-<arch>.tar
-# with a privileged DinD (vfs); the VM's android-up starts the container.
+# Bakes a created redroid container into docker-data-<arch>.tar through a privileged vfs DinD.
 # usage: ARCH=amd64|arm64 image/android/base/bake.sh [redroid image]   (default: build redroid.Dockerfile for ARCH)
 set -euo pipefail
 

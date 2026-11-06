@@ -1,6 +1,4 @@
-# The Android box base: cocoon's Ubuntu 24.04 VM image with docker, the baked redroid container of bake.sh, scrcpy-rfb,
-# the ashmem module for its kernel and the desk runtime. A cbdroid template is this base plus the
-# agent of a release (image/android/cut.sh). Build context: image/.
+# Android box base: cocoon's Ubuntu 24.04 with docker, the baked redroid container, scrcpy-rfb, ashmem and the desk runtime; build context image/.
 
 FROM ghcr.io/cocoonstack/cocoon/ubuntu:24.04@sha256:54572ca079710227271eb7210e88a48e476d1ce286f2a3ebb733d4162f66e9e2
 ARG TARGETARCH
