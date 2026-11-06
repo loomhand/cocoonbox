@@ -246,8 +246,8 @@ impl Harness {
         )
         .unwrap();
         let tools = Arc::new(cocoonbox_agent::shuttle::Split::new(
-            cocoonbox_agent::toolhost::rpc::Client::new(cfg.shuttle_socket.clone()),
-            cocoonbox_agent::toolhost::rpc::Client::new(cfg.toolhost_socket.clone()),
+            toolhost::rpc::Client::new(cfg.shuttle_socket.clone()),
+            toolhost::rpc::Client::new(cfg.toolhost_socket.clone()),
             cfg.workspace.clone(),
             cfg.plugins.iter().map(|p| p.name.clone()).collect(),
         ));
@@ -883,37 +883,35 @@ impl Edge {
 }
 
 fn signed<T>(msg: T, credential: &str) -> Request<T> {
+    with_credential(msg, Some(credential))
+}
+
+fn with_credential<T>(msg: T, credential: Option<&str>) -> Request<T> {
     let mut req = Request::new(msg);
-    req.metadata_mut()
-        .insert("x-cocoonbox-credential", credential.parse().unwrap());
+    if let Some(c) = credential {
+        req.metadata_mut()
+            .insert("x-cocoonbox-credential", c.parse().unwrap());
+    }
     req
 }
 
 async fn surface_codes(h: &Harness, credential: Option<&str>) -> Vec<String> {
-    fn with<T>(msg: T, credential: Option<&str>) -> Request<T> {
-        let mut req = Request::new(msg);
-        if let Some(c) = credential {
-            req.metadata_mut()
-                .insert("x-cocoonbox-credential", c.parse().unwrap());
-        }
-        req
-    }
     fn code<T>(r: Result<T, tonic::Status>) -> String {
         r.map_or_else(|e| format!("{:?}", e.code()), |_| "Ok".into())
     }
     let agents = h
         .agents()
         .await
-        .list(with(pb::ListAgentsRequest {}, credential))
+        .list(with_credential(pb::ListAgentsRequest {}, credential))
         .await;
     let hello = h
         .session()
         .await
-        .hello(with(pb::HelloRequest::default(), credential))
+        .hello(with_credential(pb::HelloRequest::default(), credential))
         .await;
     let plan = state_client(h)
         .await
-        .plan(with(pb::PlanRequest::default(), credential))
+        .plan(with_credential(pb::PlanRequest::default(), credential))
         .await;
     let mut mcp = reqwest::Client::new()
         .post(format!("{}/mcp", h.endpoint))
@@ -939,17 +937,21 @@ async fn credential_guards_every_surface() {
     assert_eq!(surface_codes(&h, Some(owner())).await, admitted);
     assert_eq!(surface_codes(&h, None).await, refused);
 
-    let key = SigningKey::from_bytes(&[5; 32]);
-    let key_id = write_identity(&h.identity, &key, "w1");
-    let good = credential(&key, &key_id, "cb-box", "w1");
+    let edge = Edge::provision(&h);
+    let good = edge.owner();
     assert_eq!(surface_codes(&h, Some(&good)).await, admitted);
-    let other_box = credential(&key, &key_id, "cb-other", "w1");
+    let other_box = credential(&edge.key, &edge.key_id, "cb-other", "w1");
     assert_eq!(surface_codes(&h, Some(&other_box)).await, refused);
-    let forged = credential(&SigningKey::from_bytes(&[6; 32]), &key_id, "cb-box", "w1");
+    let forged = credential(
+        &SigningKey::from_bytes(&[6; 32]),
+        &edge.key_id,
+        "cb-box",
+        "w1",
+    );
     assert_eq!(surface_codes(&h, Some(&forged)).await, refused);
 
-    write_identity(&h.identity, &key, "w2");
-    let woken = credential(&key, &key_id, "cb-box", "w2");
+    write_identity(&h.identity, &edge.key, "w2");
+    let woken = credential(&edge.key, &edge.key_id, "cb-box", "w2");
     assert_eq!(surface_codes(&h, Some(&woken)).await, admitted);
     assert_eq!(surface_codes(&h, Some(&good)).await, refused);
 
@@ -964,11 +966,6 @@ async fn credential_guards_every_surface() {
 async fn credential_is_required() {
     let h = Harness::start(Vec::new()).await;
     let mut agents = h.agents().await;
-    let err = agents
-        .list(Request::new(pb::ListAgentsRequest {}))
-        .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::Unauthenticated);
     let mut wrong = Request::new(pb::ListAgentsRequest {});
     wrong.metadata_mut().insert(
         "x-cocoonbox-credential",
@@ -978,13 +975,9 @@ async fn credential_is_required() {
         agents.list(wrong).await.unwrap_err().code(),
         Code::Unauthenticated
     );
-    let mut session = h.session().await;
-    let err = session
-        .hello(Request::new(pb::HelloRequest::default()))
+    let hello = h
+        .session()
         .await
-        .unwrap_err();
-    assert_eq!(err.code(), Code::Unauthenticated);
-    let hello = session
         .hello(authed(pb::HelloRequest::default()))
         .await
         .unwrap()
@@ -1290,12 +1283,7 @@ async fn run_delegate(messages_wire: bool) {
         let vision = gw_bodies(&h.gw_log, "/v1/messages");
         assert_eq!(vision.len(), 4);
         assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-        let last_user = vision[3]["messages"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
+        let last_user = vision[3]["messages"].as_array().unwrap().last().unwrap();
         assert_eq!(last_user["content"][0]["type"], "tool_result");
         assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
         assert_eq!(chats.len(), 2);
@@ -1317,8 +1305,7 @@ async fn run_delegate(messages_wire: bool) {
         .unwrap()
         .iter()
         .find(|m| m["role"] == "tool")
-        .unwrap()
-        .clone();
+        .unwrap();
     assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
     assert!(!main_after.to_string().contains(PNG));
 
@@ -3186,12 +3173,7 @@ async fn vision_main_model_gets_a_screenshot_tool() {
             .iter()
             .any(|t| t["function"]["name"] == "screenshot")
     );
-    let last = chats[1]["messages"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .clone();
+    let last = chats[1]["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(last["role"], "user");
     assert!(
         last["content"][1]["image_url"]["url"]
@@ -3348,7 +3330,10 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     for tool in ["computer_act", "computer_state", "screenshot", "shell"] {
         assert!(names.contains(&tool.to_owned()), "{names:?}");
     }
-    assert!(listed["result"]["tools"][0]["inputSchema"]["type"] == "object");
+    assert_eq!(
+        listed["result"]["tools"][0]["inputSchema"]["type"],
+        "object"
+    );
 
     let shell = mcp
         .call(
@@ -6165,9 +6150,8 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
     assert_eq!(ok["isError"], false, "{ok}");
     let first = driver_calls(&h, "desk_computer_state")[0]["session"].clone();
 
-    let toolhost =
-        cocoonbox_agent::toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
-    let end = cocoonbox_agent::toolhost::rpc::Call {
+    let toolhost = toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
+    let end = Call {
         agent_id: String::new(),
         tool: "computer_end".into(),
         args: json!({"session": first}),
