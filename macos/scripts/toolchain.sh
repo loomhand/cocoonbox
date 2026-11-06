@@ -1,9 +1,6 @@
 #!/bin/bash
-# Sourced by the other scripts. Some Command Line Tools installs keep files
-# from an older release (a second SwiftBridging module map and stale
-# PackageDescription private interfaces) that break every Foundation import
-# and every manifest. This masks them without touching /Library; no-op when
-# the toolchain is clean.
+# Sourced by the other scripts: masks the stale files some Command Line Tools installs keep (a second SwiftBridging
+# module map, private PackageDescription interfaces) without touching /Library; no-op on a clean toolchain.
 
 CLT=/Library/Developer/CommandLineTools
 [ "$(xcode-select -p 2>/dev/null)" = "$CLT" ] || return 0

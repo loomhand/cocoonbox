@@ -96,8 +96,6 @@ class Bridge:
 def text(result):
     return " ".join(c.get("text", "") for c in result.get("content", []))
 
-# Connect (mode B): the bridge merges the door's connector tools, routes their
-# calls to it with no box wake, and passes the door's list_changed on.
 def mock_connect(params):
     req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/connect", data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "mock/connect", "params": params}).encode(),
                                  headers={"Authorization": "Bearer mock-token", "Content-Type": "application/json"}, method="POST")
@@ -365,7 +363,6 @@ check("ensure over gRPC with progress on stderr", "waking" in ensure.stderr and 
 upgrade = run("upgrade")
 check("upgrade without --yes refuses", upgrade.returncode != 0 and "--yes" in upgrade.stderr, upgrade.stderr)
 
-# Several boxes: main runs here after `ensure`.
 m = Bridge()
 m.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "multi-client", "version": "1"}})
 m.send("notifications/initialized", notify=True)
@@ -393,8 +390,6 @@ result, _ = d.tool("shell", {"command": "uname -n"})
 check("without box and --box, the default is the newest running box", "on test" in text(result), result)
 d.close()
 
-# The app's socket: the bridge names its agent, reports each box-tool call and
-# takes the default box the app sends, first in answer to its hello, then on a change.
 class FakeApp:
     def __init__(self, path, default):
         self.default, self.hellos, self.calls, self.conns = default, [], [], []
@@ -498,7 +493,6 @@ result, _ = p.tool("box_list")
 check("box_list after delete", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
 p.close()
 
-# box create: a new box runs the default image.
 r = run("box", "create")
 check("box create without a name prints its usage", r.returncode != 0 and "usage: cocoonbox box create" in r.stderr, r.stderr)
 run("hibernate", "--box", "main", "--yes")
@@ -550,7 +544,6 @@ time.sleep(1)
 log = open(mocklog).read()
 check("box tool calls reached each box's own MCP path", "/cocoonbox.mcp/" + test_id + " auth=ok" in log and "rpc=tools/call tool=shell" in log, log[-600:])
 
-# rsh: the remote shell of rsync and git; the command's own exit code, or 255.
 work = os.path.dirname(mocklog)
 workspace = os.path.realpath(os.path.join(work, "workspace"))
 def rsh(*args, data=b"", env=None):
@@ -627,7 +620,6 @@ for variant in ("", "simple"):
     log = subprocess.run(["git", "-C", target, "log", "--format=%s"], capture_output=True, text=True).stdout if r.returncode == 0 else ""
     check("git clone with GIT_SSH_COMMAND='cocoonbox rsh'" + (" and GIT_SSH_VARIANT=" + variant if variant else ""), log.strip() == "first", r.stderr)
 
-# offload and back through the CLI; MockBox's HOME is the box's, with the box packer stub on its PATH.
 offrepo = os.path.join(work, "offrepo")
 os.makedirs(offrepo)
 def git_in(*args):
@@ -685,9 +677,7 @@ check("offload secrets add records the entry", r.returncode == 0 and r.stdout.st
 r = cb("offload", "secrets", "remove", "file:.env")
 check("offload secrets remove", r.stdout.strip() == "no secrets opted in", r)
 
-# App sign-in: a CLI with no item of its own copies the app's. The app's item is
-# the CLI's own under a service one ".cli" shorter, so the CLI writes every item
-# and each item's ACL trusts the binary that reads it: no Keychain prompt.
+# the app's item is the CLI's own under a service one ".cli" shorter
 if not os.environ.get("CB_KEYCHAIN_FILE", "").startswith(os.path.dirname(mocklog)):
     sys.exit("refusing to run the sign-in tests outside the throwaway keychain")
 def as_service(service, *args, data=None, binary=None):
@@ -715,8 +705,6 @@ via_app = as_service(service, "status", "--json")
 check("with only the app's item a command works and says so once", via_app.returncode == 0 and via_app.stderr.count("using the CocoonBox app's sign-in") == 1, via_app.stderr)
 check("and the CLI keeps it without the app's item", signed_in_alone(service))
 
-# Writes stay inside the HOME the CLI is given: every file command runs under a
-# sandbox that denies writes outside the test directory and the process temp.
 work = os.path.dirname(mocklog)
 home = os.path.join(work, "confined-home")
 os.makedirs(os.path.join(home, ".cursor"))
@@ -760,8 +748,6 @@ if shutil.which("claude"):
 else:
     print("SKIP claude plugin validate: Claude Code is not installed")
 
-# Browser sign-in: BROWSER plays the browser. It follows the consent page's URL to MockBox, which allows at once and
-# sends it back to the CLI's loopback port with a code, which the CLI redeems with PKCE; logout revokes the token.
 stub = os.path.join(os.path.dirname(mocklog), "stub-browser")
 open(stub, "w").write('#!/bin/sh\nexec curl -fsSL -o /dev/null "$1"\n')
 os.chmod(stub, 0o755)
@@ -785,7 +771,6 @@ for how in ("login --from-app", "an implicit copy"):
     copied = as_service(service, *(["login", "--from-app"] if how.startswith("login") else ["status", "--json"]))
     out = as_service(service, "logout")
     check("logout after " + how + " revokes nothing", copied.returncode == 0 and out.returncode == 0 and "revoked=" not in open(mocklog).read()[seen:], copied.stderr + out.stderr)
-# --invite signs up through the browser: the consent page's URL carries the code on to the GitHub signup.
 seen = len(open(mocklog).read())
 r = subprocess.run([cli, "login", "--invite", "cbi_test"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL, env=dict(os.environ, BROWSER=stub))
 log = open(mocklog).read()[seen:]
@@ -793,7 +778,6 @@ check("login --invite carries the invite on the consent page", r.returncode == 0
 r = subprocess.run([cli, "login", "--invite", "cbi_test", "--token", "-"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
 check("login --invite refuses --token", r.returncode != 0 and "--invite signs up through the browser" in r.stderr, r.stderr)
 
-# invite create and list read an invite-scoped token from the environment or a file, never from argv.
 noenv = {k: v for k, v in os.environ.items() if not k.startswith("COCOONBOX_INVITE_TOKEN")}
 def invite(*args, extra=None):
     return subprocess.run([cli, "invite", *args], capture_output=True, text=True, timeout=30, env=dict(noenv, **(extra or {})))

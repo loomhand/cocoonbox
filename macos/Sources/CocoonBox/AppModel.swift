@@ -227,7 +227,6 @@ final class AppModel {
         Perf.mark("local_agent", "default \(session.kind.rawValue) \(box.name)")
     }
 
-    // noteCall records a local agent's box-tool call.
     private func noteCall(agent: String, box: String, at: Date) {
         guard let session = localAgents.first(where: { $0.id.uuidString == agent }) else { return }
         localCalls[session.id, default: [:]][box] = at
@@ -649,7 +648,7 @@ final class AppModel {
         connectors.filter { $0.status == "needs_reconnect" }.map(\.name)
     }
 
-    // refreshConnectors keeps the last list when the call fails: Connect is optional, and an older api lacks it.
+    // refreshConnectors keeps the last list when the call fails: Connect is optional.
     func refreshConnectors() async {
         guard let connection, let list = try? await connection.listConnectors() else { return }
         connectors = list

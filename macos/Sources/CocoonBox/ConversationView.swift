@@ -103,7 +103,6 @@ struct ConversationView: View {
     }
 }
 
-// LocalAgentPane shows a local agent's terminal.
 struct LocalAgentPane: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession

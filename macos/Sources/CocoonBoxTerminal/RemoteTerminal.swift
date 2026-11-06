@@ -30,7 +30,6 @@ public final class RemoteTerminal: HostedTerminal {
         input(Data((text + "\r").utf8))
     }
 
-    // finish marks the program ended with code.
     public func finish(_ code: Int32) {
         exitCode = code
         feed.backend.finish(exitCode: UInt32(bitPattern: code), runtimeMilliseconds: UInt64(Date().timeIntervalSince(started) * 1000))

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-# A stand-in for `cocoonbox-agent offload <verb>` (contracts.md "Offload") for the Mac packer's
-# tests: MockBox runs it on this Mac through Session.Exec, in its workspace, with HOME as the
-# box's home. It keeps the copy states, the outbox and the S check the real box packer keeps;
-# there is no tmux and no box CLI. Files in HOME steer it: stub-findings.json (a list of findings)
-# feeds begin, and stub-auto-back makes a `send --back` post a back hand-over at once, as a box
-# agent would.
+# Test stand-in for `cocoonbox-agent offload <verb>` (contracts.md "Offload"); HOME files stub-findings.json and stub-auto-back steer begin and send --back.
 import json, os, subprocess, sys, tarfile, tempfile, time
 
 HEADINGS = ["## Goal and definition of done", "## User preferences and constraints", "## Current state", "## Decisions made",
@@ -159,8 +154,7 @@ elif verb == "send":
         if "HEAD" in names:
             git(copy, "fetch", "-q", "--update-head-ok", os.path.join(stage, "offload.bundle"), "+refs/*:refs/*")
         else:
-            # the rsynced refs name commits the bundle brings, so `bundle unbundle` refuses
-            # the walk; index-pack takes the pack after the bundle's header as it is
+            # the rsynced refs name commits the bundle brings, so unbundle refuses; index-pack takes the pack as is
             data = open(os.path.join(stage, "offload.bundle"), "rb").read()
             pack = data[data.index(b"\n\n") + 2:]
             run = subprocess.run(["git", "-C", copy, "index-pack", "--stdin", "--fix-thin"], input=pack, capture_output=True)

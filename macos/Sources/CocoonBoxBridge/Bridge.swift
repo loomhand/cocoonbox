@@ -510,7 +510,6 @@ public actor Bridge {
         cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).\(suffix)")
     }
 
-    // serverRoutes reads the routes once; a failed read is not kept, so the next call tries again.
     private func serverRoutes() async throws -> ServerRoutes {
         if let routes { return routes }
         let found = try await ServerRoutes.discover(endpoint)
@@ -545,7 +544,6 @@ public actor Bridge {
         return (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
     }
 
-    // entry is box's entry of the last box_list, else its box_status.
     private func entry(_ box: String) async -> [String: Any]? {
         if entries[box] == nil { entries[box] = try? await status(box) }
         return entries[box]

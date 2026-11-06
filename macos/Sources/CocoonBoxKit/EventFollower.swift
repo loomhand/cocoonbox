@@ -136,7 +136,6 @@ extension EventFollower where Event == Cocoonbox_Control_V1_ListBoxesResponse {
 }
 
 extension SessionClient {
-    // subscribeEvents adapts Session.Events to EventFollower.Subscribe.
     func subscribeEvents(
         from offset: UInt64,
         deliver: @escaping @Sendable (Cocoonbox_Agent_V1_Event) async -> Void

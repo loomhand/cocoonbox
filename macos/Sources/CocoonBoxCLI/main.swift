@@ -227,7 +227,6 @@ func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
     }
 }
 
-// selectedBox is the box --box names, else the first box.
 func selectedBox(_ connection: BoxConnection) async throws -> Cocoonbox_Control_V1_Box? {
     let boxes = try await connection.listBoxes()
     guard let ref = value(of: "--box") else { return boxes.first }
@@ -255,7 +254,6 @@ func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
     print(line)
 }
 
-// follow prints an operation's events to stderr until it ends and fails on PHASE_FAILED.
 func follow(_ connection: BoxConnection, _ operation: String) async {
     let failed = Mutex<String?>(nil)
     do {
@@ -973,7 +971,6 @@ final class Terminal: Sendable {
     }
 }
 
-// terminfo is `infocmp -x term`, empty when missing or over maxTerminfo.
 func terminfo(_ term: String) -> String {
     guard !term.isEmpty, let run = try? Command.run(["infocmp", "-x", term], environment: ProcessInfo.processInfo.environment),
           run.status == 0, run.out.count <= maxTerminfo else { return "" }
@@ -1116,7 +1113,6 @@ func offloader(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) -> 
               environment: ProcessInfo.processInfo.environment) { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
 }
 
-// runningBox is the box ref names, else the first box, woken when it does not run.
 func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Cocoonbox_Control_V1_Box {
     let boxes = try await connection.listBoxes()
     guard let box = ref.map({ CocoonBoxCLI.box($0, in: boxes) }) ?? boxes.first else { fail("no box yet") }
@@ -1139,7 +1135,6 @@ func offloadKey(inFlight: Bool = false) -> String {
     return offloadStore.records().last { $0.top == repo.top.path }?.repo ?? repo.key
 }
 
-// positional is the words after sub that are neither options nor their values.
 func positional(after sub: String) -> [String] {
     positional(arguments.drop { $0 != sub }.dropFirst())
 }
