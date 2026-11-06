@@ -498,6 +498,16 @@ func TestRootCallOfAShadowedAccountToolGoesToTheBox(t *testing.T) {
 	}
 }
 
+func TestAGrantWithAccountsWhoseBoxesFailToReadStillAnnouncesListChanged(t *testing.T) {
+	srv, _, _, _ := newUnifiedServer(t)
+	srv.EnableConnectors(newFakeConnectors())
+	srv.EnableGrants(fakeGrants{connectors: []string{"cg-mock"}, boxesErr: errors.New("db down")})
+	caps, _ := decode(t, serveRoot(srv, http.MethodPost, grantToken, "", initialize)).Result["capabilities"].(map[string]any)
+	if tools, _ := caps["tools"].(map[string]any); tools["listChanged"] != true {
+		t.Errorf("a grant with accounts whose boxes fail to read announces %v", caps)
+	}
+}
+
 func TestRootStreamsListChangedToAGrantWithAccounts(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	accounts := newFakeConnectors()
@@ -541,13 +551,14 @@ type fakeGrants struct {
 	boxes      []string
 	chosen     []string
 	connectors []string
+	boxesErr   error
 }
 
 func (g fakeGrants) Authenticate(context.Context, string) (oauth.Grant, error) {
 	return oauth.Grant{ID: "g1", User: "alice", ClientName: "Agent", MaxBoxes: 2, MaxRunning: 1, Boxes: g.boxes, Chosen: g.chosen, Connectors: g.connectors}, nil
 }
 
-func (g fakeGrants) Boxes(context.Context, string) ([]string, error) { return g.boxes, nil }
+func (g fakeGrants) Boxes(context.Context, string) ([]string, error) { return g.boxes, g.boxesErr }
 
 func (fakeGrants) AddBox(context.Context, string, string) error { return nil }
 

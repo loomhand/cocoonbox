@@ -186,6 +186,9 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	logger := log.WithFunc("controlmcp.Server.initializeUnified")
 	result := initializeResult(sess.params, unifiedName)
 	result["instructions"] = unifiedHead
+	if len(s.connectorGrants(ctx)) != 0 {
+		result["capabilities"] = map[string]any{toolsField: map[string]any{"listChanged": true}}
+	}
 	box, image, err := s.defaultBox(ctx)
 	if err != nil {
 		return result
@@ -202,9 +205,6 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	logger.Error(ctx, err, "read the tool list of "+image)
 	if own := l.Instructions; own != "" && len(unifiedHead)+2+len(own) <= maxInstructions {
 		result["instructions"] = unifiedHead + "\n\n" + own
-	}
-	if len(s.connectorGrants(ctx)) != 0 {
-		result["capabilities"] = map[string]any{toolsField: map[string]any{"listChanged": true}}
 	}
 	return result
 }
