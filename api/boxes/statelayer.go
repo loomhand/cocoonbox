@@ -701,7 +701,7 @@ func (l *stateLayer) lockShared(ctx context.Context, user string) (func(), error
 	if l.shared == nil {
 		return func() {}, nil
 	}
-	return l.shared.Lock(ctx, "state:"+user)
+	return l.shared.LockLong(ctx, "state:"+user)
 }
 
 // batches splits missing into runs of at most pageSize chunks and maxBatchBytes; nothing missing gives one empty batch for the manifest.

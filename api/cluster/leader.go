@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/projecteru2/core/log"
 )
 
@@ -43,32 +44,13 @@ func (s *Store) Lead(ctx context.Context, lead Work) {
 	}
 }
 
-// Lock holds the advisory lock of name in every process until the returned func runs, on a connection of the lock pool.
+// Lock holds the advisory lock of name in every process until the returned func runs; LockLong serves holds that last a save, so they never take the connections of the short ones.
 func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
-	conn, err := s.locks.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	key := lockKey(name)
-	drop := func() {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
-		defer cancel()
-		_ = conn.Hijack().Close(closeCtx)
-	}
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
-		// A canceled wait may still have taken the lock, which only closing the session drops.
-		drop()
-		return nil, fmt.Errorf("lock %s: %w", name, err)
-	}
-	return func() {
-		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
-		defer cancel()
-		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", key); err != nil {
-			drop()
-			return
-		}
-		conn.Release()
-	}, nil
+	return lock(ctx, s.locks, name)
+}
+
+func (s *Store) LockLong(ctx context.Context, name string) (func(), error) {
+	return lock(ctx, s.longLocks, name)
 }
 
 // leadOnce waits for the leader lock and runs lead until the lock is lost; it reports whether it held the lock.
@@ -117,6 +99,33 @@ func (s *Store) leadOnce(ctx context.Context, lead Work) (bool, error) {
 	stop()
 	<-done
 	return true, err
+}
+
+func lock(ctx context.Context, pool *pgxpool.Pool, name string) (func(), error) {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	key := lockKey(name)
+	drop := func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+		defer cancel()
+		_ = conn.Hijack().Close(closeCtx)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+		// A canceled wait may still have taken the lock, which only closing the session drops.
+		drop()
+		return nil, fmt.Errorf("lock %s: %w", name, err)
+	}
+	return func() {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", key); err != nil {
+			drop()
+			return
+		}
+		conn.Release()
+	}, nil
 }
 
 func lockKey(name string) int64 {
