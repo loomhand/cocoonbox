@@ -104,7 +104,7 @@ func (s *Store) PutMachine(ctx context.Context, m Machine) error {
 		if err := tx.QueryRow(ctx, machineInsert+" ON CONFLICT (id) DO UPDATE SET "+machineSet+" RETURNING version", machineArgs(m)...).Scan(&version); err != nil {
 			return fmt.Errorf("put machine %s: %w", m.ID, err)
 		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Version: version})
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner, Version: version})
 	})
 }
 
@@ -149,24 +149,24 @@ func (s *Store) DeleteMachineIf(ctx context.Context, id string, cond func(m Mach
 		if err != nil || !cond(m) {
 			return false, err
 		}
-		if removed, err := s.deleteVersion(ctx, id, m.Version); err != nil || removed {
+		if removed, err := s.deleteVersion(ctx, m); err != nil || removed {
 			return removed, err
 		}
 	}
 }
 
-// deleteVersion removes machine id while it keeps version.
-func (s *Store) deleteVersion(ctx context.Context, id string, version int64) (bool, error) {
+// deleteVersion removes machine m while it keeps m.Version.
+func (s *Store) deleteVersion(ctx context.Context, m Machine) (bool, error) {
 	var removed bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, "DELETE FROM machines WHERE id = $1 AND version = $2", id, version)
+		cmd, err := tx.Exec(ctx, "DELETE FROM machines WHERE id = $1 AND version = $2", m.ID, m.Version)
 		if err != nil {
-			return fmt.Errorf("delete machine %s: %w", id, err)
+			return fmt.Errorf("delete machine %s: %w", m.ID, err)
 		}
 		if removed = cmd.RowsAffected() == 1; !removed {
 			return nil
 		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: id})
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner})
 	})
 	return removed, err
 }
@@ -187,7 +187,7 @@ func (s *Store) writeMachine(ctx context.Context, m Machine, found bool) (Machin
 		case err != nil:
 			return err
 		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Version: m.Version})
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner, Version: m.Version})
 	})
 	if errors.Is(err, ErrStale) {
 		return Machine{}, ErrStale
