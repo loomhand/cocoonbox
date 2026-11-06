@@ -490,7 +490,8 @@ func TestARestoreThatOutlastsThePresignTTLStillFetchesItsFirstChunks(t *testing.
 	ctx, cancel := context.WithTimeout(t.Context(), stateTimeout)
 	defer cancel()
 
-	if _, err := l.restore(ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, "", noProgress); err != nil {
+	p := statePath{user: alice, box: aliceBox}
+	if _, err := l.restore(ctx, p, machines.Endpoint{}, headID(t, l, p), noProgress); err != nil {
 		t.Fatalf("restore over %s with a %s presign TTL: %v", time.Duration(skew.Load()), time.Minute, err)
 	}
 	if want := pageSize + 2; agent.fetched != want {
@@ -1312,6 +1313,15 @@ func everyBoxLive(string) bool { return true }
 
 func snapshotID(n int) string {
 	return fmt.Sprintf("%064x", n)
+}
+
+func headID(t *testing.T, l *stateLayer, p statePath) string {
+	t.Helper()
+	h, err := l.head(t.Context(), p)
+	if err != nil || h.Latest == "" {
+		t.Fatalf("head of %s = %+v, %v", p.box, h, err)
+	}
+	return h.Latest
 }
 
 func seed(t *testing.T, st *fakeStore, objects map[string]any) {

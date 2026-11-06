@@ -311,20 +311,10 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 	return nil
 }
 
-// restore writes snapshot id of p's box (the latest when empty) into the agent at ep.
+// restore writes snapshot id of p's box into the agent at ep.
 func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
-	if id == "" {
-		h, err := l.head(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		if h.Latest == "" {
-			return nil, errors.New("box has no saved state")
-		}
-		id = h.Latest
-	}
 	if !objectID.MatchString(id) {
 		return nil, fmt.Errorf("invalid snapshot id %q", id)
 	}
