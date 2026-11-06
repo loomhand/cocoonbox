@@ -498,7 +498,7 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 | `Watch` | read the row every 500 ms while the watch is open, and at once on its notify; the table refresh between watches | — |
 
 - `Ensure` and `Hibernate` return at once, as the interface requires. The sandboxd call runs in a backend goroutine, and the backend reports the in-flight state meanwhile.
-- `Revision` is a per-machine counter in the backend. It increases on each lifecycle call and resets with the api, the same way `operations` do.
+- `Revision` is a per-machine counter in the `machines` table. It increases on each lifecycle call and survives an api restart.
 
 States:
 
