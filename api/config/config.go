@@ -114,7 +114,7 @@ func (g GC) validate(bucket string) error {
 type Cluster struct {
 	// Ledger copies every box head and operation into the database and verifies the copy every minute.
 	Ledger bool `json:"ledger"`
-	// Shared makes the database the truth for machines, box heads and operations, so api processes may serve together.
+	// Shared makes the database the truth for box heads and operations, so api processes may serve together.
 	Shared bool `json:"shared"`
 	// Drain fails /healthz for this long after a stop signal before the api stops, so a balancer moves new calls to another api.
 	Drain Duration `json:"drain"`
