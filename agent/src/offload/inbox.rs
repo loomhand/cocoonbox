@@ -696,9 +696,9 @@ impl Inbox {
             _ if blocked.is_some() => Status::Blocked,
             _ => Status::Idle,
         };
-        if let Some(text) = blocked {
-            self.note_outbox(rec, EntryKind::Blocked, cut(&text, BLOCKED_BODY))
-                .await?;
+        if let Some(mut text) = blocked {
+            text.truncate(text.floor_char_boundary(BLOCKED_BODY));
+            self.note_outbox(rec, EntryKind::Blocked, text).await?;
         }
         if rec.status == Status::Stopped {
             rec.queue.clear();
@@ -923,7 +923,6 @@ enum Request {
         wait_ms: u64,
     },
     Status {
-        #[serde(default)]
         repo: Option<String>,
     },
     Restart {
@@ -1324,15 +1323,6 @@ fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// At most `max` bytes of `s`, cut at a character boundary.
-fn cut(s: &str, max: usize) -> String {
-    let mut end = s.len().min(max);
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_owned()
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -1492,12 +1482,6 @@ mod tests {
         let fed = tokio::time::timeout(Duration::from_secs(5), follow(&socket, &journal)).await;
         assert!(matches!(fed, Ok(Err(_))), "{fed:?}");
         drop(feed);
-    }
-
-    #[test]
-    fn cut_keeps_character_boundaries() {
-        assert_eq!(cut("aé", 2), "a");
-        assert_eq!(cut("abc", 10), "abc");
     }
 
     #[test]
