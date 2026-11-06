@@ -97,17 +97,6 @@ func (s *Store) Machine(ctx context.Context, id string) (Machine, error) {
 	return m, err
 }
 
-// PutMachine writes m whatever the stored version.
-func (s *Store) PutMachine(ctx context.Context, m Machine) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var version int64
-		if err := tx.QueryRow(ctx, machineInsert+" ON CONFLICT (id) DO UPDATE SET "+machineSet+" RETURNING version", machineArgs(m)...).Scan(&version); err != nil {
-			return fmt.Errorf("put machine %s: %w", m.ID, err)
-		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner, Version: version})
-	})
-}
-
 // UpdateMachine writes edit's change of machine id on the version read, rerunning edit after a concurrent write; edit returns false to write nothing.
 func (s *Store) UpdateMachine(ctx context.Context, id string, edit func(m *Machine, found bool) (bool, error)) (Machine, error) {
 	for {
@@ -130,16 +119,6 @@ func (s *Store) UpdateMachine(ctx context.Context, id string, edit func(m *Machi
 			return next, err
 		}
 	}
-}
-
-// DeleteMachine removes machine id; removing a missing one succeeds.
-func (s *Store) DeleteMachine(ctx context.Context, id string) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "DELETE FROM machines WHERE id = $1", id); err != nil {
-			return fmt.Errorf("delete machine %s: %w", id, err)
-		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: id})
-	})
 }
 
 // DeleteMachineIf removes machine id while cond holds, rerunning cond after a concurrent write; ErrNotFound when there is none.

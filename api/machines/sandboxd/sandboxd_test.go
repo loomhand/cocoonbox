@@ -724,49 +724,6 @@ func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	}
 }
 
-func TestTheLedgerMirrorsEveryMachineAndVerifyRepairsIt(t *testing.T) {
-	fake := newFakeSandboxd(t)
-	ledger := clustertest.Open(t)
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Ledger: ledger})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m := claimRunning(t, b)
-	if err := b.SetMeta(t.Context(), boxID, "slept", "1"); err != nil {
-		t.Fatalf("SetMeta: %v", err)
-	}
-	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
-		t.Fatalf("Verify after a claim = %v, %v, want no difference", differ, err)
-	}
-	row, err := ledger.Machine(t.Context(), boxID)
-	if err != nil || row.Owner != owner || row.Image != template || row.Meta["slept"] != "1" || !row.Ready || row.Revision != m.Revision || row.Claim == nil {
-		t.Fatalf("ledger row = %+v, %v", row, err)
-	}
-	row.Meta = map[string]string{"slept": "2"}
-	if err := ledger.PutMachine(t.Context(), row); err != nil {
-		t.Fatalf("PutMachine: %v", err)
-	}
-	if err := ledger.PutMachine(t.Context(), cluster.Machine{ID: "cb-ghost", Owner: owner}); err != nil {
-		t.Fatalf("PutMachine ghost: %v", err)
-	}
-	if differ, err := b.Verify(t.Context()); err != nil || !slices.Equal(differ, []string{boxID, "cb-ghost"}) {
-		t.Fatalf("Verify after tampering = %v, %v, want the box and the ghost", differ, err)
-	}
-	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
-		t.Errorf("Verify after the repair = %v, %v, want no difference", differ, err)
-	}
-	fake.remove(fake.only())
-	if _, err := b.Get(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
-		t.Fatalf("Get after the claim vanished = %v", err)
-	}
-	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
-		t.Fatalf("Verify after a removal = %v, %v", differ, err)
-	}
-	if rows, err := ledger.Machines(t.Context()); err != nil || len(rows) != 0 {
-		t.Errorf("ledger after the removal = %+v, %v, want empty", rows, err)
-	}
-}
-
 func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
@@ -916,8 +873,11 @@ func TestSyncOwnerReadsTheOwnersRowsIntoTheCache(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
 	b := newSharedBackend(t, fake, db)
-	if err := db.PutMachine(t.Context(), cluster.Machine{ID: "cb-other", Owner: owner, CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("PutMachine: %v", err)
+	if _, err := db.UpdateMachine(t.Context(), "cb-other", func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Owner, m.CreatedAt = owner, time.Now()
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
 	}
 	if err := b.SyncOwner(t.Context(), owner); err != nil {
 		t.Fatalf("SyncOwner: %v", err)
@@ -925,8 +885,8 @@ func TestSyncOwnerReadsTheOwnersRowsIntoTheCache(t *testing.T) {
 	if _, err := b.cached("cb-other"); err != nil {
 		t.Fatalf("a row of the owner is not cached after SyncOwner: %v", err)
 	}
-	if err := db.DeleteMachine(t.Context(), "cb-other"); err != nil {
-		t.Fatalf("DeleteMachine: %v", err)
+	if removed, err := db.DeleteMachineIf(t.Context(), "cb-other", func(cluster.Machine) bool { return true }); err != nil || !removed {
+		t.Fatalf("DeleteMachineIf = %t, %v", removed, err)
 	}
 	if err := b.SyncOwner(t.Context(), owner); err != nil {
 		t.Fatalf("SyncOwner: %v", err)
@@ -1143,8 +1103,11 @@ func TestAStoredEmptyOwnerResolvesToTheNodeThatHoldsTheClaim(t *testing.T) {
 		t.Fatalf("Marshal: %v", err)
 	}
 	db := clustertest.Open(t)
-	if err := db.PutMachine(t.Context(), cluster.Machine{ID: boxID, Owner: owner, Image: template, CreatedAt: time.Now(), Claim: claim, Ready: true}); err != nil {
-		t.Fatalf("PutMachine: %v", err)
+	if _, err := db.UpdateMachine(t.Context(), boxID, func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Owner, m.Image, m.CreatedAt, m.Claim, m.Ready = owner, template, time.Now(), claim, true
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
 	}
 	a.setDown(true)
 	next := newSharedBackend(t, b, db)

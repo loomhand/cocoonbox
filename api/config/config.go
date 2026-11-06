@@ -112,7 +112,7 @@ func (g GC) validate(bucket string) error {
 
 // Cluster configures the state api processes share in the users database.
 type Cluster struct {
-	// Ledger copies every machine, box head and operation into the database and verifies the copy every minute.
+	// Ledger copies every box head and operation into the database and verifies the copy every minute.
 	Ledger bool `json:"ledger"`
 	// Shared makes the database the truth for machines, box heads and operations, so api processes may serve together.
 	Shared bool `json:"shared"`

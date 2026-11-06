@@ -43,36 +43,29 @@ func TestPendingMigrationsListsWhatOpenAppliesAndWritesNothing(t *testing.T) {
 	}
 }
 
-func TestPutMachineRoundTripsEveryField(t *testing.T) {
+func TestUpdateMachineRoundTripsEveryField(t *testing.T) {
 	st := clustertest.Open(t)
 	want := cluster.Machine{
 		ID: "cb-1", Owner: "u-1", Image: "desk:v1", CreatedAt: time.Now(), Claim: []byte(`{"id":"sbx-1", "hibernated":false}`),
 		OwnerAddr: "10.0.0.1:17780", Op: "wake", OpErr: "wake failed", OpUntil: time.Now().Add(time.Minute), Revision: 7,
 		Meta: map[string]string{"slept": "1"}, Wakes: 3, Routed: true, Ready: true, ReadyRestarts: 2,
 	}
-	if err := st.PutMachine(t.Context(), want); err != nil {
-		t.Fatalf("PutMachine: %v", err)
-	}
+	putMachine(t, st, want)
 	got, err := st.Machine(t.Context(), "cb-1")
 	if err != nil || !got.Equal(want) || got.Version == 0 {
 		t.Fatalf("Machine = %+v, %v, want %+v with a version", got, err, want)
 	}
 	first := got.Version
 	want.Claim, want.Op, want.OpUntil, want.Env = nil, "", time.Time{}, map[string]string{"GW_KEY": "f1"}
-	if err := st.PutMachine(t.Context(), want); err != nil {
-		t.Fatalf("PutMachine again: %v", err)
-	}
+	putMachine(t, st, want)
 	if got, err = st.Machine(t.Context(), "cb-1"); err != nil || !got.Equal(want) || got.Version <= first {
-		t.Fatalf("Machine after the second put = %+v, %v, want a version past %d", got, err, first)
+		t.Fatalf("Machine after the second write = %+v, %v, want a version past %d", got, err, first)
 	}
-	if err := st.DeleteMachine(t.Context(), "cb-1"); err != nil {
-		t.Fatalf("DeleteMachine: %v", err)
+	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", func(cluster.Machine) bool { return true }); err != nil || !removed {
+		t.Fatalf("DeleteMachineIf = %t, %v", removed, err)
 	}
 	if _, err = st.Machine(t.Context(), "cb-1"); !errors.Is(err, cluster.ErrNotFound) {
 		t.Errorf("Machine after delete = %v, want ErrNotFound", err)
-	}
-	if err := st.DeleteMachine(t.Context(), "cb-1"); err != nil {
-		t.Errorf("DeleteMachine of a missing machine: %v", err)
 	}
 }
 
@@ -98,9 +91,7 @@ func TestEqualIgnoresTheVersionAndHowTheRowStoresTimesAndEmptyValues(t *testing.
 
 func TestUpdateMachineRerunsTheEditOnAConcurrentWrite(t *testing.T) {
 	st := clustertest.Open(t)
-	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("PutMachine: %v", err)
-	}
+	putMachine(t, st, cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()})
 	put, err := st.Machine(t.Context(), "cb-1")
 	if err != nil {
 		t.Fatalf("Machine: %v", err)
@@ -158,9 +149,7 @@ func TestUpdateMachineInsertsOnceForConcurrentCreators(t *testing.T) {
 
 func TestDeleteMachineIfRemovesOnlyWhileTheConditionHolds(t *testing.T) {
 	st := clustertest.Open(t)
-	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now(), Op: "wake"}); err != nil {
-		t.Fatalf("PutMachine: %v", err)
-	}
+	putMachine(t, st, cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now(), Op: "wake"})
 	idle := func(m cluster.Machine) bool { return m.Op == "" }
 	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", idle); err != nil || removed {
 		t.Fatalf("DeleteMachineIf during an op = %t, %v, want kept", removed, err)
@@ -253,9 +242,7 @@ func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 		got <- c
 	})
 	<-ready
-	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("PutMachine: %v", err)
-	}
+	putMachine(t, st, cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()})
 	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", func(cluster.Machine) bool { return true }); err != nil || !removed {
 		t.Fatalf("DeleteMachineIf = %t, %v", removed, err)
 	}
@@ -494,6 +481,16 @@ func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not strin
 	}
 	t.Fatalf("no leader other than %q within 20 s", not)
 	return ""
+}
+
+func putMachine(t *testing.T, st *cluster.Store, m cluster.Machine) {
+	t.Helper()
+	if _, err := st.UpdateMachine(t.Context(), m.ID, func(row *cluster.Machine, _ bool) (bool, error) {
+		*row = m
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine %s: %v", m.ID, err)
+	}
 }
 
 type freezer struct {
