@@ -112,7 +112,7 @@ and take the default box the app sets.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let command = arguments.first ?? "help"
 let flags = Set(arguments.dropFirst().filter { $0.hasPrefix("--") })
-let valuedFlags: Set = ["--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--ttl", "--tz", "--wait"]
+let valuedFlags: Set = ["-o", "--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--ttl", "--tz", "--wait"]
 let words = positional(arguments.dropFirst())
 
 // rsh exits 255 on its own failures, so they differ from the command's exit codes.
@@ -179,8 +179,12 @@ func sourceKey(_ endpoint: Endpoint) -> String {
     "token_source:" + endpoint.url
 }
 
+func endpointURL(_ flag: String? = value(of: "--endpoint")) -> String? {
+    flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL
+}
+
 func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
-    guard let url = flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL else {
+    guard let url = endpointURL(flag) else {
         fail("no endpoint: pass --endpoint or set COCOONBOX_ENDPOINT")
     }
     guard let endpoint = Endpoint(url: url) else { fail("\(url) is not an http(s) URL") }
@@ -450,7 +454,7 @@ func readExport(_ path: String) throws -> [Cocoonbox_Control_V1_Flow] {
 func flowsCommand() async {
     let out = value(of: "-o")
     let verb = words.first ?? "list"
-    let names = Array(words.dropFirst()).filter { $0 != "-o" && $0 != out }
+    let names = Array(words.dropFirst())
     let connection = connection()
     defer { connection.close() }
     do {
@@ -1379,7 +1383,7 @@ func setup() {
     let update = client == "claude" ? ["claude", "plugin", "marketplace", "update", Plugin.marketplace] : ["codex", "plugin", "marketplace", "upgrade", Plugin.marketplace]
     guard run(steps[0]) || run(update), steps.dropFirst().allSatisfy(run) else { fail("\(client) did not install the plugin") }
     print("installed the cocoonbox plugin for \(client)")
-    let target = endpoint()
+    guard let target = endpointURL().flatMap(Endpoint.init(url:)) else { return }
     if Keychain.token(for: target, service: service) == nil { _ = appToken(target) }
 }
 
