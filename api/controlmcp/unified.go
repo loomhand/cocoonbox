@@ -266,7 +266,7 @@ func (s *Server) connectorGrants(ctx context.Context) []string {
 	return nil
 }
 
-// connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows.
+// connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows; a failed lookup returns an error, never a box route.
 func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire.Error) {
 	grants := s.connectorGrants(ctx)
 	if len(grants) == 0 || isControlTool(name) {
