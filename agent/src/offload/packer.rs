@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -500,11 +500,6 @@ pub async fn send<R: Read + Send + 'static>(
 /// A message or BACK for the repo's running session.
 pub async fn message(layout: &Layout, a: &Args, text: String) -> Result<Value, Fail> {
     let repo = a.repo()?;
-    if text.len() > MAX_BODY {
-        return Err(Fail::Usage(format!(
-            "a message is at most {MAX_BODY} bytes"
-        )));
-    }
     let mut req = json!({
         "op": "send",
         "repo": repo,
@@ -527,13 +522,7 @@ pub async fn post(layout: &Layout, a: &Args, body: String) -> Result<Value, Fail
             "post takes one of --progress, --question, --back".to_owned(),
         ));
     };
-    if kind == "question" {
-        if body.len() > MAX_BODY {
-            return Err(Fail::Usage(format!(
-                "a question is at most {MAX_BODY} bytes"
-            )));
-        }
-    } else {
+    if kind != "question" {
         handover::check(&body).map_err(Fail::refused)?;
     }
     let copy = read_index(layout)
@@ -680,7 +669,6 @@ fn unpack<R: Read>(input: R, stage: &Path, secrets: &Path) -> Result<Unpacked, F
 }
 
 fn copy_out(src: &mut impl Read, dest: &Path, mode: u32) -> Result<(), Fail> {
-    use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
