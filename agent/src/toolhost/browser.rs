@@ -796,21 +796,11 @@ impl Browser {
     /// The visible tab titled as the X active window, when exactly one matches.
     async fn shown(&self, targets: &[Target]) -> Option<Cdp> {
         let title = active_title().await?;
-        let infos = self
-            .browser()
-            .await
-            .ok()?
-            .call("Target.getTargets", json!({}))
-            .await
-            .ok()?;
-        let ids: Vec<&str> = infos["targetInfos"]
-            .as_array()?
-            .iter()
-            .filter(|i| i["type"] == "page" && i["title"] == title.as_str())
-            .filter_map(|i| i["targetId"].as_str())
-            .collect();
         let mut found = None;
-        for t in targets.iter().filter(|t| ids.contains(&t.id.as_str())) {
+        for t in targets
+            .iter()
+            .filter(|t| t.kind == "page" && t.title == title)
+        {
             let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
                 continue;
             };
@@ -1078,6 +1068,8 @@ struct Target {
     #[serde(rename = "type")]
     kind: String,
     url: String,
+    #[serde(default)]
+    title: String,
     #[serde(rename = "webSocketDebuggerUrl", default)]
     ws_url: String,
 }
@@ -1139,7 +1131,6 @@ struct TypeArgs {
 #[derive(Deserialize)]
 struct FillArgs {
     fields: Vec<FillField>,
-    #[serde(default)]
     click: Option<String>,
 }
 
@@ -1152,7 +1143,7 @@ struct FillField {
 
 #[derive(Deserialize)]
 struct ReadArgs {
-    #[serde(rename = "ref", default)]
+    #[serde(rename = "ref")]
     element: Option<String>,
     #[serde(default)]
     offset: usize,
