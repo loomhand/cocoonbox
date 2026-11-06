@@ -15,6 +15,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -115,6 +116,40 @@ func TestGCCompactsDeltaManifestsAndRebuildsThemExactly(t *testing.T) {
 	}
 	if r := env.collect(t, GCOptions{DeleteBatch: 1000}, 0); r.compacted != 1 || env.store.has(p.manifest(second)) {
 		t.Errorf("the next pass compacted %d and left the full manifest %v", r.compacted, env.store.has(p.manifest(second)))
+	}
+}
+
+func TestGCKeepsFullManifestWhenDeltaExceedsRestoreLimit(t *testing.T) {
+	env := newDeltaEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	key, _ := env.keys.StateKey(env.ctx, alice)
+	f := manifestFile{Root: "workspace", Path: "f-0000000.go", Kind: kindFile, Mode: 0o644, MtimeMs: 1_790_000_000_000, Size: 4096, Chunks: hexIDs("same")}
+	base, sealed := sealManifest(key.Secret, []manifestFile{f})
+	if err := env.store.Put(env.ctx, p.manifest(base), sealed); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make([]manifestFile, (manifestLimit-mib)/(len(raw)+1))
+	f.MtimeMs++
+	for i := range files {
+		files[i] = f
+		files[i].Path = fmt.Sprintf("f-%07d.go", i)
+	}
+	id, sealed := sealManifest(key.Secret, files)
+	if err := env.store.Put(env.ctx, p.manifest(id), sealed); err != nil {
+		t.Fatal(err)
+	}
+	var r gcReport
+	env.svc.state.compact(env.ctx, p, timeline{Snapshots: []timelineEntry{{ID: id, Base: base}}}, nil, map[string]bool{id: true}, func() (keyring.Key, error) { return key, nil }, &r)
+	if r.compacted != 0 || !env.store.has(p.manifest(id)) || env.store.has(p.manifest(id)+deltaSuffix) {
+		t.Fatalf("compacted %d; full %v, delta %v", r.compacted, env.store.has(p.manifest(id)), env.store.has(p.manifest(id)+deltaSuffix))
+	}
+	plain, err := env.svc.state.manifestPlain(env.ctx, p, key, id)
+	if err != nil || len(plain) > manifestLimit || !matchesID(key.Secret, id, plain) {
+		t.Fatalf("kept manifest has %d bytes: %v", len(plain), err)
 	}
 }
 
