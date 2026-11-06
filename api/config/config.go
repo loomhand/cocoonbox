@@ -384,11 +384,15 @@ func (c *Config) validate() error {
 
 func (c *Config) validateIdle() error {
 	var errs []error
-	for name, after := range map[string]Duration{
-		"oauth.idle_hibernate":    *c.OAuth.IdleHibernate,
-		"user_idle_hibernate":     c.UserIdleHibernate,
-		"squeezed_idle_hibernate": c.SqueezedIdleHibernate,
+	for _, idle := range []struct {
+		name  string
+		after Duration
+	}{
+		{"oauth.idle_hibernate", *c.OAuth.IdleHibernate},
+		{"user_idle_hibernate", c.UserIdleHibernate},
+		{"squeezed_idle_hibernate", c.SqueezedIdleHibernate},
 	} {
+		name, after := idle.name, idle.after
 		switch {
 		case after < 0:
 			errs = append(errs, fmt.Errorf("%s must not be negative, got %s", name, time.Duration(after)))
