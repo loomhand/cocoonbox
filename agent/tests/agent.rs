@@ -55,6 +55,7 @@ struct Boot {
     plugin: bool,
     checkpoint_nudge: Option<Duration>,
     reasoning_effort: Option<&'static str>,
+    model_main: &'static str,
 }
 
 impl Default for Boot {
@@ -70,6 +71,7 @@ impl Default for Boot {
             plugin: false,
             checkpoint_nudge: None,
             reasoning_effort: None,
+            model_main: "deepseek/deepseek-v4.1-flash",
         }
     }
 }
@@ -154,6 +156,7 @@ impl Harness {
             plugin,
             checkpoint_nudge,
             reasoning_effort,
+            model_main,
         } = boot;
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -214,7 +217,7 @@ impl Harness {
         let cfg = ServeConfig {
             gw_base_url: format!("http://{gw}/v1"),
             gw_api_key: "k".into(),
-            model_main: "deepseek/deepseek-v4.1-flash".into(),
+            model_main: model_main.into(),
             model_computer: "anthropic/claude-sonnet-5".into(),
             identity_path: identity.clone(),
             identity_owner: std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()),
@@ -982,8 +985,6 @@ async fn credential_is_required() {
         .unwrap()
         .into_inner();
     assert_eq!((hello.screen_width, hello.screen_height), (1280, 800));
-    assert_eq!(hello.default_main_model, "deepseek/deepseek-v4.1-flash");
-    assert_eq!(hello.models.len(), 2);
     assert!(agents.list(authed(pb::ListAgentsRequest {})).await.is_ok());
 }
 
@@ -3137,25 +3138,21 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
 
 #[tokio::test]
 async fn vision_main_model_gets_a_screenshot_tool() {
-    let h = Harness::with_desk(vec![
-        (
-            "chat/completions",
-            chat_tool_call("call_s", "screenshot", &json!({})),
-        ),
-        ("chat/completions", chat_text("I see the desktop.")),
-    ])
+    let h = Harness::boot(Boot {
+        script: vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "screenshot", &json!({})),
+            ),
+            ("chat/completions", chat_text("I see the desktop.")),
+        ],
+        automation: Automation::Desk,
+        model_main: "anthropic/claude-sonnet-5",
+        ..Boot::default()
+    })
     .await;
     let mut agents = h.agents().await;
-    let agent_id = agents
-        .create(authed(pb::CreateAgentRequest {
-            name: "v".into(),
-            main_model: "anthropic/claude-sonnet-5".into(),
-            ..Default::default()
-        }))
-        .await
-        .unwrap()
-        .into_inner()
-        .id;
+    let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "what is on screen", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
     assert!(turn_end(&entries).ok);

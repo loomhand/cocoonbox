@@ -44,7 +44,7 @@ const USAGE: &str =
   restore --manifest ID --dir DIR --url URL [--paths P,P --target NAME]
                                          call State.Restore, or RestorePaths with --paths
   mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD; an error answer exits 1
-  turn --text T [--model M]              create an agent, send T, print the transcript until the turn ends; a failed turn exits 1";
+  turn --text T                          create an agent, send T, print the transcript until the turn ends; a failed turn exits 1";
 const DEFAULT_SERVE: &str = "http://127.0.0.1:17443";
 const DEFAULT_BOX: &str = "cb-box";
 const DEFAULT_WAKE: &str = "w1";
@@ -268,8 +268,6 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
                     "agent_version": r.agent_version,
                     "screen": format!("{}x{}", r.screen_width, r.screen_height),
                     "automation": pb::Automation::try_from(r.automation).map_or("unknown", |a| a.as_str_name()),
-                    "models": r.models,
-                    "default_main_model": r.default_main_model,
                 })
             );
         }
@@ -770,13 +768,11 @@ async fn mcp(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String> {
 
 async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
     let text = args.need("--text")?;
-    let model = args.take("--model").unwrap_or_default();
     let mut agents = AgentsClient::new(channel(serve).await?);
     let agent = agents
         .create(edge.signed(pb::CreateAgentRequest {
             name: "boxgate".into(),
             client_nonce: uuid::Uuid::new_v4().to_string(),
-            main_model: model,
         })?)
         .await
         .map_err(|e| format!("create agent: {e}"))?

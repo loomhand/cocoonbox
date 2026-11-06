@@ -399,8 +399,6 @@ public nonisolated struct Cocoonbox_Agent_V1_HelloRequest: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var clientVersion: String = String()
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -413,15 +411,10 @@ public nonisolated struct Cocoonbox_Agent_V1_HelloResponse: Sendable {
 
   public var agentVersion: String = String()
 
-  /// The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
-  /// Android. A later change in the box, such as `wm size`, is not reflected.
+  /// The screen size the image boots at; a later change such as `wm size` is not reflected.
   public var screenWidth: UInt32 = 0
 
   public var screenHeight: UInt32 = 0
-
-  public var models: [String] = []
-
-  public var defaultMainModel: String = String()
 
   public var automation: Cocoonbox_Agent_V1_Automation = .unspecified
 
@@ -1107,29 +1100,18 @@ nonisolated extension Cocoonbox_Agent_V1_ExecServerFrame: SwiftProtobuf.Message,
 
 nonisolated extension Cocoonbox_Agent_V1_HelloRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HelloRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}client_version\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{b}client_version\0\u{c}\u{1}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.clientVersion) }()
-      default: break
-      }
-    }
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.clientVersion.isEmpty {
-      try visitor.visitSingularStringField(value: self.clientVersion, fieldNumber: 1)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_HelloRequest, rhs: Cocoonbox_Agent_V1_HelloRequest) -> Bool {
-    if lhs.clientVersion != rhs.clientVersion {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1137,7 +1119,7 @@ nonisolated extension Cocoonbox_Agent_V1_HelloRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Cocoonbox_Agent_V1_HelloResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".HelloResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_version\0\u{3}screen_width\0\u{3}screen_height\0\u{1}models\0\u{3}default_main_model\0\u{1}automation\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_version\0\u{3}screen_width\0\u{3}screen_height\0\u{2}\u{3}automation\0\u{b}models\0\u{b}default_main_model\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1148,8 +1130,6 @@ nonisolated extension Cocoonbox_Agent_V1_HelloResponse: SwiftProtobuf.Message, S
       case 1: try { try decoder.decodeSingularStringField(value: &self.agentVersion) }()
       case 2: try { try decoder.decodeSingularUInt32Field(value: &self.screenWidth) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.screenHeight) }()
-      case 4: try { try decoder.decodeRepeatedStringField(value: &self.models) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self.defaultMainModel) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.automation) }()
       default: break
       }
@@ -1166,12 +1146,6 @@ nonisolated extension Cocoonbox_Agent_V1_HelloResponse: SwiftProtobuf.Message, S
     if self.screenHeight != 0 {
       try visitor.visitSingularUInt32Field(value: self.screenHeight, fieldNumber: 3)
     }
-    if !self.models.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.models, fieldNumber: 4)
-    }
-    if !self.defaultMainModel.isEmpty {
-      try visitor.visitSingularStringField(value: self.defaultMainModel, fieldNumber: 5)
-    }
     if self.automation != .unspecified {
       try visitor.visitSingularEnumField(value: self.automation, fieldNumber: 6)
     }
@@ -1182,8 +1156,6 @@ nonisolated extension Cocoonbox_Agent_V1_HelloResponse: SwiftProtobuf.Message, S
     if lhs.agentVersion != rhs.agentVersion {return false}
     if lhs.screenWidth != rhs.screenWidth {return false}
     if lhs.screenHeight != rhs.screenHeight {return false}
-    if lhs.models != rhs.models {return false}
-    if lhs.defaultMainModel != rhs.defaultMainModel {return false}
     if lhs.automation != rhs.automation {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

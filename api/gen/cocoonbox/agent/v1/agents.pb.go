@@ -217,12 +217,9 @@ func (x *Agent) GetUpdatedAtMs() int64 {
 
 type CreateAgentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Empty names the agent after the first line of its first message, cut to
-	// 24 characters; until then its name is "agent".
-	Name        string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ClientNonce string `protobuf:"bytes,2,opt,name=client_nonce,json=clientNonce,proto3" json:"client_nonce,omitempty"`
-	// Empty selects the box default.
-	MainModel     string `protobuf:"bytes,3,opt,name=main_model,json=mainModel,proto3" json:"main_model,omitempty"`
+	// Empty: the first line of the first message, cut to 24 characters; "agent" until then.
+	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	ClientNonce   string `protobuf:"bytes,2,opt,name=client_nonce,json=clientNonce,proto3" json:"client_nonce,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -267,13 +264,6 @@ func (x *CreateAgentRequest) GetName() string {
 func (x *CreateAgentRequest) GetClientNonce() string {
 	if x != nil {
 		return x.ClientNonce
-	}
-	return ""
-}
-
-func (x *CreateAgentRequest) GetMainModel() string {
-	if x != nil {
-		return x.MainModel
 	}
 	return ""
 }
@@ -1821,12 +1811,11 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\n" +
 	"main_model\x18\x04 \x01(\tR\tmainModel\x12\"\n" +
 	"\rcreated_at_ms\x18\x05 \x01(\x03R\vcreatedAtMs\x12\"\n" +
-	"\rupdated_at_ms\x18\x06 \x01(\x03R\vupdatedAtMs\"j\n" +
+	"\rupdated_at_ms\x18\x06 \x01(\x03R\vupdatedAtMs\"]\n" +
 	"\x12CreateAgentRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fclient_nonce\x18\x02 \x01(\tR\vclientNonce\x12\x1d\n" +
-	"\n" +
-	"main_model\x18\x03 \x01(\tR\tmainModel\"\x13\n" +
+	"\fclient_nonce\x18\x02 \x01(\tR\vclientNonceJ\x04\b\x03\x10\x04R\n" +
+	"main_model\"\x13\n" +
 	"\x11ListAgentsRequest\"G\n" +
 	"\x12ListAgentsResponse\x121\n" +
 	"\x06agents\x18\x01 \x03(\v2\x19.cocoonbox.agent.v1.AgentR\x06agents\"Q\n" +

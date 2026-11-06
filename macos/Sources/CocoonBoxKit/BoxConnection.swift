@@ -331,8 +331,8 @@ public final class BoxConnection: Sendable {
         return found
     }
 
-    public func hello(clientVersion: String) async throws -> Cocoonbox_Agent_V1_HelloResponse {
-        try await session.hello(.with { $0.clientVersion = clientVersion })
+    public func hello() async throws -> Cocoonbox_Agent_V1_HelloResponse {
+        try await session.hello(Cocoonbox_Agent_V1_HelloRequest())
     }
 
     // followEvents runs Session.Events until cancelled; see EventFollower.

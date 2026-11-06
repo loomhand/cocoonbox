@@ -178,15 +178,10 @@ impl Runtime {
         Ok(())
     }
 
-    /// Creates an agent; an empty model selects the box default, an empty name waits for the first message.
+    /// Creates an agent on the box's main model; an empty name waits for the first message.
     pub async fn create_agent(&self, req: pb::CreateAgentRequest) -> Result<pb::Agent, Status> {
-        let model = if req.main_model.is_empty() {
-            self.cfg.model_main.clone()
-        } else {
-            req.main_model
-        };
         self.journal
-            .create(req.name, model, req.client_nonce)
+            .create(req.name, self.cfg.model_main.clone(), req.client_nonce)
             .await
             .map_err(Status::internal)
     }

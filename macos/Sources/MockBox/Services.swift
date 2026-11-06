@@ -135,7 +135,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     let world: MockWorld
 
     func create(request: Cocoonbox_Agent_V1_CreateAgentRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_Agent {
-        await world.createAgent(name: request.name, nonce: request.clientNonce, model: request.mainModel)
+        await world.createAgent(name: request.name, nonce: request.clientNonce)
     }
 
     func list(request: Cocoonbox_Agent_V1_ListAgentsRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ListAgentsResponse {
@@ -220,8 +220,6 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
             $0.agentVersion = "mockbox-0.1"
             $0.screenWidth = 1280
             $0.screenHeight = 800
-            $0.models = ["deepseek/deepseek-v4.1-flash", "anthropic/claude-sonnet-5"]
-            $0.defaultMainModel = "deepseek/deepseek-v4.1-flash"
         }
     }
 

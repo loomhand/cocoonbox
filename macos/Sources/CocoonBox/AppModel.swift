@@ -921,7 +921,7 @@ final class AppModel {
         let generation = agentGeneration
         for attempt in 0..<8 {
             do {
-                let response = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
+                let response = try await connection.hello()
                 guard !Task.isCancelled, generation == agentGeneration else { return }
                 hello = response
                 if let boxID { automations[boxID] = response.automation }

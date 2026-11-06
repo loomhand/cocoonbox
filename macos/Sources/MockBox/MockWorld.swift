@@ -524,7 +524,7 @@ actor MockWorld {
         }
     }
 
-    func createAgent(name: String, nonce: String, model: String) -> Agent {
+    func createAgent(name: String, nonce: String) -> Agent {
         if !nonce.isEmpty, let id = nonces["create:\(nonce)"], let agent = agents[id] {
             return agent
         }
@@ -532,7 +532,7 @@ actor MockWorld {
         agent.id = Self.id("ag-", 8)
         agent.name = name.isEmpty ? "agent" : name
         agent.status = .idle
-        agent.mainModel = model.isEmpty ? "deepseek/deepseek-v4.1-flash" : model
+        agent.mainModel = "deepseek/deepseek-v4.1-flash"
         agent.createdAtMs = Self.now()
         agent.updatedAtMs = agent.createdAtMs
         agents[agent.id] = agent
@@ -902,7 +902,7 @@ actor MockWorld {
 
     // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
     func openExternal(client: String, version: String) -> String {
-        let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
+        let id = createAgent(name: "mcp:\(client)", nonce: "").id
         openSessions.insert(id)
         setStatus(agent: id, .running)
         append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session opened by \(client) \(version)" }))

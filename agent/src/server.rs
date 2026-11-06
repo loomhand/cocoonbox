@@ -225,12 +225,7 @@ impl Session for SessionSvc {
         &self,
         _req: Request<pb::HelloRequest>,
     ) -> Result<Response<pb::HelloResponse>, Status> {
-        let cfg = &self.rt.cfg;
-        let mut models = vec![cfg.model_main.clone()];
-        if cfg.model_computer != cfg.model_main {
-            models.push(cfg.model_computer.clone());
-        }
-        let (automation, (screen_width, screen_height)) = match cfg.automation {
+        let (automation, (screen_width, screen_height)) = match self.rt.cfg.automation {
             Automation::Minimal => (pb::Automation::Unspecified, SCREEN),
             Automation::Desk => (pb::Automation::Desk, SCREEN),
             Automation::Android => (pb::Automation::Android, ANDROID_SCREEN),
@@ -239,8 +234,6 @@ impl Session for SessionSvc {
             agent_version: env!("CB_AGENT_VERSION").to_owned(),
             screen_width,
             screen_height,
-            models,
-            default_main_model: cfg.model_main.clone(),
             automation: automation.into(),
         }))
     }

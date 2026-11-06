@@ -320,13 +320,10 @@ impl Mcp {
                 }
                 let agent = self
                     .rt
-                    .create_agent(pb::CreateAgentRequest {
-                        name,
-                        main_model: "external".to_owned(),
-                        client_nonce: String::new(),
-                    })
+                    .journal
+                    .create(name, "external".to_owned(), String::new())
                     .await
-                    .map_err(|e| internal(e.message().to_owned()))?;
+                    .map_err(internal)?;
                 let turn_id = self
                     .rt
                     .journal
