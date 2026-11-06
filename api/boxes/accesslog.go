@@ -43,7 +43,7 @@ func (a *AccessLog) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServe
 }
 
 func (a *AccessLog) write(ctx context.Context, method, box string, err error, start time.Time) {
-	log.WithFunc("boxes.AccessLog").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
+	log.WithFunc("boxes.AccessLog.write").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
 }
 
 func accessLine(method, user, box string, code codes.Code, took time.Duration) string {

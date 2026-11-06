@@ -49,8 +49,9 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	byBox := map[string][]machines.Machine{}
 	running := map[string]bool{}
 	for _, m := range ms {
-		byBox[boxOfMachine(m.ID)] = append(byBox[boxOfMachine(m.ID)], m)
-		running[boxOfMachine(m.ID)] = running[boxOfMachine(m.ID)] || m.State == machines.StateRunning
+		box := boxOfMachine(m.ID)
+		byBox[box] = append(byBox[box], m)
+		running[box] = running[box] || m.State == machines.StateRunning
 	}
 	now := s.idle.now()
 	s.idle.keep(running)
