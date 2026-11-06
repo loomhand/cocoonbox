@@ -101,9 +101,7 @@ shuttle() {
 	echo "$SHUTTLE_SHA256  $tarball" | shasum -a 256 -c --quiet -
 	tmp=$(mktemp -d)
 	tar -xzf "$tarball" -C "$tmp"
-	launchctl bootout "gui/$(id -u "$BOX_USER")/io.github.loomhand.cocoon-shuttle" 2>/dev/null || true
-	pkill -TERM -f "MacOS/cocoon-shuttle serve" || true
-	rm -rf "$SHUTTLE_APP" "/Applications/Cocoon Shuttle.app" /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist
+	rm -rf "$SHUTTLE_APP"
 	install -d -m 0755 "$(dirname "$SHUTTLE_APP")"
 	mv "$tmp/Shuttle.app" "$SHUTTLE_APP"
 	chown -R root:wheel "$SHUTTLE_APP"
@@ -180,8 +178,6 @@ check() {
 	[ -z "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUserScreenLocked 2>/dev/null)" ]
 	[ "$(sudo -u "$BOX_USER" defaults -currentHost read com.apple.screensaver idleTime)" = 0 ]
 	plutil -lint -s "/Library/LaunchAgents/$SHUTTLE_AGENT.plist" "/Library/LaunchDaemons/$DAEMON.plist"
-	[ ! -e "/Applications/Cocoon Shuttle.app" ]
-	[ ! -e /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist ]
 	echo check: ok
 }
 
