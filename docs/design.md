@@ -457,7 +457,7 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 
 - One machine = one sandboxd claim. sandboxd is multi-tenant, so production runs one sandboxd per node for every tenant, cocoonbox included (decided 2026-10-01).
 - The backend stamps `metadata {cb_machine: <machine id>, cb_owner: <owner>}` on the claim. Claim metadata is immutable, and nothing else needs to be mutable.
-- sandboxd's `claims.json` is the only record. There is no api-side database:
+- The claim is the machine's record on its node. The api keeps one row per machine in the PostgreSQL `machines` table, filled from the claim:
 
 | `machines.Machine` | from the sandboxd row |
 |---|---|
@@ -467,8 +467,8 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 | `CreatedAt` | `claimed_at` |
 | `State` | see 14.3 |
 
-- `Get` / `List` = `GET /v1/sandboxes?metadata=cb_machine=…` / `?metadata=cb_owner=…`.
-- The backend keeps an in-memory index of every claim. One `GET /v1/sandboxes` every 2 s refreshes it (the instance holds only cocoonbox claims), and each of the backend's own lifecycle calls updates it. So `Resolve` on the edge path stays a map lookup, as the CocoonSet informer cache is today.
+- `List` reads the table. `Get` reads the row and then the claim on its node (`GET /v1/sandboxes/{id}`, or `?metadata=cb_machine=…` when there is no row or it names no node) and writes back what changed.
+- The backend keeps no copy of the table in memory. One `GET /v1/sandboxes` every 2 s on the leader api refreshes the table (the instance holds only cocoonbox claims), and each of the backend's own lifecycle calls writes it. So `Resolve` on the edge path is two indexed reads, the owner's rows and the box's row; a `NOTIFY cocoonbox_machines` per write, naming the machine and its owner, wakes every api's watches.
 - On a sandboxd mesh the refresh also reads `GET /v1/peers` and lists every peer. A machine goes when its node answered the list without it, or when its node has been out of the mesh for 5 min; a peer that does not answer only leaves its rows out. A lookup of an unknown machine asks the entry node, then the peers of the last refresh. Without a mesh the cost is that one `GET /v1/peers` per refresh; claim, wake, hibernate, exec, env writes, the relay and renewals make the same calls as on one node (contracts, Boxes ↔ sandboxd).
 - The row is node-local: a lost node takes its rows with it. The durable per-user record is the state layer (§11), not the claim (14.6).
 
@@ -495,7 +495,7 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 | `Ensure`, failed | `POST …/wake` (#269: a cold boot of the claim's disk) | boot time |
 | `Hibernate` | `POST …/hibernate` | 23–50 s (writes the 8 GiB memory file) |
 | `Delete` | `POST …/release` | — |
-| `Watch` | poll the row every 500 ms while the watch is open; the index refresh between watches | — |
+| `Watch` | read the row every 500 ms while the watch is open, and at once on its notify; the table refresh between watches | — |
 
 - `Ensure` and `Hibernate` return at once, as the interface requires. The sandboxd call runs in a backend goroutine, and the backend reports the in-flight state meanwhile.
 - `Revision` is a per-machine counter in the backend. It increases on each lifecycle call and resets with the api, the same way `operations` do.
