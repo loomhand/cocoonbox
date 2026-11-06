@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 
 use super::act;
-use super::desk::Desk;
 use super::rpc::{self, Client, Output};
 use super::script::Scripts;
 use super::timing;
@@ -79,7 +78,6 @@ struct Word {
 pub async fn act(
     shuttle: &Client,
     owner: &str,
-    desk: &Desk,
     scripts: &Scripts,
     args: Value,
 ) -> Result<Output, String> {
@@ -149,7 +147,7 @@ pub async fn act(
     let titles = if names_titles(&a.target.description) {
         Vec::new()
     } else {
-        titled(shuttle, owner, desk, &words, &texts).await
+        titled(shuttle, owner, &words, &texts).await
     };
     timing::mark("titles");
     let (text, hits) = first_read(&words, &texts, |r| !titles.contains(r))
@@ -165,7 +163,7 @@ pub async fn act(
         return not_found(shuttle, owner, out, &a, start).await;
     };
     let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
-    if let Some(why) = label_of_field(desk, &a.target.description, text, cx, cy).await {
+    if let Some(why) = label_of_field(shuttle, &a.target.description, text, cx, cy).await {
         out["ocr"]["refused"] = why.into();
         return not_found(shuttle, owner, out, &a, start).await;
     }
@@ -420,13 +418,7 @@ fn first_read<'a>(
 }
 
 /// The matches of `texts` that sit on a window title: a panel, a title bar or a tab.
-async fn titled(
-    shuttle: &Client,
-    owner: &str,
-    desk: &Desk,
-    words: &[Word],
-    texts: &[String],
-) -> Vec<[f64; 4]> {
+async fn titled(shuttle: &Client, owner: &str, words: &[Word], texts: &[String]) -> Vec<[f64; 4]> {
     let mut out = Vec::new();
     for rect in texts.iter().flat_map(|t| matches(words, t)) {
         let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
@@ -435,12 +427,7 @@ async fn titled(
             .ok()
             .and_then(|o| serde_json::from_str::<Value>(&o.text).ok())
             .is_some_and(|t| t["title"] == true);
-        if title
-            || desk
-                .at_point(cx.round() as i32, cy.round() as i32)
-                .await
-                .is_ok_and(|at| in_tab(&at))
-        {
+        if title || at_point(shuttle, cx, cy).await.is_ok_and(|at| in_tab(&at)) {
             out.push(rect);
         }
     }
@@ -509,7 +496,7 @@ fn matches(words: &[Word], label: &str) -> Vec<[f64; 4]> {
 
 /// Why the match of `text` at (x, y) is a field's label, not the field the description names, if it is.
 async fn label_of_field(
-    desk: &Desk,
+    shuttle: &Client,
     description: &str,
     text: &str,
     x: f64,
@@ -524,10 +511,7 @@ async fn label_of_field(
     if !FIELD_WORDS.iter().any(|w| words.contains(w)) {
         return None;
     }
-    let at = desk
-        .at_point(x.round() as i32, y.round() as i32)
-        .await
-        .ok()?;
+    let at = at_point(shuttle, x, y).await.ok()?;
     let found = at.get("found").filter(|f| !f.is_null())?;
     let role = found["role"].as_str().unwrap_or_default();
     TEXT_ROLES.contains(&role).then(|| {
@@ -536,6 +520,13 @@ async fn label_of_field(
             found["name"].as_str().unwrap_or_default()
         )
     })
+}
+
+/// The element of the focused window at the screen point (x, y), as the `at` op answers.
+async fn at_point(shuttle: &Client, x: f64, y: f64) -> Result<Value, String> {
+    let args = json!({"x": x.round() as i32, "y": y.round() as i32});
+    let out = ask(shuttle, "", "desk_at", args).await?;
+    serde_json::from_str(&out.text).map_err(|e| format!("at: {e}"))
 }
 
 /// Shuttle's answer to desk call `tool` with `args` as agent `owner`; an error answer is an error.

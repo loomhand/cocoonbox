@@ -34,7 +34,6 @@ use tokio::sync::{Mutex, watch};
 
 use crate::config::{Automation, ToolhostConfig};
 use browser::Browser;
-use desk::Desk;
 use rpc::{Call, Client, Output};
 use script::Scripts;
 use shell::Shell;
@@ -76,7 +75,6 @@ struct Host {
     browser: Browser,
     /// An Android box, whose screen, desk and script tools run on shuttle.
     android: bool,
-    desk: Desk,
     scripts: Scripts,
     session_save: PathBuf,
     home: PathBuf,
@@ -101,7 +99,6 @@ impl Host {
             shells: Mutex::new(HashMap::new()),
             browser: Browser::new(cfg.chrome_bin, cfg.chrome_profile, cfg.cdp_port, plans),
             android: cfg.automation == Automation::Android,
-            desk: Desk::new(shuttle.clone()),
             scripts: Scripts::new(scratch_dir(SCRIPT_DIR), shuttle.clone()),
             session_save: cfg.session_save,
             home: cfg.home,
@@ -209,14 +206,7 @@ impl Host {
         let target = call.args.get("target").is_some_and(|t| !t.is_null());
         Ok(match call.tool.as_str() {
             "computer_act" if !self.android && target => {
-                ground::act(
-                    shuttle,
-                    &call.agent_id,
-                    &self.desk,
-                    &self.scripts,
-                    call.args,
-                )
-                .await
+                ground::act(shuttle, &call.agent_id, &self.scripts, call.args).await
             }
             "computer_act" if !self.android => {
                 act::run(shuttle, &self.browser, &call.agent_id, call.args).await
