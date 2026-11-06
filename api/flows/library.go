@@ -289,7 +289,6 @@ func Check(name string, content []byte) error {
 	return nil
 }
 
-// index is a library as stored: every flow with the object that holds its content.
 func indexKey(user string) string           { return user + "/flows/index" }
 func objectKey(user, object string) string  { return user + "/flows/" + object }
 func indexData(user string) string          { return "flows|" + user + "|index" }
