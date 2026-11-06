@@ -84,10 +84,9 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    // isStale says whether error may mean the held box id names no box of the user's: NotFound, or PermissionDenied from an older api.
+    // isStale says whether error may mean the held box id names no box of the user's: NotFound.
     public static func isStale(_ error: any Error) -> Bool {
-        guard let rpc = error as? RPCError else { return false }
-        return rpc.code == .notFound || rpc.code == .permissionDenied
+        (error as? RPCError)?.code == .notFound
     }
 
     public func close() {
