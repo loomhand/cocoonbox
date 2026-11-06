@@ -219,9 +219,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, rpcErr = handle(req.Method)
 	case json.Unmarshal(req.Params, &call) != nil:
 		rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
-	case unified && s.connectorTool(ctx, call.Name):
-		result, rpcErr = s.callConnector(ctx, &call)
 	case unified && !isControlTool(call.Name):
+		var connector bool
+		connector, rpcErr = s.connectorTool(ctx, call.Name)
+		if rpcErr != nil {
+			break
+		}
+		if connector {
+			result, rpcErr = s.callConnector(ctx, &call)
+			break
+		}
 		s.callBox(ctx, w, user, s.session(ctx, caller, r.Header.Get(mcpwire.SessionHeader)), req.ID, body, r.Header.Get("Accept"), &call)
 		return
 	default:
