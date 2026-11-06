@@ -40,9 +40,10 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 		return nil, status.Errorf(codes.FailedPrecondition, "image %q is not of the box's family %s; only an operator moves a box to another family", image, Family(m.Image))
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
-	if started {
-		go s.runRebase(op, user, m, image)
+	if !started {
+		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", op.id)
 	}
+	go s.runRebase(op, user, m, image)
 	log.WithFunc("boxes.Service.Rebase").WithField("box", box).Infof(ctx, "rebasing from %s (%s) to %s as operation %s", m.ID, m.Image, image, op.id)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
