@@ -180,8 +180,8 @@ type Service struct {
 	lives      map[string]life
 	creds      map[string]*credLife
 	tombs      map[string]time.Time
-	grantsOwn  func(credential string) bool
-	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
+	grantsOwn  grantOwner
+	grantsLive liveGrants
 
 	ensuring chan struct{}
 }
@@ -817,7 +817,7 @@ func (s *Service) EndCredential(ctx context.Context, credential string) {
 }
 
 // KeepGrants registers live, which reports which of the grant ids owns names still exist, so a reconnecting listener ends the calls of the rest.
-func (s *Service) KeepGrants(owns func(credential string) bool, live func(ctx context.Context, ids []string) (map[string]bool, error)) {
+func (s *Service) KeepGrants(owns grantOwner, live liveGrants) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.grantsOwn, s.grantsLive = owns, live
@@ -1122,6 +1122,10 @@ type tokenOwner struct {
 	user   string
 	device string
 }
+
+type grantOwner func(credential string) bool
+
+type liveGrants func(ctx context.Context, ids []string) (map[string]bool, error)
 
 // outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
 func outsideUser(idp, id string) error {
