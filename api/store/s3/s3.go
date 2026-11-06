@@ -177,22 +177,6 @@ func (s *S3) Delete(ctx context.Context, keys []string) error {
 	return s.deleteBatches(ctx, objects)
 }
 
-// Copy copies src to dst inside the service, without moving the data through the api.
-func (s *S3) Copy(ctx context.Context, src, dst string) error {
-	from, err := s.object(src)
-	if err != nil {
-		return err
-	}
-	to, err := s.object(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := s.client.CopyObject(ctx, minio.CopyDestOptions{Bucket: s.opts.Bucket, Object: to}, minio.CopySrcOptions{Bucket: s.opts.Bucket, Object: from}); err != nil {
-		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
-	}
-	return nil
-}
-
 func (s *S3) put(ctx context.Context, key string, data []byte, opts minio.PutObjectOptions) error {
 	object, err := s.object(key)
 	if err != nil {

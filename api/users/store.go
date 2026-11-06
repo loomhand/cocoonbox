@@ -359,18 +359,6 @@ func (s *store) touchDevice(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE user_tokens SET used_at = now() WHERE id = $1", id)
 }
 
-func (s *store) setStateKey(ctx context.Context, r record) error {
-	tag, err := s.pool.Exec(ctx, "UPDATE users SET state_key_id = $2, state_key_sealed = $3 WHERE id = $1 AND state_key_sealed IS NULL",
-		r.ID, r.stateKeyID, r.stateKey)
-	if err != nil {
-		return fmt.Errorf("set state key: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: user %s holds a state key or is gone", ErrExists, r.ID)
-	}
-	return nil
-}
-
 // password returns the id and password hash of the enabled user name.
 func (s *store) password(ctx context.Context, name string) (string, string, error) {
 	var id, hash string

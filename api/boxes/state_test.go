@@ -1314,6 +1314,19 @@ func snapshotID(n int) string {
 	return fmt.Sprintf("%064x", n)
 }
 
+func seed(t *testing.T, st *fakeStore, objects map[string]any) {
+	t.Helper()
+	for key, v := range objects {
+		if raw, ok := v.(string); ok {
+			st.objects[key] = []byte(raw)
+			continue
+		}
+		if err := putJSON(t.Context(), st, key, v); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+}
+
 // fakeStore calls before, when set, with the operation and key ahead of each store call.
 type fakeStore struct {
 	before func(op, key string)
@@ -1385,17 +1398,6 @@ func (s *fakeStore) Delete(_ context.Context, keys []string) error {
 		delete(s.objects, key)
 	}
 	s.deleted = append(s.deleted, keys...)
-	return nil
-}
-
-func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, ok := s.objects[src]
-	if !ok {
-		return store.ErrNotFound
-	}
-	s.objects[dst], s.modified[dst] = data, time.Now()
 	return nil
 }
 

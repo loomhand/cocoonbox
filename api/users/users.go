@@ -2,7 +2,6 @@
 package users
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -719,41 +718,11 @@ func (s *Service) StateKey(_ context.Context, id string) (keyring.Key, error) {
 	if err != nil {
 		return keyring.Key{}, err
 	}
-	if r.stateKeyID == "" {
-		return keyring.Key{}, fmt.Errorf("user %s has no state key", id)
-	}
 	secret, err := s.seal.open(r.stateKey, userData(id, columnStateKey))
 	if err != nil {
 		return keyring.Key{}, err
 	}
 	return keyring.Key{ID: r.stateKeyID, Secret: []byte(secret)}, nil
-}
-
-// SetStateKey gives user id the state key k; it is a no-op when the user holds k and an error when it holds another key.
-func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) error {
-	if len(k.Secret) != keyring.KeySize || k.ID == "" {
-		return fmt.Errorf("%w: a state key has an id and %d bytes", ErrInvalid, keyring.KeySize)
-	}
-	r, err := s.record(id)
-	if err != nil {
-		return err
-	}
-	if r.stateKeyID != "" {
-		held, err := s.StateKey(ctx, id)
-		if err != nil {
-			return err
-		}
-		if held.ID != k.ID || !bytes.Equal(held.Secret, k.Secret) {
-			return fmt.Errorf("%w: user %s holds state key %s", ErrExists, id, held.ID)
-		}
-		return nil
-	}
-	r.stateKeyID, r.stateKey = k.ID, s.seal.seal(string(k.Secret), userData(id, columnStateKey))
-	if err := s.store.setStateKey(ctx, r); err != nil {
-		return err
-	}
-	s.published(ctx, "set the state key of "+id)
-	return s.Load(ctx)
 }
 
 // Policy returns user id's policy; an unknown user has the zero one.
