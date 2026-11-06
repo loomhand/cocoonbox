@@ -60,9 +60,6 @@ linters:
     generated: strict
     paths:
       - vendor
-      - mocks
-      - dist
-      - gen
 
 formatters:
   enable:
