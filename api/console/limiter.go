@@ -11,7 +11,7 @@ type failures struct {
 	since time.Time
 }
 
-// limiter counts attempts per key in a fixed window: password attempts per name and address, and sign-in starts and callbacks per address; a correct password gives its attempt back.
+// limiter counts attempts per key in a fixed window.
 type limiter struct {
 	window time.Duration
 	now    func() time.Time
@@ -24,7 +24,7 @@ func newLimiter(window time.Duration) *limiter {
 	return &limiter{window: window, now: time.Now, failures: map[string]*failures{}}
 }
 
-// take reserves one attempt for the name and address keys unless either is at its limit, so parallel requests cannot pass the check together.
+// take reserves both attempts under the lock so parallel requests cannot pass the check together.
 func (l *limiter) take(name, addr string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -44,7 +44,6 @@ func (l *limiter) take(name, addr string) bool {
 	return true
 }
 
-// allow counts one request of key, refused once key has made limit in the window.
 func (l *limiter) allow(key string, limit int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -62,7 +61,6 @@ func (l *limiter) allow(key string, limit int) bool {
 	return true
 }
 
-// settle clears name's attempts and returns the address's reserved one after a correct password.
 func (l *limiter) settle(name, addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

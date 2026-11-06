@@ -448,7 +448,6 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, u)
 }
 
-// signupCap gives a signup account the signup settings' daily cap.
 func (s *Server) signupCap(ctx context.Context, id string) error {
 	st, err := s.signup.Settings(ctx)
 	if err != nil {
@@ -502,7 +501,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// removeUser disables user id at once, then releases its boxes, deletes its saved state, revokes its connections and deletes it.
+// removeUser disables id first so its credentials stop before its boxes go.
 func (s *Server) removeUser(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeLimit)
 	defer cancel()
@@ -586,7 +585,6 @@ func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// viewShare admits the secret in the first message, then bridges the share's screen; a named share takes the viewer from the session cookie.
 func (s *Server) viewShare(ws *websocket.Conn) {
 	r := ws.Request()
 	ws.MaxPayloadBytes = maxSecretLen
@@ -641,7 +639,6 @@ func (s *Server) ownerCtx(r *http.Request) context.Context {
 	return auth.WithUser(r.Context(), caller(r).ID)
 }
 
-// checkPassword checks name's password under the attempt limits.
 func (s *Server) checkPassword(r *http.Request, name, password string) (users.User, error) {
 	nameKey, addrKey := "name:"+name, "addr:"+clientAddr(r)
 	if !s.limiter.take(nameKey, addrKey) {
@@ -656,7 +653,6 @@ func (s *Server) checkPassword(r *http.Request, name, password string) (users.Us
 	return u, err
 }
 
-// signedIn runs next with the session's user in the request context.
 func (s *Server) signedIn(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
@@ -735,7 +731,6 @@ func clientAddr(r *http.Request) string {
 	return host
 }
 
-// sameOrigin refuses a WebSocket that another site's page opens.
 func sameOrigin(cfg *websocket.Config, r *http.Request) error {
 	origin, err := websocket.Origin(cfg, r)
 	if err != nil || origin == nil || origin.Host != r.Host {

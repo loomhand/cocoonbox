@@ -164,7 +164,6 @@ func (s *Server) unlink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteMe deletes the caller's own account, which the caller confirms by its user name, and gives its seat to the queue.
 func (s *Server) deleteMe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
@@ -304,7 +303,6 @@ func (s *Server) listTokenInvites(w http.ResponseWriter, r *http.Request, token 
 	writeJSON(w, invites)
 }
 
-// createTokenInvite makes a one-use invite for an invite-scoped token; uses, when sent, must be 1.
 func (s *Server) createTokenInvite(w http.ResponseWriter, r *http.Request, token string) {
 	var req struct {
 		Uses int `json:"uses"`
@@ -410,7 +408,6 @@ func InviteTokenGate(next http.Handler) http.Handler {
 	})
 }
 
-// inviteBearer returns the invite-scoped token of the request's Authorization header.
 func inviteBearer(r *http.Request) (string, bool) {
 	token, ok := auth.Bearer(r.Header.Get("Authorization"))
 	return token, ok && strings.HasPrefix(token, auth.InviteTokenPrefix)
