@@ -65,8 +65,7 @@ func (s *Service) ListSnapshots(ctx context.Context, ref *controlv1.BoxRef) (*co
 	resp := &controlv1.ListSnapshotsResponse{}
 	for _, e := range slices.Backward(entries) {
 		resp.Snapshots = append(resp.Snapshots, &controlv1.Snapshot{
-			Id: e.ID, SavedAtMs: e.SavedAtMs, Quiesced: e.Consistency == agentv1.Consistency_CONSISTENCY_QUIESCED.String(),
-			Files: e.Files, LogicalBytes: e.LogicalBytes, ChangedFiles: e.ChangedFiles, AddedBytes: e.UploadedBytes,
+			Id: e.ID, SavedAtMs: e.SavedAtMs, ChangedFiles: e.ChangedFiles, AddedBytes: e.UploadedBytes,
 		})
 	}
 	return resp, nil

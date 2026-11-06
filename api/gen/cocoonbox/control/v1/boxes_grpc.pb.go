@@ -23,7 +23,6 @@ const (
 	Boxes_Create_FullMethodName            = "/cocoonbox.control.v1.Boxes/Create"
 	Boxes_Rename_FullMethodName            = "/cocoonbox.control.v1.Boxes/Rename"
 	Boxes_Delete_FullMethodName            = "/cocoonbox.control.v1.Boxes/Delete"
-	Boxes_Get_FullMethodName               = "/cocoonbox.control.v1.Boxes/Get"
 	Boxes_List_FullMethodName              = "/cocoonbox.control.v1.Boxes/List"
 	Boxes_Watch_FullMethodName             = "/cocoonbox.control.v1.Boxes/Watch"
 	Boxes_Hibernate_FullMethodName         = "/cocoonbox.control.v1.Boxes/Hibernate"
@@ -56,7 +55,6 @@ type BoxesClient interface {
 	// Delete saves the box quiesced when it runs, then removes its machine and
 	// the box. The GC removes its saved state after state.gc.deleted_retention.
 	Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
-	Get(ctx context.Context, in *GetBoxRequest, opts ...grpc.CallOption) (*Box, error)
 	List(ctx context.Context, in *ListBoxesRequest, opts ...grpc.CallOption) (*ListBoxesResponse, error)
 	// Watch sends the caller's boxes as List does, at once and again after any
 	// of them changes, by any client or by the api. Watching never wakes a box.
@@ -135,16 +133,6 @@ func (c *boxesClient) Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallO
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Operation)
 	err := c.cc.Invoke(ctx, Boxes_Delete_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *boxesClient) Get(ctx context.Context, in *GetBoxRequest, opts ...grpc.CallOption) (*Box, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Box)
-	err := c.cc.Invoke(ctx, Boxes_Get_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +304,6 @@ type BoxesServer interface {
 	// Delete saves the box quiesced when it runs, then removes its machine and
 	// the box. The GC removes its saved state after state.gc.deleted_retention.
 	Delete(context.Context, *BoxRef) (*Operation, error)
-	Get(context.Context, *GetBoxRequest) (*Box, error)
 	List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error)
 	// Watch sends the caller's boxes as List does, at once and again after any
 	// of them changes, by any client or by the api. Watching never wakes a box.
@@ -372,9 +359,6 @@ func (UnimplementedBoxesServer) Rename(context.Context, *RenameBoxRequest) (*Box
 }
 func (UnimplementedBoxesServer) Delete(context.Context, *BoxRef) (*Operation, error) {
 	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
-}
-func (UnimplementedBoxesServer) Get(context.Context, *GetBoxRequest) (*Box, error) {
-	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
 }
 func (UnimplementedBoxesServer) List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
@@ -504,24 +488,6 @@ func _Boxes_Delete_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BoxesServer).Delete(ctx, req.(*BoxRef))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Boxes_Get_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetBoxRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(BoxesServer).Get(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Boxes_Get_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(BoxesServer).Get(ctx, req.(*GetBoxRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -768,10 +734,6 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Delete",
 			Handler:    _Boxes_Delete_Handler,
-		},
-		{
-			MethodName: "Get",
-			Handler:    _Boxes_Get_Handler,
 		},
 		{
 			MethodName: "List",

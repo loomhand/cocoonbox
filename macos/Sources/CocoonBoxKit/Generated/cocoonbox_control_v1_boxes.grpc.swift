@@ -72,19 +72,6 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
-        /// Namespace for "Get" metadata.
-        public enum Get: Sendable {
-            /// Request type for "Get".
-            public typealias Input = Cocoonbox_Control_V1_GetBoxRequest
-            /// Response type for "Get".
-            public typealias Output = Cocoonbox_Control_V1_Box
-            /// Descriptor for "Get".
-            public static let descriptor = GRPCCore.MethodDescriptor(
-                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
-                method: "Get",
-                type: .unary
-            )
-        }
         /// Namespace for "List" metadata.
         public enum List: Sendable {
             /// Request type for "List".
@@ -260,7 +247,6 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
             Create.descriptor,
             Rename.descriptor,
             Delete.descriptor,
-            Get.descriptor,
             List.descriptor,
             Watch.descriptor,
             Hibernate.descriptor,
@@ -375,20 +361,6 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
-
-        /// Handle the "Get" method.
-        ///
-        /// - Parameters:
-        ///   - request: A streaming request of `Cocoonbox_Control_V1_GetBoxRequest` messages.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Box` messages.
-        func get(
-            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Box>
 
         /// Handle the "List" method.
         ///
@@ -705,20 +677,6 @@ extension Cocoonbox_Control_V1_Boxes {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
 
-        /// Handle the "Get" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_GetBoxRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Box` message.
-        func get(
-            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-            context: GRPCCore.ServerContext
-        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box>
-
         /// Handle the "List" method.
         ///
         /// - Parameters:
@@ -1032,20 +990,6 @@ extension Cocoonbox_Control_V1_Boxes {
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_Operation
 
-        /// Handle the "Get" method.
-        ///
-        /// - Parameters:
-        ///   - request: A `Cocoonbox_Control_V1_GetBoxRequest` message.
-        ///   - context: Context providing information about the RPC.
-        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
-        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
-        ///     to an internal error.
-        /// - Returns: A `Cocoonbox_Control_V1_Box` to respond with.
-        func get(
-            request: Cocoonbox_Control_V1_GetBoxRequest,
-            context: GRPCCore.ServerContext
-        ) async throws -> Cocoonbox_Control_V1_Box
-
         /// Handle the "List" method.
         ///
         /// - Parameters:
@@ -1329,17 +1273,6 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
-            forMethod: Cocoonbox_Control_V1_Boxes.Method.Get.descriptor,
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_GetBoxRequest>(),
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Box>(),
-            handler: { request, context in
-                try await self.get(
-                    request: request,
-                    context: context
-                )
-            }
-        )
-        router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Boxes.Method.List.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListBoxesRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListBoxesResponse>(),
@@ -1526,17 +1459,6 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
         let response = try await self.delete(
-            request: GRPCCore.ServerRequest(stream: request),
-            context: context
-        )
-        return GRPCCore.StreamingServerResponse(single: response)
-    }
-
-    public func get(
-        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Box> {
-        let response = try await self.get(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -1735,19 +1657,6 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
             message: try await self.delete(
-                request: request.message,
-                context: context
-            ),
-            metadata: [:]
-        )
-    }
-
-    public func get(
-        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-        context: GRPCCore.ServerContext
-    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box> {
-        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box>(
-            message: try await self.get(
                 request: request.message,
                 context: context
             ),
@@ -2036,25 +1945,6 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
-        ) async throws -> Result where Result: Sendable
-
-        /// Call the "Get" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_GetBoxRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_GetBoxRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Box` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        func get<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_GetBoxRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Box>,
-            options: GRPCCore.CallOptions,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "List" method.
@@ -2502,36 +2392,6 @@ extension Cocoonbox_Control_V1_Boxes {
             try await self.client.unary(
                 request: request,
                 descriptor: Cocoonbox_Control_V1_Boxes.Method.Delete.descriptor,
-                serializer: serializer,
-                deserializer: deserializer,
-                options: options,
-                onResponse: handleResponse
-            )
-        }
-
-        /// Call the "Get" method.
-        ///
-        /// - Parameters:
-        ///   - request: A request containing a single `Cocoonbox_Control_V1_GetBoxRequest` message.
-        ///   - serializer: A serializer for `Cocoonbox_Control_V1_GetBoxRequest` messages.
-        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Box` messages.
-        ///   - options: Options to apply to this RPC.
-        ///   - handleResponse: A closure which handles the response and returns its result to
-        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-        ///       already finished.
-        /// - Returns: The result of `handleResponse`.
-        public func get<Result>(
-            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_GetBoxRequest>,
-            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Box>,
-            options: GRPCCore.CallOptions = .defaults,
-            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
-                try response.message
-            }
-        ) async throws -> Result where Result: Sendable {
-            try await self.client.unary(
-                request: request,
-                descriptor: Cocoonbox_Control_V1_Boxes.Method.Get.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -3093,31 +2953,6 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
         )
     }
 
-    /// Call the "Get" method.
-    ///
-    /// - Parameters:
-    ///   - request: A request containing a single `Cocoonbox_Control_V1_GetBoxRequest` message.
-    ///   - options: Options to apply to this RPC.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func get<Result>(
-        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_GetBoxRequest>,
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        try await self.get(
-            request: request,
-            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_GetBoxRequest>(),
-            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Box>(),
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
     /// Call the "List" method.
     ///
     /// - Parameters:
@@ -3616,35 +3451,6 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.delete(
-            request: request,
-            options: options,
-            onResponse: handleResponse
-        )
-    }
-
-    /// Call the "Get" method.
-    ///
-    /// - Parameters:
-    ///   - message: request message to send.
-    ///   - metadata: Additional metadata to send, defaults to empty.
-    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
-    ///   - handleResponse: A closure which handles the response and returns its result to
-    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
-    ///       already finished.
-    /// - Returns: The result of `handleResponse`.
-    public func get<Result>(
-        _ message: Cocoonbox_Control_V1_GetBoxRequest,
-        metadata: GRPCCore.Metadata = [:],
-        options: GRPCCore.CallOptions = .defaults,
-        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
-            try response.message
-        }
-    ) async throws -> Result where Result: Sendable {
-        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_GetBoxRequest>(
-            message: message,
-            metadata: metadata
-        )
-        return try await self.get(
             request: request,
             options: options,
             onResponse: handleResponse

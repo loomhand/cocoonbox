@@ -131,7 +131,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 		svc = New(running, defaults, registry)
 		svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 		ctx := auth.WithUser(t.Context(), alice)
-		box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+		box, err := svc.get(ctx, aliceBox)
 		if err != nil || box.GetLatestImage() != tt.want {
 			t.Fatalf("box on %s = %v, %v, want latest %s for its owner", tt.image, box, err, tt.want)
 		}
@@ -261,9 +261,6 @@ func TestOperationFails(t *testing.T) {
 					t.Errorf("event leaks a backend message: %q", ev.GetDetail())
 				}
 			}
-			if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err == nil && strings.Contains(box.GetFailureReason(), "192.0.2.10") {
-				t.Errorf("failure_reason leaks a backend message: %q", box.GetFailureReason())
-			}
 		})
 	}
 }
@@ -313,7 +310,7 @@ func TestOwnership(t *testing.T) {
 	svc := New(fake, testDefaults, newFakeRegistry())
 	bobCtx := auth.WithUser(t.Context(), bob)
 
-	if _, err := svc.Get(bobCtx, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := svc.get(bobCtx, aliceBox); status.Code(err) != codes.NotFound {
 		t.Errorf("Get other's box: %v, want NotFound", err)
 	}
 	if _, err := svc.Hibernate(bobCtx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
@@ -329,10 +326,10 @@ func TestOwnership(t *testing.T) {
 	if list, err := svc.List(bobCtx, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 1 || list.GetBoxes()[0].GetId() != BoxID(bob) {
 		t.Errorf("List for bob = %v, %v, want only bob's box", list, err)
 	}
-	if box, err := svc.Get(bobCtx, &controlv1.GetBoxRequest{BoxId: BoxID(bob)}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetName() != users.FirstBoxName || box.GetCreatedAtMs() != 0 {
+	if box, err := svc.get(bobCtx, BoxID(bob)); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetName() != users.FirstBoxName || box.GetCreatedAtMs() != 0 {
 		t.Errorf("Get own box without a machine = %v, %v, want it absent", box, err)
 	}
-	if _, err := svc.Get(t.Context(), &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.Unauthenticated {
+	if _, err := svc.get(t.Context(), aliceBox); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Get without user: %v, want Unauthenticated", err)
 	}
 	aliceCtx := auth.WithUser(t.Context(), alice)

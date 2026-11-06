@@ -83,7 +83,7 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is starting; call box_ensure to bring it up" {
 		t.Errorf("Resolve of an unprovisioned incarnation: %v, want Unavailable box is starting; call box_ensure to bring it up", err)
 	}
-	if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+	if box, err := svc.get(ctx, aliceBox); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Errorf("Get = %v, %v, want STARTING", box, err)
 	}
 

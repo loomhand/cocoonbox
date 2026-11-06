@@ -312,8 +312,6 @@ actor MockWorld {
             .with {
                 $0.id = "snap-\(index)"
                 $0.savedAtMs = newest - Int64(index) * 3_600_000
-                $0.files = 1200
-                $0.logicalBytes = 96 << 20
                 $0.addedBytes = UInt64(3 - index) << 20
                 if index < 2 { $0.changedFiles = UInt64(index + 1) }
             }
@@ -452,7 +450,6 @@ actor MockWorld {
         event.phase = phase
         event.detail = detail
         event.offsetKey = String(format: "%04d", (operations[id]?.count ?? 0) + 1)
-        event.atMs = Self.now()
         event.boxState = state
         if state != .unspecified { setState(operationBoxes[id] ?? box.id, state) }
         if state == .running, let delay = externalDelay {

@@ -51,7 +51,7 @@ func TestParkSavesAndRemovesABoxHibernatedPastTheThreshold(t *testing.T) {
 	if h, err := e.svc.state.head(e.ctx, statePath{user: alice, box: aliceBox}); err != nil || !h.Parked || h.Latest != snapshotID(2) {
 		t.Errorf("head = %+v, %v, want the park snapshot marked parked", h, err)
 	}
-	box, err := e.svc.Get(e.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := e.svc.get(e.ctx, aliceBox)
 	if err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetLastSavedAtMs() == 0 {
 		t.Errorf("parked box = %v, %v", box, err)
 	}
@@ -125,7 +125,7 @@ func TestAClientDuringAParkKeepsTheMachine(t *testing.T) {
 	if _, _, err := e.svc.Resolve(e.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve while parking = %v, want Unavailable", err)
 	}
-	if box, _ := e.svc.Get(e.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+	if box, _ := e.svc.get(e.ctx, aliceBox); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Errorf("box while parking = %v, want STARTING", box)
 	}
 	if _, err := e.svc.Hibernate(e.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {

@@ -88,12 +88,11 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 		return &controlv1.Box{Id: box}
 	}
 	return &controlv1.Box{
-		Id:            box,
-		State:         boxStates[m.State],
-		Image:         m.Image,
-		Flavor:        toFlavor(m.Flavor),
-		FailureReason: toObservation(m, controlv1.Phase_PHASE_UNSPECIFIED).reason,
-		CreatedAtMs:   m.CreatedAt.UnixMilli(),
+		Id:          box,
+		State:       boxStates[m.State],
+		Image:       m.Image,
+		Flavor:      toFlavor(m.Flavor),
+		CreatedAtMs: m.CreatedAt.UnixMilli(),
 	}
 }
 

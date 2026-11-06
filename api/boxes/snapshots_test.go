@@ -45,7 +45,7 @@ func TestListSnapshotsNewestFirst(t *testing.T) {
 		if newest.ChangedFiles == nil || newest.GetChangedFiles() != 1 || oldest.ChangedFiles != nil {
 			t.Errorf("changed files = %v and %v, want 1 and absent", newest.ChangedFiles, oldest.ChangedFiles)
 		}
-		if newest.GetAddedBytes() != env.agent.chunkSize() || oldest.GetAddedBytes() != env.agent.chunkSize() || !newest.GetQuiesced() || newest.GetFiles() != 7 || newest.GetSavedAtMs() < oldest.GetSavedAtMs() {
+		if newest.GetAddedBytes() != env.agent.chunkSize() || oldest.GetAddedBytes() != env.agent.chunkSize() || newest.GetSavedAtMs() < oldest.GetSavedAtMs() {
 			t.Errorf("snapshot fields = %v", newest)
 		}
 	}

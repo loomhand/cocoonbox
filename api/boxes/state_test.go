@@ -66,7 +66,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if len(puts) != 1 || puts[0].GetChunkId() != hexID("c4") {
 		t.Errorf("second upload puts = %v, want only c4", puts)
 	}
-	box, err := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := env.svc.get(env.ctx, aliceBox)
 	if err != nil || box.GetLastSavedAtMs() == 0 || box.GetLatestImage() != "desktop:v2" {
 		t.Errorf("box = %v, %v", box, err)
 	}
@@ -551,7 +551,7 @@ func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := svc.get(ctx, aliceBox)
 	if err != nil || box.GetLatestImage() != "cbcore:v1" {
 		t.Fatalf("box = %v, %v, want latest cbcore:v1 so no upgrade is offered", box, err)
 	}
@@ -572,7 +572,7 @@ func TestRebaseStaysInTheBoxFamilyUnlessTheOperatorAsks(t *testing.T) {
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	box, err := svc.get(ctx, aliceBox)
 	if err != nil || box.GetLatestImage() != "cbdroid:v3" {
 		t.Fatalf("box = %v, %v, want latest cbdroid:v3 so no upgrade is offered", box, err)
 	}
@@ -733,7 +733,7 @@ func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
 	if _, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve while restoring = %v, want Unavailable", err)
 	}
-	if box, _ := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+	if box, _ := env.svc.get(env.ctx, aliceBox); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Errorf("box while restoring = %v, want STARTING", box)
 	}
 	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {

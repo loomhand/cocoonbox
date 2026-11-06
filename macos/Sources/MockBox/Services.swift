@@ -44,10 +44,6 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         try await world.delete(box: request.boxID)
     }
 
-    func get(request: Cocoonbox_Control_V1_GetBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Box {
-        try await owned(request.boxID)
-    }
-
     func list(request: Cocoonbox_Control_V1_ListBoxesRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListBoxesResponse {
         let boxes = await world.boxes
         return .with {

@@ -85,7 +85,7 @@ func (s *Service) Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (
 		return nil, registryError(ctx, err, "rename box")
 	}
 	s.ops.watchers.wake(user)
-	return s.Get(ctx, &controlv1.GetBoxRequest{BoxId: req.GetBoxId()})
+	return s.get(ctx, req.GetBoxId())
 }
 
 // Delete saves a running box quiesced, then removes every machine of the box and the box; the GC removes its saved state after the retention of deleted boxes.

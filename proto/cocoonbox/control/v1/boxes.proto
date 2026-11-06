@@ -17,7 +17,6 @@ service Boxes {
   // Delete saves the box quiesced when it runs, then removes its machine and
   // the box. The GC removes its saved state after state.gc.deleted_retention.
   rpc Delete(BoxRef) returns (Operation);
-  rpc Get(GetBoxRequest) returns (Box);
   rpc List(ListBoxesRequest) returns (ListBoxesResponse);
   // Watch sends the caller's boxes as List does, at once and again after any
   // of them changes, by any client or by the api. Watching never wakes a box.
@@ -98,11 +97,12 @@ message Flavor {
 }
 
 message Box {
+  reserved 5;
+  reserved "failure_reason";
   string id = 1;
   BoxState state = 2;
   string image = 3;
   Flavor flavor = 4;
-  string failure_reason = 5;
   int64 created_at_ms = 6;
   // Time of the latest user-state snapshot in object storage; 0 before the first.
   int64 last_saved_at_ms = 7;
@@ -147,10 +147,6 @@ message RebaseRequest {
   string image = 2;
 }
 
-message GetBoxRequest {
-  string box_id = 1;
-}
-
 message ListBoxesRequest {}
 
 message ListBoxesResponse {
@@ -169,11 +165,12 @@ message WatchOperationRequest {
 }
 
 message OperationEvent {
+  reserved 5;
+  reserved "at_ms";
   string operation_id = 1;
   Phase phase = 2;
   string detail = 3;
   string offset_key = 4;
-  int64 at_ms = 5;
   BoxState box_state = 6;
   // Transfer progress while saving or restoring; 0 otherwise.
   uint64 done_bytes = 7;
@@ -181,13 +178,11 @@ message OperationEvent {
 }
 
 message Snapshot {
+  reserved 3 to 5;
+  reserved "quiesced", "files", "logical_bytes";
   string id = 1;
   int64 saved_at_ms = 2;
-  bool quiesced = 3;
-  uint64 files = 4;
-  uint64 logical_bytes = 5;
-  // Files new, changed or removed since the save before; absent for saves by
-  // agents older than this field.
+  // Files new, changed or removed since the save before; absent for saves by older agents.
   optional uint64 changed_files = 6;
   // Plaintext bytes of the chunks this save added to the store.
   uint64 added_bytes = 7;
