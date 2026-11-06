@@ -144,12 +144,12 @@ pub async fn mark(workspace: &Path, args: Value) -> Result<String, String> {
     }
 }
 
-/// `flows_wait {after}`: returns the count of flow writes once it passes `after`.
+/// `flows_wait {after}`: returns the count of flow writes once it differs from `after`.
 pub async fn wait(writes: &watch::Sender<u64>, args: Value) -> Result<String, String> {
     let after = args["after"].as_u64().unwrap_or(0);
     let mut rx = writes.subscribe();
     let seen = *rx
-        .wait_for(|n| *n > after)
+        .wait_for(|n| *n != after)
         .await
         .map_err(|e| format!("flow writes: {e}"))?;
     Ok(seen.to_string())
@@ -371,6 +371,12 @@ mod tests {
             std::fs::read_to_string(flows.join("INDEX")).unwrap(),
             "b(): two\n"
         );
+    }
+
+    #[tokio::test]
+    async fn a_wait_past_a_restarted_count_answers_at_once() {
+        let writes = watch::channel(0).0;
+        assert_eq!(wait(&writes, json!({"after": 5})).await.unwrap(), "0");
     }
 
     #[cfg(target_os = "linux")]
