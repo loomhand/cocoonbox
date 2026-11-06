@@ -144,9 +144,6 @@ func (e *entry) machine(disk uint32) machines.Machine {
 		Meta:     maps.Clone(e.meta),
 		Routed:   e.routed,
 	}
-	if m.Meta == nil {
-		m.Meta = map[string]string{}
-	}
 	if e.row != nil {
 		for k, v := range e.row.Metadata {
 			if key, ok := strings.CutPrefix(k, metaClaimPrefix); ok && m.Meta[key] == "" {

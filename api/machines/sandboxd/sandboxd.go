@@ -182,9 +182,6 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		switch {
 		case e == nil || (e.row == nil && !e.busy(now)):
 			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: maps.Clone(spec.Meta)}
-			if e.meta == nil {
-				e.meta = map[string]string{}
-			}
 			e.begin(opClaim, now, b.leaseFor)
 			action = machines.ActionCreated
 			return e, true
