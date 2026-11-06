@@ -126,11 +126,12 @@ impl Runtime {
         let rt = Arc::new(Self {
             model,
             router,
-            dispatcher: Arc::new(
-                Dispatcher::new(tools, Arc::clone(&journal))
-                    .with_flows(flows)
-                    .with_plugins(cfg.plugins.iter().map(|p| p.name.clone()).collect()),
-            ),
+            dispatcher: Arc::new(Dispatcher::new(
+                tools,
+                Arc::clone(&journal),
+                flows,
+                cfg.plugins.iter().map(|p| p.name.clone()).collect(),
+            )),
             journal,
             main_tools: loop_tools(false, &cfg),
             main_vision_tools: loop_tools(true, &cfg),
