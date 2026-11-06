@@ -27,6 +27,7 @@ func TestBusyAsksForAgentTurnsThenOffloadedSessions(t *testing.T) {
 		{name: "an offloaded session works", agent: agentv1.AgentStatus_AGENT_STATUS_IDLE, stdout: `{"ok":true,"sessions":[{"status":"idle"},{"status":"working"}]}`, want: true},
 		{name: "nothing works", agent: agentv1.AgentStatus_AGENT_STATUS_WAITING_FOR_USER, stdout: `{"ok":true,"sessions":[{"status":"waiting_for_user"}]}`},
 		{name: "an image without offload", agent: agentv1.AgentStatus_AGENT_STATUS_IDLE, code: commandNotFound},
+		{name: "an image without an offload inbox", agent: agentv1.AgentStatus_AGENT_STATUS_IDLE, code: inboxDown},
 		{name: "offload status fails", agent: agentv1.AgentStatus_AGENT_STATUS_IDLE, code: 1, wantErr: true},
 		{name: "offload status answers no JSON", agent: agentv1.AgentStatus_AGENT_STATUS_IDLE, stdout: "oops", wantErr: true},
 	}
