@@ -11,7 +11,11 @@ import (
 // RecordFunc records the box an agent's Create added, before its machine starts.
 type RecordFunc func(ctx context.Context, box string) error
 
+type StartCheck func(ctx context.Context) error
+
 type agentKey struct{}
+
+type startCheckKey struct{}
 
 // WithAgent marks ctx's Creates as an agent's: the box counts against the agent's caps, gets none of the owner's credentials, and record runs on it before its machine starts.
 func WithAgent(ctx context.Context, record RecordFunc) context.Context {
@@ -22,6 +26,29 @@ func WithAgent(ctx context.Context, record RecordFunc) context.Context {
 func AgentRecord(ctx context.Context) RecordFunc {
 	record, _ := ctx.Value(agentKey{}).(RecordFunc)
 	return record
+}
+
+func WithStartCheck(ctx context.Context, check StartCheck) context.Context {
+	return context.WithValue(ctx, startCheckKey{}, check)
+}
+
+func CheckStart(ctx context.Context) error {
+	if check, ok := ctx.Value(startCheckKey{}).(StartCheck); ok {
+		return check(ctx)
+	}
+	return nil
+}
+
+func (s *Service) admitStart(ctx context.Context, user string) (func(), error) {
+	unlock, err := s.lockStarts(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	if err = CheckStart(ctx); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
 }
 
 // agentBox reports whether owner's box is one an agent created.

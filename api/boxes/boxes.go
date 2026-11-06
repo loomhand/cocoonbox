@@ -167,7 +167,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := s.lockStarts(ctx, user)
+	unlock, err := s.admitStart(ctx, user)
 	if err != nil {
 		return nil, err
 	}

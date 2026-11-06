@@ -473,6 +473,9 @@ type fakeBoxes struct {
 }
 
 func (f *fakeBoxes) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
+	if err := boxes.CheckStart(ctx); err != nil {
+		return nil, err
+	}
 	user := auth.User(ctx)
 	f.record("Ensure", user, req.GetBoxId())
 	if f.ensureErr != nil {
@@ -503,6 +506,9 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 }
 
 func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
+	if err := boxes.CheckStart(ctx); err != nil {
+		return nil, err
+	}
 	user := auth.User(ctx)
 	f.record("Create", user, req.GetName())
 	if req.GetImage() == "nosuch" {

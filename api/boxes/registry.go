@@ -30,7 +30,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered; choose %s", req.GetImage(), s.defaults.choices())
 	}
-	unlock, err := s.lockStarts(ctx, user)
+	unlock, err := s.admitStart(ctx, user)
 	if err != nil {
 		return nil, err
 	}

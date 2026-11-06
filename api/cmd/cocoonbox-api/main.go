@@ -103,6 +103,11 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
+	var shared *cluster.Store
+	if cfg.Cluster.Shared {
+		loops.add(backend.Run)
+		shared = ledger
+	}
 	accounts, err := openUsersWith(ctx, cfg, backend)
 	if err != nil {
 		logger.Fatalf(ctx, err, "open users")
@@ -151,6 +156,7 @@ func main() {
 		}
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts, &loops)
 		library = flows.NewLibrary(st, accounts)
+		library.EnableShared(shared)
 	}
 	enableLedger(ctx, cfg, ledger, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
@@ -187,6 +193,9 @@ func main() {
 	httpMux := http.NewServeMux()
 	httpMux.HandleFunc("GET /healthz", healthz(&draining))
 	control := controlmcp.New(svc, authn)
+	if cfg.Cluster.Shared {
+		control.EnableShared(accounts)
+	}
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
 	httpMux.Handle(edge.MCPPrefix, boxMCP)
@@ -260,11 +269,6 @@ func main() {
 		timer.Stop()
 	}()
 	loops.add(func(ctx context.Context) { svc.RunAlarms(ctx, alarmInterval) })
-	var shared *cluster.Store
-	if cfg.Cluster.Shared {
-		loops.add(backend.Run)
-		shared = ledger
-	}
 	loops.run(ctx, shared)
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
