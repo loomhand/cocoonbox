@@ -183,9 +183,9 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	result, ex, err := s.invoke(ctx, g, t, args)
 	rec.status, rec.reqBytes, rec.respBytes = ex.status, ex.reqBytes, ex.respBytes
 	switch {
-	case errors.Is(err, errReconnect):
+	case errors.Is(err, errGrantChanged), errors.Is(err, errReconnect):
 		rec.outcome = outcomeError
-		return s.reconnectText(g), nil
+		return s.failureText(ctx, g, err), nil
 	case err != nil && !t.ReadOnly && uncertain(err, ex):
 		rec.outcome = outcomeUnknown
 		log.WithFunc("connect.Service.doorCall").Warnf(ctx, "%s of %s may have run %s: %v", g.connector, g.user, t.Name, err)
@@ -261,7 +261,7 @@ func (s *Service) withCredential(ctx context.Context, g *grant, fn func(*upstrea
 	}
 	if sec.AccessToken == "" {
 		if err = fn(&upstream{s: s, url: g.mcpURL, cred: credential{header: sec.Header, value: sec.APIKey}, conn: s.conn(g.id)}); errors.Is(err, errUnauthorized) {
-			return s.lose(ctx, g)
+			return s.lose(ctx, g, sec.APIKey)
 		}
 		return err
 	}
@@ -274,7 +274,7 @@ func (s *Service) withCredential(ctx context.Context, g *grant, fn func(*upstrea
 		return err
 	}
 	if sec.RefreshToken == "" {
-		return s.lose(ctx, g)
+		return s.lose(ctx, g, access)
 	}
 	if access, err = s.access(ctx, g, access, true); err != nil {
 		return err
@@ -283,7 +283,7 @@ func (s *Service) withCredential(ctx context.Context, g *grant, fn func(*upstrea
 	if err = fn(u); !errors.Is(err, errUnauthorized) {
 		return err
 	}
-	return s.lose(ctx, g)
+	return s.lose(ctx, g, access)
 }
 
 // access refreshes near expiry, or when force is set and the grant still holds seen; one refresh runs per grant.
@@ -291,10 +291,10 @@ func (s *Service) access(ctx context.Context, g *grant, seen string, force bool)
 	if !force && (g.expiresAt == nil || time.Until(*g.expiresAt) > refreshMargin) {
 		return seen, nil
 	}
-	v, err, _ := s.refreshes.Do(g.id, func() (any, error) {
+	v, err, _ := s.refreshes.Do(g.id+":"+g.mcpURL, func() (any, error) {
 		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tokenTimeout+setupTimeout)
 		defer cancel()
-		return s.refresh(refreshCtx, g.id, seen, force)
+		return s.refresh(refreshCtx, g, seen, force)
 	})
 	if err != nil {
 		return "", err
@@ -303,12 +303,16 @@ func (s *Service) access(ctx context.Context, g *grant, seen string, force bool)
 }
 
 // refresh commits a rotated refresh token before the new access token is used.
-func (s *Service) refresh(ctx context.Context, id, stale string, force bool) (string, error) {
+func (s *Service) refresh(ctx context.Context, old *grant, stale string, force bool) (string, error) {
 	logger := log.WithFunc("connect.Service.refresh")
+	id := old.id
 	var access string
 	var rotated bool
 	var lost *grant
 	err := s.store.refreshGrant(ctx, id, func(g *grant) (*grant, error) {
+		if g.mcpURL != old.mcpURL {
+			return nil, errGrantChanged
+		}
 		var sec secrets
 		if err := s.seal.open(ctx, g.user, g.sealed, grantData(g.id, g.user, g.connector), &sec); err != nil {
 			return nil, err
@@ -357,8 +361,19 @@ func (s *Service) refresh(ctx context.Context, id, stale string, force bool) (st
 }
 
 // lose marks g needs_reconnect after its server refused a fresh credential.
-func (s *Service) lose(ctx context.Context, g *grant) error {
-	if err := s.store.setStatus(ctx, g.id, statusReconnect); err != nil {
+func (s *Service) lose(ctx context.Context, g *grant, seen string) error {
+	err := s.store.refreshGrant(ctx, g.id, func(current *grant) (*grant, error) {
+		sec, err := s.secrets(ctx, current)
+		if err != nil {
+			return nil, err
+		}
+		if current.mcpURL != g.mcpURL || cmp.Or(sec.AccessToken, sec.APIKey) != seen {
+			return nil, errGrantChanged
+		}
+		current.status = statusReconnect
+		return current, nil
+	})
+	if err != nil {
 		return err
 	}
 	log.WithFunc("connect.Service.lose").Warnf(ctx, "grant %s of %s (%s) needs a reconnect: its server refused the credential", g.id, g.user, g.connector)
@@ -428,6 +443,9 @@ func (s *Service) reconnectText(g *grant) *callResult {
 }
 
 func (s *Service) failureText(ctx context.Context, g *grant, err error) *callResult {
+	if errors.Is(err, errGrantChanged) {
+		return errorText(err.Error())
+	}
 	if errors.Is(err, errReconnect) {
 		return s.reconnectText(g)
 	}

@@ -127,6 +127,66 @@ func TestLinkingAQueuedGitHubAccountDropsItsPlace(t *testing.T) {
 	}
 }
 
+func TestLinkingWhileAdmissionCreatesTheAccountKeepsOneIdentityOwner(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.signup.SetSettings(t.Context(), signup.Settings{Enabled: true, Seats: 1, MaxAgentBoxes: 1, HourlyAccounts: 50}); err != nil {
+		t.Fatal(err)
+	}
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", nil); loc != "/cb/queue" {
+		t.Fatalf("bob: %q", loc)
+	}
+	accounts := &heldAccounts{Accounts: e.users, entered: make(chan struct{}), release: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(accounts.release) })
+	defer release()
+	admission, err := signup.Open(t.Context(), signup.Options{DSN: e.dsn, Accounts: accounts})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admission.Close)
+	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
+		t.Fatal(err)
+	}
+	admitted := make(chan error, 1)
+	go func() { admitted <- admission.Admit(t.Context()) }()
+	<-accounts.entered
+	alice, _ := e.users.ByName("alice")
+	started, err := e.signup.Begin(t.Context(), signup.BeginRequest{Link: alice.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, _ := url.Parse(started.URL)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	linked := make(chan error, 1)
+	var outcome signup.Outcome
+	go func() {
+		var err error
+		outcome, err = e.signup.Complete(ctx, started.Nonce, u.Query().Get("state"), "bob")
+		linked <- err
+	}()
+	conn, err := pgx.Connect(ctx, e.dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	for blocked := false; !blocked; {
+		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock')").Scan(&blocked); err != nil {
+			t.Fatalf("wait for concurrent link: %v", err)
+		}
+	}
+	release()
+	if err := <-admitted; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-linked; err != nil || outcome.Kind != signup.Refused || outcome.Reason != "github_taken" {
+		t.Errorf("link during admission = %+v, %v; want the admitted identity kept", outcome, err)
+	}
+	var unlinked int
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM users u WHERE u.idp = 'github' AND NOT EXISTS (SELECT 1 FROM identities i WHERE i.user_id = u.id)").Scan(&unlinked); err != nil || unlinked != 0 {
+		t.Errorf("admitted accounts without an identity = %d, %v", unlinked, err)
+	}
+}
+
 func TestInviteOnlySignupAdmitsAtOnceThenQueuesAndAFreedSeatAdmitsTheFront(t *testing.T) {
 	e := newEnv(t)
 	admin := e.browser(t)
@@ -646,6 +706,18 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 type madeInvite struct {
 	Code   string        `json:"code"`
 	Invite signup.Invite `json:"invite"`
+}
+
+type heldAccounts struct {
+	signup.Accounts
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (a *heldAccounts) Create(ctx context.Context, nu users.NewUser) (users.User, error) {
+	close(a.entered)
+	<-a.release
+	return a.Accounts.Create(ctx, nu)
 }
 
 type person struct {

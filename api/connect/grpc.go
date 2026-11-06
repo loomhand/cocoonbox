@@ -265,7 +265,7 @@ func (s *Service) Check(ctx context.Context, user, connector string) (string, er
 	}
 	switch {
 	case code == http.StatusUnauthorized:
-		return "", grantStatus(ctx, s.lose(ctx, g), "check")
+		return "", grantStatus(ctx, s.lose(ctx, g, access), "check")
 	case code != http.StatusOK:
 		return "", status.Errorf(codes.Unavailable, "%s answered %d", e.name, code)
 	}

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -550,6 +551,71 @@ func TestARefusedCredentialIsRefreshedOnceAndALostGrantNeedsAReconnect(t *testin
 	}
 	if tools, _ := env.svc.doorTools(t.Context(), modeB); len(tools) != 0 {
 		t.Errorf("a lost grant serves %d tools", len(tools))
+	}
+}
+
+func TestAReconnectKeepsNewCredentialsOutOfAnOldCall(t *testing.T) {
+	for _, moved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("moved=%t", moved), func(t *testing.T) {
+			env := newEnv(t)
+			env.connect(t)
+			old := env.grant(t)
+			env.vendor.ExpireAccess()
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			t.Cleanup(unblock)
+			headers := make(chan string, 4)
+			var requests atomic.Int32
+			transport := env.svc.http.Transport
+			env.svc.http.Transport = roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				if header := r.Header.Get(headerAuthorization); r.URL.String() == old.mcpURL && header != "" {
+					headers <- header
+					at := int32(2)
+					if moved {
+						at = 1
+					}
+					if requests.Add(1) == at {
+						close(entered)
+						<-release
+						return &http.Response{StatusCode: http.StatusUnauthorized, Header: http.Header{}, Body: http.NoBody, Request: r}, nil
+					}
+				}
+				return transport.RoundTrip(r)
+			})
+			done := make(chan error, 1)
+			go func() {
+				done <- env.svc.withCredential(t.Context(), old, func(u *upstream) error {
+					_, _, err := u.call(t.Context(), "tools/call", toolCall{Name: "list_items"})
+					return err
+				})
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the old call did not reach the vendor")
+			}
+			if moved {
+				env.vendor = connecttest.New()
+				t.Cleanup(env.vendor.Close)
+			}
+			env.connect(t)
+			current := env.secrets(t)
+			unblock()
+			if err := <-done; !errors.Is(err, errGrantChanged) {
+				t.Errorf("the old call = %v, want the changed connection", err)
+			}
+			for len(headers) > 0 {
+				if header := <-headers; moved && header == "Bearer "+current.AccessToken {
+					t.Error("the old server received the new server's access token")
+				}
+			}
+			if g := env.grant(t); g.id != old.id || g.status != statusActive {
+				t.Errorf("the reconnected grant = %s %s, want the same active grant", g.id, g.status)
+			}
+			if out, err := call(t.Context(), env.svc, modeB, listItems, nil, ""); err != nil || out.IsError {
+				t.Errorf("a new call after reconnect = %+v, %v", out, err)
+			}
+		})
 	}
 }
 
@@ -1468,6 +1534,10 @@ func newService(t *testing.T, dsn string, sessions Sessions) *Service {
 type keyFunc func(ctx context.Context, user string) (keyring.Key, error)
 
 func (f keyFunc) StateKey(ctx context.Context, user string) (keyring.Key, error) { return f(ctx, user) }
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type fakeSessions struct {
 	mu   sync.Mutex

@@ -216,8 +216,8 @@ func (s *store) place(ctx context.Context, secretSHA256 string) (Place, error) {
 }
 
 // dropWaiting deletes the waiting entry of an identity a signed-in user just linked, so it takes no admission slot.
-func (s *store) dropWaiting(ctx context.Context, idp, subject string) error {
-	if _, err := s.pool.Exec(ctx, "DELETE FROM signup_queue WHERE idp = $1 AND subject = $2 AND status = 'waiting'", idp, subject); err != nil {
+func (s *store) dropWaiting(ctx context.Context, tx pgx.Tx, idp, subject string) error {
+	if _, err := tx.Exec(ctx, "DELETE FROM signup_queue WHERE idp = $1 AND subject = $2 AND status = 'waiting'", idp, subject); err != nil {
 		return fmt.Errorf("drop queue entry: %w", err)
 	}
 	return nil
