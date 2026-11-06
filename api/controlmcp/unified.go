@@ -267,18 +267,21 @@ func (s *Server) connectorGrants(ctx context.Context) []string {
 }
 
 // connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows.
-func (s *Server) connectorTool(ctx context.Context, name string) bool {
+func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire.Error) {
 	grants := s.connectorGrants(ctx)
 	if len(grants) == 0 || isControlTool(name) {
-		return false
+		return false, nil
 	}
 	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, grants, name)
-	if err != nil || !reaches {
+	if err != nil {
 		log.WithFunc("controlmcp.Server.connectorTool").Error(ctx, err, "read the connector of "+name)
-		return false
+		return false, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "reading the connector failed"}
+	}
+	if !reaches {
+		return false, nil
 	}
 	boxTools, rpcErr := s.boxTools(ctx)
-	return rpcErr == nil && !slices.Contains(toolNames(boxTools), name)
+	return rpcErr == nil && !slices.Contains(toolNames(boxTools), name), rpcErr
 }
 
 // callConnector runs a tool of an account the caller's grant holds through Connect; it wakes no box.

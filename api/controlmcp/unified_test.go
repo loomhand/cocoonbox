@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -450,6 +451,36 @@ func TestRootCallOfAnAccountToolGoesToConnectAndWakesNoBox(t *testing.T) {
 	}
 }
 
+func TestAccountRoutingErrorsDoNotWakeOrCallABox(t *testing.T) {
+	for _, source := range []string{"connector", "box tools"} {
+		t.Run(source, func(t *testing.T) {
+			srv, fake, agents, lists := newUnifiedServer(t)
+			fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+			lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(boxTools)})
+			accounts := newFakeConnectors()
+			srv.EnableConnectors(accounts)
+			srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, connectors: []string{"cg-mock"}})
+			if source == "connector" {
+				accounts.err = errors.New("connector query failed")
+			} else {
+				lists.err = errors.New("tool list query failed")
+			}
+			resp := decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callAccount))
+			if resp.Error == nil || resp.Error.Code != mcpwire.CodeInternal {
+				t.Errorf("routing failure = %+v, want an internal error", resp)
+			}
+			if len(agents.recorded()) != 0 || slices.ContainsFunc(fake.recorded(), func(c fakeCall) bool { return c.method == "Ensure" }) || len(accounts.calledWith()) != 0 {
+				t.Errorf("routing failure ran a tool or woke a box: agent %v, boxes %v, accounts %v", agents.recorded(), fake.recorded(), accounts.calledWith())
+			}
+			accounts.err, lists.err = nil, nil
+			resp = decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callAccount))
+			if resp.Error != nil || len(accounts.calledWith()) != 1 {
+				t.Errorf("retry = %+v, account calls %v", resp, accounts.calledWith())
+			}
+		})
+	}
+}
+
 func TestRootCallOfAShadowedAccountToolGoesToTheBox(t *testing.T) {
 	srv, _, agents, lists := newUnifiedServer(t)
 	accounts := newFakeConnectors()
@@ -628,6 +659,7 @@ type fakeConnectors struct {
 	lists   []string
 	calls   []string
 	watches []string
+	err     error
 }
 
 func newFakeConnectors() *fakeConnectors {
@@ -639,7 +671,7 @@ func (f *fakeConnectors) Reaches(_ context.Context, _ string, grants []string, n
 	defer f.mu.Unlock()
 	connector, _, _ := strings.Cut(name, "_")
 	grant, ok := f.owned[connector]
-	return ok && slices.Contains(grants, grant), nil
+	return ok && slices.Contains(grants, grant), f.err
 }
 
 func (f *fakeConnectors) GrantedTools(_ context.Context, user string, grants []string) ([]map[string]jsontext.Value, error) {
@@ -692,11 +724,15 @@ func (f *fakeConnectors) watched() []string {
 type fakeLists struct {
 	mu    sync.Mutex
 	lists map[string]users.ToolList
+	err   error
 }
 
 func (f *fakeLists) ToolList(_ context.Context, image, family string) (users.ToolList, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return users.ToolList{}, f.err
+	}
 	if l, ok := f.lists[image]; ok {
 		return l, nil
 	}
