@@ -219,12 +219,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		SpentToday      int64          `json:"spent_today_micros"`
 		OwnBoxes        int            `json:"own_boxes"`
 		Connect         bool           `json:"connect"`
-	}{User: u, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, Connect: s.connect != nil}
-	for _, b := range s.users.Boxes(u.ID) {
-		if !b.Agent {
-			resp.OwnBoxes++
-		}
-	}
+	}{User: u, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, OwnBoxes: len(s.choices(u.ID)), Connect: s.connect != nil}
 	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)
