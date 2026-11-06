@@ -847,6 +847,37 @@ func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	waitState(t, a, boxID, 3, machines.StateHibernated)
 }
 
+func TestARefreshEndsALapsedOpAndWakesItsOwner(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	dsn := clustertest.EmptyDSN(t)
+	db, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(db.Close)
+	b := openSharedBackend(t, fake, db)
+	claimRunning(t, b)
+	if _, err := db.UpdateMachine(t.Context(), boxID, func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Op, m.OpUntil = opHibernate, time.Now().Add(-time.Second)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
+	}
+	fenceListener(t, b, dsn)
+	changes := b.Changes(owner)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	select {
+	case <-changes:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refresh woke no owner watcher for a lapsed op")
+	}
+	if rec, err := db.Machine(t.Context(), boxID); err != nil || rec.Op != "" {
+		t.Errorf("row after the refresh = op %q, %v; want the lapsed op ended", rec.Op, err)
+	}
+}
+
 func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
