@@ -58,7 +58,6 @@ const MAX_BODY: usize = 256 << 20;
 const DEFAULT_TIMEOUT_SECS: u64 = 900;
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(500);
 
-/// The edge's signing key and the box it signs for.
 struct Edge {
     key: SigningKey,
     box_id: String,
@@ -123,7 +122,6 @@ impl Edge {
     }
 }
 
-/// The command line after the subcommand.
 struct Args(Vec<String>);
 
 impl Args {
@@ -340,7 +338,6 @@ async fn exec(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
         .await
         .map_err(|e| format!("send start: {e}"))?;
     let feeder = tx.clone();
-    // detached: forwards local stdin until EOF, then sends the eof frame
     tokio::spawn(async move {
         let mut stdin = tokio::io::stdin();
         let mut buf = vec![0; EXEC_CHUNK];
@@ -424,7 +421,6 @@ fn window(s: &str) -> Result<pb::ExecWindow, String> {
     })
 }
 
-/// An RFB frame as RGBA, with the pixels the server has sent.
 struct Frame {
     w: usize,
     h: usize,
@@ -444,7 +440,6 @@ impl Frame {
         }
     }
 
-    /// Reads one FramebufferUpdate of Raw rectangles into the frame.
     async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
         let io = |e: std::io::Error| format!("rfb: {e}");
         let kind = rd.read_u8().await.map_err(io)?;
@@ -484,7 +479,6 @@ impl Frame {
     }
 }
 
-/// Runs an RFB 3.8 handshake with security None, asks for one full Raw frame and writes it as a PNG.
 async fn snap<R, W>(
     rd: &mut R,
     wr: &mut W,
@@ -560,7 +554,6 @@ where
     Ok((width, height, String::from_utf8_lossy(&name).into_owned()))
 }
 
-/// Serves PUT and GET of `dir/<name>` over HTTP/1.1, one request per connection.
 async fn store(listen: &str, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let listener = TcpListener::bind(listen)
