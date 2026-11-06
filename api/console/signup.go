@@ -31,9 +31,6 @@ const (
 	idpErrorCode = "github_denied"
 )
 
-// tokenHandler serves a call of the invite-scoped token whose id it gets.
-type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
-
 // EnableSignup serves the GitHub sign-in, linking, self-delete, the queue page and the admin's signup calls over sig.
 func (s *Server) EnableSignup(sig *signup.Service) {
 	s.signup = sig
@@ -363,8 +360,7 @@ func (s *Server) revokeInviteToken(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// inviter runs scoped for a request with an invite-scoped bearer token, which it resolves here, and admin for an admin session.
-func (s *Server) inviter(admin http.HandlerFunc, scoped tokenHandler) http.HandlerFunc {
+func (s *Server) inviter(admin http.HandlerFunc, scoped func(w http.ResponseWriter, r *http.Request, token string)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := inviteBearer(r)
 		if !ok {
