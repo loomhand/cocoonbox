@@ -174,9 +174,13 @@ func setPolicy(ctx context.Context, cfg *config.Config, name string, args []stri
 }
 
 func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service, u users.User) (int, error) {
-	st, err := newStore(cfg)
-	if err != nil {
-		return 0, err
+	var st store.Store
+	if cfg.State.Bucket != "" {
+		objects, err := newStore(cfg)
+		if err != nil {
+			return 0, err
+		}
+		st = objects
 	}
 	var revoker connections
 	if cfg.Connect.PublicURL != "" {
@@ -194,9 +198,13 @@ func deleteUser(ctx context.Context, st store.Store, revoker connections, accoun
 	if len(accounts.Boxes(u.ID)) > 0 {
 		return 0, errors.New("the user owns boxes: delete it in the console, which releases them")
 	}
-	removed, err := boxes.DeleteState(ctx, st, u.ID)
-	if err != nil {
-		return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
+	removed := 0
+	if st != nil {
+		n, err := boxes.DeleteState(ctx, st, u.ID)
+		if err != nil {
+			return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
+		}
+		removed = n
 	}
 	if revoker != nil {
 		if err := revoker.RevokeAll(ctx, u.ID); err != nil {

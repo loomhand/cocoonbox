@@ -159,6 +159,11 @@ func TestDeleteUserRevokesConnectionsBeforeTheRow(t *testing.T) {
 	}
 
 	calls = nil
+	if _, err := deleteUser(t.Context(), nil, nil, accounts, users.User{ID: "u-5", Name: "dave"}); err != nil || strings.Join(calls, " ") != "delete u-5" {
+		t.Errorf("deleteUser without a state store = %v, calls %v", err, calls)
+	}
+
+	calls = nil
 	accounts.boxes = []users.Box{{ID: "cb-4", Owner: "u-4"}}
 	if _, err := deleteUser(t.Context(), st, revoker, accounts, users.User{ID: "u-4", Name: "dave"}); err == nil || len(calls) > 0 {
 		t.Errorf("deleteUser of a user who owns a box = %v, calls %v; want a refusal before any change", err, calls)
