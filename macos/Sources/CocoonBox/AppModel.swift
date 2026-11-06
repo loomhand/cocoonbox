@@ -607,6 +607,7 @@ final class AppModel {
     private func disconnect() {
         stopAgentSide()
         operationTask?.cancel()
+        operation = nil
         boxesTask?.cancel()
         boxesTask = nil
         boxesLive = false
