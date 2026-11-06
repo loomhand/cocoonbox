@@ -182,14 +182,10 @@ type OAuth struct {
 }
 
 func (o OAuth) validate() error {
-	var errs []error
 	if u, err := url.Parse(o.PublicURL); o.PublicURL != "" && (err != nil || u.Scheme != schemeHTTPS || u.Host == "" || u.Path != "") {
-		errs = append(errs, fmt.Errorf("oauth.public_url must be an https origin, got %q", o.PublicURL))
+		return fmt.Errorf("oauth.public_url must be an https origin, got %q", o.PublicURL)
 	}
-	if *o.IdleHibernate < 0 {
-		errs = append(errs, fmt.Errorf("oauth.idle_hibernate must not be negative, got %s", time.Duration(*o.IdleHibernate)))
-	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // Identity names another user system whose token review endpoint resolves the bearer tokens cocoonbox does not issue; it alone decides who gets in.
@@ -360,12 +356,6 @@ func (c *Config) validate() error {
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
 	}
-	if c.UserIdleHibernate < 0 {
-		errs = append(errs, fmt.Errorf("user_idle_hibernate must not be negative, got %s", time.Duration(c.UserIdleHibernate)))
-	}
-	if c.SqueezedIdleHibernate < 0 {
-		errs = append(errs, fmt.Errorf("squeezed_idle_hibernate must not be negative, got %s", time.Duration(c.SqueezedIdleHibernate)))
-	}
 	if c.State.ParkAfter < 0 {
 		errs = append(errs, fmt.Errorf("state.park_after must not be negative, got %s", time.Duration(c.State.ParkAfter)))
 	}
@@ -388,7 +378,24 @@ func (c *Config) validate() error {
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
-	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites), c.Identity.validate())
+	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites), c.Identity.validate(), c.validateIdle())
+	return errors.Join(errs...)
+}
+
+func (c *Config) validateIdle() error {
+	var errs []error
+	for name, after := range map[string]Duration{
+		"oauth.idle_hibernate":    *c.OAuth.IdleHibernate,
+		"user_idle_hibernate":     c.UserIdleHibernate,
+		"squeezed_idle_hibernate": c.SqueezedIdleHibernate,
+	} {
+		switch {
+		case after < 0:
+			errs = append(errs, fmt.Errorf("%s must not be negative, got %s", name, time.Duration(after)))
+		case c.Cluster.Shared && after > 0 && after < Duration(time.Minute):
+			errs = append(errs, fmt.Errorf("%s must be at least 1m with cluster.shared", name))
+		}
+	}
 	return errors.Join(errs...)
 }
 
