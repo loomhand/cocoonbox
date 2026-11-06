@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -437,7 +435,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 
 func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
-	queries := traceQueries(t, svc, dsn)
+	queries := trace(t, svc, dsn, &queryCounter{})
 	var calls atomic.Int64
 	var wg sync.WaitGroup
 	start := time.Now()
@@ -812,21 +810,20 @@ func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *fakeTenants) 
 	return svc
 }
 
-func traceQueries(t *testing.T, svc *Service, dsn string) *queryCounter {
+func trace[T pgx.QueryTracer](t *testing.T, svc *Service, dsn string, tracer T) T {
 	t.Helper()
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
 	}
-	counter := &queryCounter{}
-	cfg.ConnConfig.Tracer = counter
+	cfg.ConnConfig.Tracer = tracer
 	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("open traced pool: %v", err)
 	}
 	svc.store.pool.Close()
 	svc.store.pool = pool
-	return counter
+	return tracer
 }
 
 func masterKeyFile(t *testing.T) string {
@@ -874,6 +871,5 @@ func lifetime(svc *Service, id, credential string) context.Context {
 }
 
 func sum(token string) string {
-	s := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(s[:])
+	return utils.HashHex(token)
 }

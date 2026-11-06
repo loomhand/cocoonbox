@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestLoadCannotRestoreRevokedTokens(t *testing.T) {
@@ -119,17 +118,5 @@ func (*reloadGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndDa
 
 func gateQuery(t *testing.T, svc *Service, dsn, sql string) *reloadGate {
 	t.Helper()
-	gate := &reloadGate{sql: sql, entered: make(chan struct{}), resume: make(chan struct{})}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.ConnConfig.Tracer = gate
-	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	svc.store.pool.Close()
-	svc.store.pool = pool
-	return gate
+	return trace(t, svc, dsn, &reloadGate{sql: sql, entered: make(chan struct{}), resume: make(chan struct{})})
 }

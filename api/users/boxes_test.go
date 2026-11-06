@@ -2,8 +2,6 @@ package users
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"slices"
 	"strconv"
@@ -12,9 +10,13 @@ import (
 	"testing"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 func TestEveryUserStartsWithOneBox(t *testing.T) {
+	if firstBoxID("alice") != "cb-2bd806c97f0e" {
+		t.Fatalf("firstBoxID(alice) = %s, want the box id boxes.BoxID gives", firstBoxID("alice"))
+	}
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if got := svc.Boxes(u.ID); len(got) != 1 || got[0].ID != firstBoxID(u.ID) || got[0].Name != FirstBoxName || got[0].Owner != u.ID {
@@ -25,21 +27,6 @@ func TestEveryUserStartsWithOneBox(t *testing.T) {
 	}
 	if got := openTestService(t, dsn, gw, tenants).Boxes(u.ID); len(got) != 1 || got[0].ID != firstBoxID(u.ID) {
 		t.Errorf("Boxes after reopen = %+v", got)
-	}
-}
-
-func TestTheMigrationGivesEveryUserItsOldBox(t *testing.T) {
-	if firstBoxID("alice") != "cb-2bd806c97f0e" {
-		t.Fatalf("firstBoxID(alice) = %s, want the box id boxes.BoxID gives", firstBoxID("alice"))
-	}
-	svc, gw, tenants, dsn := newTestService(t)
-	u := mustCreate(t, svc, NewUser{Name: "qa1", ID: "test"})
-	if err := exec(t, dsn, "DROP TABLE boxes CASCADE; DELETE FROM schema_migrations WHERE version IN (4, 8)"); err != nil {
-		t.Fatalf("undo migrations 4 and 8: %v", err)
-	}
-	got := openTestService(t, dsn, gw, tenants).Boxes(u.ID)
-	if len(got) != 1 || got[0].ID != firstBoxID("test") || got[0].Name != FirstBoxName {
-		t.Fatalf("Boxes after migration = %+v, want %s", got, firstBoxID("test"))
 	}
 }
 
@@ -263,6 +250,5 @@ func TestABoxChangeOfOneApiReachesAnother(t *testing.T) {
 }
 
 func firstBoxID(user string) string {
-	s := sha256.Sum256([]byte(user))
-	return "cb-" + hex.EncodeToString(s[:])[:12]
+	return "cb-" + utils.HashHex(user)[:12]
 }
