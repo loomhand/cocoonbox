@@ -335,7 +335,7 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 		return machines.Endpoint{}, err
 	}
 	sandbox := e.row.ID
-	key := net.JoinHostPort(sandbox+".sandboxd", strconv.Itoa(b.opts.AgentPort))
+	key := net.JoinHostPort(sandbox+"."+utils.HashHex(e.ownerAddr)[:32]+".sandboxd", strconv.Itoa(b.opts.AgentPort))
 	return machines.Endpoint{
 		Key: key,
 		Dial: func(ctx context.Context) (net.Conn, error) {

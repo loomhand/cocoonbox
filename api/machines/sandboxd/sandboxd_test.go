@@ -22,6 +22,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -273,7 +274,7 @@ func TestAddressDialsThePassiveRelay(t *testing.T) {
 	claimRunning(t, b)
 
 	ep, err := b.Address(t.Context(), boxID)
-	if err != nil || ep.Key != fake.only()+".sandboxd:7443" {
+	if err != nil || ep.Key != fake.only()+"."+utils.HashHex(b.entryAddr)[:32]+".sandboxd:7443" {
 		t.Fatalf("Address = %+v, %v", ep, err)
 	}
 	conn, err := ep.Dial(t.Context())
