@@ -37,6 +37,8 @@ use common::{authed, owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const DSML_OPEN: &str = "I'll list it first.\n<｜DSML｜ invoke name=\"list_dir\">\n<｜DSML｜ parameter name=\"path\" string=\"true\">/ho";
+const DSML_CLOSE: &str = "Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>";
 const TEST_TERMINFO: &str =
     "cb-test-term|cocoonbox test terminal,\n\tam, cols#80, lines#24, clear=\\E[H\\E[2J, Cbx,\n";
 
@@ -1761,26 +1763,21 @@ async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_histo
 
 #[tokio::test]
 async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_text("I'll list it first.\n<｜DSML｜ invoke name=\"list_dir\">\n<｜DSML｜ parameter name=\"path\" string=\"true\">/ho"),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            (
-                "chat/completions",
-                chat_text("Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"),
-            ),
-            ("chat/completions", chat_text("Listed.")),
-            ("chat/completions", chat_text("I'd invoke list_dir again.")),
-            ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
-            ("chat/completions", chat_text("\n<｜DSML｜ invoke name=\"shell\">\n")),
-        ],
-)
+    let h = Harness::start(vec![
+        ("chat/completions", chat_text(DSML_OPEN)),
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_text(DSML_CLOSE)),
+        ("chat/completions", chat_text("Listed.")),
+        ("chat/completions", chat_text("I'd invoke list_dir again.")),
+        ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
+        (
+            "chat/completions",
+            chat_text("\n<｜DSML｜ invoke name=\"shell\">\n"),
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -2165,7 +2162,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
 }
 
 #[tokio::test]
-async fn an_ended_door_stream_is_followed_again_within_a_second_each_time() {
+async fn an_ended_door_stream_is_followed_again_within_two_and_a_half_seconds_each_time() {
     let door_log = Log::default();
     let (events, _) = tokio::sync::broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
@@ -3797,7 +3794,7 @@ async fn mcp_lists_a_title_and_one_hint_for_every_tool() {
 }
 
 #[tokio::test]
-async fn mcp_serves_the_desk_guide_as_a_resource() {
+async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
     let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
