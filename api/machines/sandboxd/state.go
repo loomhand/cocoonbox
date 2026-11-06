@@ -112,15 +112,12 @@ func (e *entry) sandbox() string {
 }
 
 func (e *entry) busy(now time.Time) bool {
-	return e.op != "" && (e.opUntil.IsZero() || now.Before(e.opUntil))
+	return e.op != "" && now.Before(e.opUntil)
 }
 
-// begin marks e as running op from now on, as a new revision, held for lease; zero holds it until it ends.
+// begin marks e as running op from now on, as a new revision, held for lease.
 func (e *entry) begin(op string, now time.Time, lease time.Duration) {
-	e.op, e.opErr, e.opUntil = op, "", time.Time{}
-	if lease > 0 {
-		e.opUntil = now.Add(lease)
-	}
+	e.op, e.opErr, e.opUntil = op, "", now.Add(lease)
 	e.revision++
 }
 

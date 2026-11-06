@@ -67,8 +67,8 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
-	// Shared, when set, holds the machine records: every change lands on a row's version and the backend caches the table.
-	Shared *cluster.Store
+	// Store holds the machine records: every change lands on a row's version and the backend caches the table.
+	Store *cluster.Store
 }
 
 // Check reports whether New refuses opts before it reads the instance.
@@ -140,26 +140,21 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
-	if opts.Shared != nil {
-		if err := b.reload(ctx, ""); err != nil {
-			return nil, fmt.Errorf("read the shared machines: %w", err)
-		}
-		go opts.Shared.Listen(ctx, cluster.ChannelMachines, func() {
-			if err := b.reload(ctx, ""); err != nil {
-				log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
-			}
-		}, func(payload string) { b.changed(ctx, payload) })
+	if err := b.reload(ctx, ""); err != nil {
+		return nil, fmt.Errorf("read the shared machines: %w", err)
 	}
+	go opts.Store.Listen(ctx, cluster.ChannelMachines, func() {
+		if err := b.reload(ctx, ""); err != nil {
+			log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
+		}
+	}, func(payload string) { b.changed(ctx, payload) })
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
-	}
-	if opts.Shared == nil {
-		go b.Run(ctx)
 	}
 	return b, nil
 }
 
-// Run re-reads the claims and renews their leases until ctx ends; New runs it unless a shared table lets one api do it for all.
+// Run re-reads the claims and renews their leases until ctx ends; one api of the cluster runs it for all.
 func (b *Backend) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
@@ -187,7 +182,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 			if e.meta == nil {
 				e.meta = map[string]string{}
 			}
-			e.begin(opClaim, now, b.lease())
+			e.begin(opClaim, now, b.leaseFor)
 			action = machines.ActionCreated
 			return e, true
 		case e.busy(now):
@@ -195,7 +190,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		}
 		if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
 			sandbox, addr = e.row.ID, e.ownerAddr
-			e.begin(opWake, now, b.lease())
+			e.begin(opWake, now, b.leaseFor)
 			action = machines.ActionWoken
 			return e, true
 		}
@@ -243,7 +238,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 		now := time.Now()
 		if state, _ := e.state(); state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
 			sandbox, addr, started = e.row.ID, e.ownerAddr, true
-			e.begin(opHibernate, now, b.lease())
+			e.begin(opHibernate, now, b.leaseFor)
 			return e, true
 		}
 		return e, false
@@ -528,11 +523,8 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	return nil
 }
 
-// Verify returns the machines whose cached record differs from the shared table and reloads them; without a shared table it has none.
+// Verify returns the machines whose cached record differs from the shared table and reloads them.
 func (b *Backend) Verify(ctx context.Context) ([]string, error) {
-	if b.opts.Shared == nil {
-		return nil, nil
-	}
 	differ, err := b.differences(ctx)
 	for _, id := range differ {
 		b.notified(ctx, id)
@@ -546,27 +538,11 @@ func (b *Backend) SyncOwner(ctx context.Context, owner string) error {
 }
 
 func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*entry, bool)) (machines.Machine, error) {
-	if b.opts.Shared == nil {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		sandbox := b.entries[id].sandbox()
-		next, changed := fn(b.entries[id])
-		if next == nil {
-			return machines.Machine{}, nil
-		}
-		if changed {
-			if next.sandbox() != sandbox {
-				next.rowAt, next.token = time.Now(), ""
-			}
-			b.entries[id] = next
-		}
-		return next.machine(b.opts.DiskGiB), nil
-	}
 	// A write that committed must reach the cache even when the caller left.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 	defer cancel()
 	var kept *entry
-	rec, err := b.opts.Shared.UpdateMachine(ctx, id, func(m *cluster.Machine, found bool) (bool, error) {
+	rec, err := b.opts.Store.UpdateMachine(ctx, id, func(m *cluster.Machine, found bool) (bool, error) {
 		var cur *entry
 		if found {
 			cur = &entry{id: id}
@@ -599,18 +575,9 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 
 // drop removes machine id while cond holds for its entry and reports whether it did.
 func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool) (bool, error) {
-	if b.opts.Shared == nil {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		if e := b.entries[id]; e != nil && cond(e) {
-			delete(b.entries, id)
-			return true, nil
-		}
-		return false, nil
-	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 	defer cancel()
-	removed, err := b.opts.Shared.DeleteMachineIf(ctx, id, func(m cluster.Machine) bool {
+	removed, err := b.opts.Store.DeleteMachineIf(ctx, id, func(m cluster.Machine) bool {
 		e := &entry{id: id}
 		e.load(m)
 		return cond(e)
@@ -632,9 +599,7 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 		ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
 		defer cancel()
 		logger := log.WithFunc("sandboxd.Backend.run").WithField("machine", id)
-		if b.opts.Shared != nil {
-			go b.renewOp(ctx, cancel, id, op, revision)
-		}
+		go b.renewOp(ctx, cancel, id, op, revision)
 		err := fn(ctx)
 		if err != nil {
 			logger.Error(ctx, err, op)
@@ -694,14 +659,6 @@ func (b *Backend) renewOp(ctx context.Context, stop context.CancelFunc, id, op s
 			logger.Warnf(ctx, "renew the lease of %s: %v", op, err)
 		}
 	}
-}
-
-// lease is how long a new op holds its machine before its process must renew it; zero, for ever, in memory.
-func (b *Backend) lease() time.Duration {
-	if b.opts.Shared == nil {
-		return 0
-	}
-	return b.leaseFor
 }
 
 func (b *Backend) claim(ctx context.Context, spec machines.Spec, template, size string) error {
@@ -925,7 +882,7 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 		r, addr, err = b.find(ctx, id)
 	}
 	if errors.Is(err, machines.ErrNotFound) {
-		if b.opts.Shared != nil && sandbox != "" && !held {
+		if sandbox != "" && !held {
 			return machines.Machine{}, machines.ErrNotFound
 		}
 		if err = b.forget(ctx, id, sandbox); err != nil {
@@ -1375,9 +1332,9 @@ func (b *Backend) reload(ctx context.Context, owner string) error {
 	var recs []cluster.Machine
 	var err error
 	if owner == "" {
-		recs, err = b.opts.Shared.Machines(ctx)
+		recs, err = b.opts.Store.Machines(ctx)
 	} else {
-		recs, err = b.opts.Shared.MachinesOf(ctx, owner)
+		recs, err = b.opts.Store.MachinesOf(ctx, owner)
 	}
 	if err != nil {
 		return err
@@ -1417,7 +1374,7 @@ func (b *Backend) changed(ctx context.Context, payload string) {
 
 // notified takes the shared row of machine id into the cache after a notify.
 func (b *Backend) notified(ctx context.Context, id string) {
-	rec, err := b.opts.Shared.Machine(ctx, id)
+	rec, err := b.opts.Store.Machine(ctx, id)
 	if err != nil && !errors.Is(err, cluster.ErrNotFound) {
 		log.WithFunc("sandboxd.Backend.notified").WithField("machine", id).Warnf(ctx, "read the shared machine: %v", err)
 		return
@@ -1447,7 +1404,7 @@ func (b *Backend) loadLocked(rec cluster.Machine) *entry {
 		if e.sandbox() != sandbox {
 			e.rowAt, e.token = time.Now(), ""
 		}
-		// Like a change in memory, only an op end, a failure or a meta change wakes the watchers before their next poll.
+		// Only an op end, a failure or a meta change wakes the watchers before their next poll.
 		if (busy && e.op == "") || opErr != e.opErr || !maps.Equal(meta, e.meta) {
 			e.notifyLocked()
 		}
@@ -1463,7 +1420,7 @@ func (b *Backend) differences(ctx context.Context) ([]string, error) {
 		want[e.id] = e.record()
 	}
 	b.mu.Unlock()
-	rows, err := b.opts.Shared.Machines(ctx)
+	rows, err := b.opts.Store.Machines(ctx)
 	if err != nil {
 		return nil, err
 	}

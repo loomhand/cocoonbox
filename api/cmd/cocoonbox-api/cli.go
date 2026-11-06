@@ -277,10 +277,8 @@ func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
-	if cfg.Cluster.Ledger {
-		if err = reportMigrations(ctx, cfg, stdout); err != nil {
-			return err
-		}
+	if err = reportMigrations(ctx, cfg, stdout); err != nil {
+		return err
 	}
 	_, err = fmt.Fprintln(stdout, "config ok")
 	return err
