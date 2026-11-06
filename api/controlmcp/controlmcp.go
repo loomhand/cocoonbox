@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
-	"slices"
 	"sync"
 	"time"
 
@@ -60,6 +59,14 @@ type ToolLists interface {
 	Get(id string) (users.User, error)
 }
 
+// Connectors serves the tools of the connected accounts the user ticked for a grant, as Connect's mode B door does, and tells when the user's tools change.
+type Connectors interface {
+	Reaches(ctx context.Context, user string, grants []string, name string) (bool, error)
+	GrantedTools(ctx context.Context, user string, grants []string) ([]map[string]jsontext.Value, error)
+	CallGranted(ctx context.Context, user, client string, grants []string, name string, args jsontext.Value) (any, error)
+	ServeChanges(w http.ResponseWriter, r *http.Request, user string)
+}
+
 type grantKey struct{}
 
 type request struct {
@@ -98,11 +105,12 @@ type progressParams struct {
 
 // Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant, and on RootPath with box tools too.
 type Server struct {
-	boxes  controlv1.BoxesServer
-	authn  *auth.Authenticator
-	grants Grants
-	agents Agents
-	lists  ToolLists
+	boxes      controlv1.BoxesServer
+	authn      *auth.Authenticator
+	grants     Grants
+	agents     Agents
+	lists      ToolLists
+	connectors Connectors
 
 	accounts *users.Service
 
@@ -130,6 +138,11 @@ func (s *Server) EnableBoxTools(agents Agents, lists ToolLists) {
 	s.agents, s.lists = agents, lists
 }
 
+// EnableConnectors serves on RootPath, to a grant the user ticked accounts for, the tools of those accounts through connectors.
+func (s *Server) EnableConnectors(connectors Connectors) {
+	s.connectors = connectors
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	user, credential, grant, err := s.authenticate(r)
@@ -145,10 +158,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller += " grant=" + grant.ID
 	}
 	unified, allow := s.agents != nil && r.URL.Path == RootPath, http.MethodPost
+	streams := unified && len(s.connectorGrants(ctx)) != 0
 	if unified {
 		allow += ", " + http.MethodDelete
 	}
+	if streams {
+		allow = http.MethodGet + ", " + allow
+	}
 	switch {
+	case streams && r.Method == http.MethodGet:
+		s.connectors.ServeChanges(w, r.WithContext(ctx), user)
+		return
 	case unified && r.Method == http.MethodDelete:
 		s.endSession(ctx, user, caller, r.Header.Get(mcpwire.SessionHeader))
 		w.WriteHeader(http.StatusNoContent)
@@ -199,7 +219,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, rpcErr = handle(req.Method)
 	case json.Unmarshal(req.Params, &call) != nil:
 		rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
-	case unified && !slices.ContainsFunc(toolSpecs, func(t toolSpec) bool { return t.Name == call.Name }):
+	case unified && s.connectorTool(ctx, call.Name):
+		result, rpcErr = s.callConnector(ctx, &call)
+	case unified && !isControlTool(call.Name):
 		s.callBox(ctx, w, user, s.session(ctx, caller, r.Header.Get(mcpwire.SessionHeader)), req.ID, body, r.Header.Get("Accept"), &call)
 		return
 	default:

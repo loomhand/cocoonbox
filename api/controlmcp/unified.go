@@ -203,23 +203,17 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	if own := l.Instructions; own != "" && len(unifiedHead)+2+len(own) <= maxInstructions {
 		result["instructions"] = unifiedHead + "\n\n" + own
 	}
+	if len(s.connectorGrants(ctx)) != 0 {
+		result["capabilities"] = map[string]any{toolsField: map[string]any{"listChanged": true}}
+	}
 	return result
 }
 
-// listTools lists the control tools, then the default box's tools as the agent of its image serves them, sleeping or not.
+// listTools lists the control tools, then the default box's tools, sleeping or not, then the tools of the accounts a grant holds that no other tool's name shadows.
 func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
-	_, image, err := s.defaultBox(ctx)
-	if err != nil {
-		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: status.Convert(err).Message()}
-	}
-	var boxTools []jsontext.Value
-	l, err := s.lists.ToolList(ctx, image, boxes.Family(image))
-	if err == nil && len(l.Tools) != 0 {
-		err = json.Unmarshal(l.Tools, &boxTools)
-	}
-	if err != nil {
-		log.WithFunc("controlmcp.Server.listTools").Error(ctx, err, "read the tool list of "+image)
-		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "reading the box tools failed"}
+	boxTools, rpcErr := s.boxTools(ctx)
+	if rpcErr != nil {
+		return nil, rpcErr
 	}
 	tools := make([]any, 0, len(toolSpecs)+len(boxTools))
 	for _, t := range toolSpecs {
@@ -228,7 +222,77 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 	for _, t := range boxTools {
 		tools = append(tools, withBoxArgument(t))
 	}
+	if grants := s.connectorGrants(ctx); len(grants) != 0 {
+		g := grantOf(ctx)
+		accountTools, err := s.connectors.GrantedTools(ctx, g.User, grants)
+		if err != nil {
+			log.WithFunc("controlmcp.Server.listTools").Error(ctx, err, "list the connector tools of grant "+g.ID)
+		}
+		boxNames := toolNames(boxTools)
+		for _, t := range accountTools {
+			var name string
+			_ = json.Unmarshal(t["name"], &name)
+			if !isControlTool(name) && !slices.Contains(boxNames, name) {
+				tools = append(tools, t)
+			}
+		}
+	}
 	return map[string]any{toolsField: tools}, nil
+}
+
+// boxTools reads the default box's tools as the agent of its image serves them, sleeping or not.
+func (s *Server) boxTools(ctx context.Context) ([]jsontext.Value, *mcpwire.Error) {
+	_, image, err := s.defaultBox(ctx)
+	if err != nil {
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: status.Convert(err).Message()}
+	}
+	var tools []jsontext.Value
+	l, err := s.lists.ToolList(ctx, image, boxes.Family(image))
+	if err == nil && len(l.Tools) != 0 {
+		err = json.Unmarshal(l.Tools, &tools)
+	}
+	if err != nil {
+		log.WithFunc("controlmcp.Server.boxTools").Error(ctx, err, "read the tool list of "+image)
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "reading the box tools failed"}
+	}
+	return tools, nil
+}
+
+// connectorGrants returns the Connect grants of the accounts the user ticked for the caller's grant; a user token and a server without Connect get none.
+func (s *Server) connectorGrants(ctx context.Context) []string {
+	if g := grantOf(ctx); g != nil && s.connectors != nil {
+		return g.Connectors
+	}
+	return nil
+}
+
+// connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows.
+func (s *Server) connectorTool(ctx context.Context, name string) bool {
+	grants := s.connectorGrants(ctx)
+	if len(grants) == 0 || isControlTool(name) {
+		return false
+	}
+	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, grants, name)
+	if err != nil || !reaches {
+		log.WithFunc("controlmcp.Server.connectorTool").Error(ctx, err, "read the connector of "+name)
+		return false
+	}
+	boxTools, rpcErr := s.boxTools(ctx)
+	return rpcErr == nil && !slices.Contains(toolNames(boxTools), name)
+}
+
+// callConnector runs a tool of an account the caller's grant holds through Connect; it wakes no box.
+func (s *Server) callConnector(ctx context.Context, call *callParams) (any, *mcpwire.Error) {
+	g := grantOf(ctx)
+	out, err := s.connectors.CallGranted(ctx, g.User, g.ClientName, g.Connectors, call.Name, call.Arguments)
+	if rpcErr, ok := errors.AsType[*mcpwire.Error](err); ok {
+		return nil, rpcErr
+	}
+	if err != nil {
+		log.WithFunc("controlmcp.Server.callConnector").Error(ctx, err, "call "+call.Name)
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "internal error"}
+	}
+	return out, nil
 }
 
 // callBox runs a box tool on the box its box argument names, else the session's default box; a box that is not running is woken first, within wakeBound.
@@ -527,6 +591,22 @@ func withBoxArgument(tool jsontext.Value) jsontext.Value {
 		return tool
 	}
 	return out
+}
+
+func isControlTool(name string) bool {
+	return slices.ContainsFunc(toolSpecs, func(t toolSpec) bool { return t.Name == name })
+}
+
+func toolNames(tools []jsontext.Value) []string {
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		var tool struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(t, &tool)
+		names = append(names, tool.Name)
+	}
+	return names
 }
 
 // failure is the tool result a box call that could not run answers.

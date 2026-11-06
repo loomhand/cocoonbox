@@ -11,6 +11,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -32,6 +33,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/connect"
+	"github.com/loomhand/cocoonbox/api/connect/connecttest"
 	"github.com/loomhand/cocoonbox/api/console"
 	"github.com/loomhand/cocoonbox/api/controlmcp"
 	"github.com/loomhand/cocoonbox/api/edge"
@@ -55,17 +58,18 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 		t.Fatalf("no token: %d, want 401", resp.StatusCode)
 	}
 	challenge := resp.Header.Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="`+e.srv.URL+`/.well-known/oauth-protected-resource/cocoonbox.mcp"`) || !strings.Contains(challenge, `scope="boxes"`) {
+	if !strings.Contains(challenge, `resource_metadata="`+e.srv.URL+`/.well-known/oauth-protected-resource/cocoonbox.mcp"`) || !strings.Contains(challenge, `scope="boxes connect"`) {
 		t.Fatalf("challenge = %q", challenge)
 	}
 	var prm map[string]any
 	e.getJSON(t, "/.well-known/oauth-protected-resource/cocoonbox.mcp/control", &prm)
-	if prm["resource"] != e.resource || e.resource != e.srv.URL+"/cocoonbox.mcp" {
+	if prm["resource"] != e.resource || e.resource != e.srv.URL+"/cocoonbox.mcp" || fmt.Sprint(prm["scopes_supported"]) != "[boxes connect]" {
 		t.Errorf("protected resource = %v", prm["resource"])
 	}
 	var asm map[string]any
 	e.getJSON(t, oauth.ServerMetadataPath, &asm)
-	if asm["issuer"] != e.srv.URL || asm["client_id_metadata_document_supported"] != true || fmt.Sprint(asm["code_challenge_methods_supported"]) != "[S256]" || fmt.Sprint(asm["protected_resources"]) != "["+e.resource+"]" {
+	if asm["issuer"] != e.srv.URL || asm["client_id_metadata_document_supported"] != true || fmt.Sprint(asm["code_challenge_methods_supported"]) != "[S256]" || fmt.Sprint(asm["protected_resources"]) != "["+e.resource+"]" ||
+		fmt.Sprint(asm["scopes_supported"]) != "[boxes connect]" {
 		t.Errorf("server metadata = %v", asm)
 	}
 
@@ -201,6 +205,7 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://evil.example/cb") }, false},
 		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }, true},
 		{"another scope", func(q url.Values) { q.Set("scope", "boxes keys") }, true},
+		{"connect without boxes", func(q url.Values) { q.Set("scope", "connect") }, true},
 		{"another resource", func(q url.Values) { q.Set("resource", e.srv.URL+"/cocoonbox.mcpx") }, true},
 	}
 	for _, tt := range tests {
@@ -451,7 +456,7 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 		{"the user's named box", e.userToken, map[string]any{"command": "id", "box": "work"}, false, "cred:" + work.ID},
 		{"the user's default box", e.userToken, map[string]any{"command": "id"}, false, "cred:" + main},
 	} {
-		fails, text := e.rootCall(t, tt.token, "s1", tt.args)
+		fails, text := e.rootTool(t, tt.token, "s1", "shell", tt.args)
 		if fails != tt.fails || !strings.HasPrefix(text, tt.want) {
 			t.Errorf("unified, %s: %v %q, want %v %q", tt.name, fails, text, tt.fails, tt.want)
 		}
@@ -467,7 +472,7 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("box MCP of a box no longer chosen: %d", resp.StatusCode)
 	}
-	if fails, text := e.rootCall(t, access, "s1", map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
+	if fails, text := e.rootTool(t, access, "s1", "shell", map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
 		t.Errorf("unified default after the change: %v %q", fails, text)
 	}
 	if code, _ := e.consoleStatus(t, http.MethodPut, "agents/oag_missing/boxes", map[string]any{"boxes": []string{}}); code != http.StatusNotFound {
@@ -480,7 +485,7 @@ func TestAGrantKeepsOneAgentSessionAcrossClientSessionsUntilItEnds(t *testing.T)
 	main := e.users.Boxes(e.alice)[0].ID
 	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main)
 	for i := range 3 {
-		if fails, text := e.rootCall(t, access, fmt.Sprint("grant-", i), map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+main) {
+		if fails, text := e.rootTool(t, access, fmt.Sprint("grant-", i), "shell", map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+main) {
 			t.Fatalf("call %d in a new client session: %v %q", i, fails, text)
 		}
 	}
@@ -493,7 +498,7 @@ func TestAGrantKeepsOneAgentSessionAcrossClientSessionsUntilItEnds(t *testing.T)
 		t.Fatalf("after the revoke the agent saw %v, want the shared session closed", seen)
 	}
 	for i := range 2 {
-		e.rootCall(t, e.userToken, fmt.Sprint("user-", i), map[string]any{"command": "id"})
+		e.rootTool(t, e.userToken, fmt.Sprint("user-", i), "shell", map[string]any{"command": "id"})
 	}
 	if n := len(slices.DeleteFunc(e.seen.list(), func(m string) bool { return m != "initialize" })); n != 3 {
 		t.Fatalf("two client sessions of the user token opened %d agent sessions in all, want 1 + 2", n)
@@ -567,17 +572,158 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 	}
 }
 
+func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
+	e := newEnv(t)
+	vendor := e.enableConnect(t)
+	clientID := e.register(t, "Agent")
+	main := e.users.Boxes(e.alice)[0].ID
+
+	consent := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
+	if !consent.Connect || consent.Existing || fmt.Sprint(consent.Connectors) != "[{mock mock } {other other }]" || len(consent.ChosenConnectors) != 0 {
+		t.Fatalf("consent = %+v, want alice's active accounts and none ticked", consent)
+	}
+	if boxesOnly := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes")); boxesOnly.Connect || len(boxesOnly.Connectors) != 0 {
+		t.Errorf("a request without the connect scope offers %+v", boxesOnly)
+	}
+	for _, tc := range []struct{ scope, connector string }{
+		{"boxes connect", "theirs"}, {"boxes connect", "stale"}, {"boxes connect", "nope"}, {"boxes", "mock"},
+	} {
+		q := connectQuery(clientID, strings.Repeat("v", 43), tc.scope)
+		body := map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "connectors": []string{tc.connector}}
+		if status, text := e.consoleStatus(t, http.MethodPost, "oauth/approve", body); status != http.StatusBadRequest {
+			t.Errorf("approve %s with %q: %d %s, want 400", tc.connector, tc.scope, status, text)
+		}
+	}
+
+	access, refresh, scope := e.connectGrant(t, clientID, []string{main}, "mock")
+	if scope != "boxes connect" {
+		t.Errorf("token scope = %q", scope)
+	}
+	renewal := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
+	if !renewal.Existing || !slices.Equal(renewal.ChosenConnectors, []string{"mock"}) {
+		t.Errorf("renewal consent = %+v, want mock ticked", renewal)
+	}
+	tools := e.rootTools(t, access)
+	if !slices.Contains(slices.Collect(maps.Keys(tools)), "mock_list_items") || slices.ContainsFunc(slices.Collect(maps.Keys(tools)), func(n string) bool { return strings.HasPrefix(n, "other_") }) {
+		t.Fatalf("grant tools = %v, want mock's and not other's", slices.Sorted(maps.Keys(tools)))
+	}
+	if !strings.Contains(tools["mock_create_item"], `"destructiveHint":true`) || !strings.Contains(tools["mock_list_items"], `"readOnlyHint":true`) {
+		t.Errorf("annotations = %v", tools)
+	}
+	ops := e.boxOps()
+	if isError, text := e.rootTool(t, access, "", "mock_create_item", map[string]any{"title": "x"}); isError || text != "create_item done" {
+		t.Errorf("account call = %t %q", isError, text)
+	}
+	if _, _, calls := vendor.Snapshot(); len(calls) != 1 || calls[0].Tool != "create_item" {
+		t.Errorf("vendor calls = %+v", calls)
+	}
+	if e.boxOps() != ops || len(e.seen.list()) != 0 {
+		t.Errorf("the account call woke a box: %d ops, agent saw %v", e.boxOps()-ops, e.seen.list())
+	}
+	resp := e.post(t, oauth.TokenPath, "application/x-www-form-urlencoded", url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}.Encode())
+	var refreshed struct {
+		Scope string `json:"scope"`
+	}
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &refreshed) != nil || refreshed.Scope != "boxes connect" {
+		t.Errorf("refresh: %d scope %q", resp.StatusCode, refreshed.Scope)
+	}
+
+	plain, _, plainScope := e.connectGrant(t, e.register(t, "Plain Agent"), nil)
+	if names := slices.Collect(maps.Keys(e.rootTools(t, plain))); plainScope != "boxes" || slices.Contains(names, "mock_list_items") {
+		t.Errorf("a grant with no account ticked: scope %q, tools %v", plainScope, names)
+	}
+	if names := slices.Collect(maps.Keys(e.rootTools(t, e.userToken))); slices.Contains(names, "mock_list_items") {
+		t.Errorf("the user token on the unified MCP lists %v, want no account tools", names)
+	}
+	if status, _ := e.door(t, access); status != http.StatusUnauthorized {
+		t.Errorf("the mode B door answers an access token with %d, want 401", status)
+	}
+	if status, body := e.door(t, e.userToken); status != http.StatusOK || !strings.Contains(body, "mock_list_items") || !strings.Contains(body, "other_list_items") {
+		t.Errorf("the mode B door for the user token: %d %s", status, body)
+	}
+}
+
+func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
+	e := newEnv(t)
+	e.enableConnect(t)
+	access, _, _ := e.connectGrant(t, e.register(t, "Agent"), nil, "mock")
+	e.console(t, http.MethodPut, "connect/mock/policy", map[string]any{"tool": "list_items", "policy": "off"}, nil)
+	if _, ok := e.rootTools(t, access)["mock_list_items"]; ok {
+		t.Error("a tool that is off is listed")
+	}
+	if isError, text := e.rootTool(t, access, "", "mock_list_items", map[string]any{}); !isError || !strings.Contains(text, "is off") {
+		t.Errorf("call of a tool that is off = %t %q", isError, text)
+	}
+
+	stream := e.rootStream(t, access)
+	e.console(t, http.MethodDelete, "connect/mock", map[string]any{}, nil)
+	if event := readEvent(t, stream); !strings.Contains(event, "notifications/tools/list_changed") {
+		t.Errorf("stream after a disconnect = %q", event)
+	}
+	if _, ok := e.rootTools(t, access)["mock_create_item"]; ok {
+		t.Error("a disconnected account's tool is listed")
+	}
+	e.connectAccount(t, e.alice, "mock")
+	if event := readEvent(t, stream); !strings.Contains(event, "notifications/tools/list_changed") {
+		t.Errorf("stream after a connect = %q", event)
+	}
+	if _, ok := e.rootTools(t, access)["mock_create_item"]; ok {
+		t.Error("connecting the account again gives it back to a grant the user ticked it for before the disconnect")
+	}
+
+	grants := e.grants(t)
+	e.console(t, http.MethodDelete, "agents/"+grants[0].ID, map[string]any{}, nil)
+	if _, err := io.ReadAll(stream); err != nil {
+		t.Errorf("stream after the revoke: %v", err)
+	}
+	if resp := e.rootRPC(t, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("tools/list after the revoke = %d", resp.StatusCode)
+	}
+}
+
+func TestTheConnectorMigrationAppliesOnAnExistingDatabase(t *testing.T) {
+	e := newEnv(t)
+	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	conn, err := pgx.Connect(t.Context(), e.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(t.Context(), "DROP TABLE oauth_connectors; ALTER TABLE oauth_codes DROP COLUMN connectors; DELETE FROM oauth_schema_migrations WHERE version = 4"); err != nil {
+		t.Fatalf("roll back to migration 3: %v", err)
+	}
+	grants, err := oauth.Open(t.Context(), oauth.Options{DSN: e.dsn, Issuer: e.srv.URL, Resource: e.resource, Accounts: e.users})
+	if err != nil {
+		t.Fatalf("open on a database at migration 3: %v", err)
+	}
+	defer grants.Close()
+	g, err := grants.Authenticate(t.Context(), "Bearer "+access)
+	if err != nil || len(g.Connectors) != 0 {
+		t.Fatalf("a grant made before the migration = %+v, %v", g, err)
+	}
+	var applied bool
+	if err := conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM oauth_schema_migrations WHERE version = 4)").Scan(&applied); err != nil || !applied {
+		t.Errorf("migration 4 applied: %t, %v", applied, err)
+	}
+}
+
 type env struct {
 	dsn       string
 	waking    *wakeGate
 	seen      *agentLog
 	srv       *httptest.Server
+	mux       *http.ServeMux
+	control   *controlmcp.Server
+	web       *console.Server
+	boxes     *fakeBoxes
 	client    *http.Client
 	users     *users.Service
 	authn     *auth.Authenticator
 	resource  string
 	alice     string
 	userToken string
+	broker    *connect.Service
+	vendor    *connecttest.Vendor
 }
 
 func newEnv(t *testing.T) *env {
@@ -637,7 +783,10 @@ func newEnv(t *testing.T) *env {
 	client := srv.Client()
 	client.Jar, _ = cookiejar.New(nil)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	e := &env{dsn: dsn, waking: waking, seen: seen, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
+	e := &env{
+		dsn: dsn, waking: waking, seen: seen, srv: srv, mux: mux, control: control, web: web, boxes: store, client: client, users: us, authn: authn,
+		resource: resource, alice: alice.ID, userToken: userToken,
+	}
 	e.console(t, http.MethodPost, "login", map[string]any{"name": "alice", "password": alicePassword}, nil)
 	return e
 }
@@ -789,33 +938,6 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 	return agents.Grants
 }
 
-func (e *env) rootCall(t *testing.T, token, session string, args map[string]any) (bool, string) {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "shell", "arguments": args}})
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Mcp-Session-Id", session)
-	resp, err := e.client.Do(req)
-	if err != nil {
-		t.Fatalf("unified call: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	var out struct {
-		Result struct {
-			IsError bool `json:"isError"`
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-	}
-	if err := json.UnmarshalRead(resp.Body, &out); err != nil || len(out.Result.Content) == 0 {
-		t.Fatalf("unified call: %d %v", resp.StatusCode, err)
-	}
-	return out.Result.IsError, out.Result.Content[0].Text
-}
-
 func (e *env) boxMCP(t *testing.T, token, box string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+edge.MCPPrefix+box, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
@@ -911,6 +1033,179 @@ func (e *env) redeemAccount(t *testing.T, q url.Values, verifier string) string 
 		t.Fatalf("token answer = %v, want a device token with no expiry or refresh token", tok)
 	}
 	return token
+}
+
+// enableConnect turns Connect on with alice's active accounts mock and other, her account stale that needs a reconnect, and bob's account theirs.
+func (e *env) enableConnect(t *testing.T) *connecttest.Vendor {
+	t.Helper()
+	vendor := connecttest.New()
+	t.Cleanup(vendor.Close)
+	broker, err := connect.Open(t.Context(), connect.Options{DSN: e.dsn, Keys: e.users, Sessions: e.users, PublicURL: e.srv.URL, AllowPrivate: true})
+	if err != nil {
+		t.Fatalf("open connect: %v", err)
+	}
+	t.Cleanup(broker.Close)
+	e.broker, e.vendor = broker, vendor
+	e.web.EnableConnect(broker)
+	e.control.EnableConnectors(broker)
+	e.mux.Handle(connect.MCPPath, broker.NewDoor(e.authn, connect.DoorMCP))
+	bob, err := e.users.Create(t.Context(), users.NewUser{Name: "bob", Password: "bob-password"})
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	for _, name := range []string{"mock", "other", "stale"} {
+		e.connectAccount(t, e.alice, name)
+	}
+	e.connectAccount(t, bob.ID, "theirs")
+	conn, err := pgx.Connect(t.Context(), e.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(t.Context(), "UPDATE connect_grants SET status = 'needs_reconnect' WHERE connector = 'stale'"); err != nil {
+		t.Fatalf("lose stale: %v", err)
+	}
+	return vendor
+}
+
+func (e *env) connectAccount(t *testing.T, user, name string) {
+	t.Helper()
+	req := connect.StartRequest{User: user, Connector: "custom", Name: name, URL: e.vendor.KeyedURL(), Header: "X-Api-Key", Key: connecttest.Key}
+	if _, err := e.broker.Start(t.Context(), req); err != nil {
+		t.Fatalf("connect %s for %s: %v", name, user, err)
+	}
+}
+
+func (e *env) connectConsent(t *testing.T, q url.Values) connectConsent {
+	t.Helper()
+	var consent connectConsent
+	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
+	return consent
+}
+
+// connectGrant consents with the connect scope, ticking boxes and connectors, and returns the access and refresh tokens and the scope the token endpoint reports.
+func (e *env) connectGrant(t *testing.T, clientID string, boxes []string, connectors ...string) (string, string, string) {
+	t.Helper()
+	verifier := rand.Text() + rand.Text()
+	q := connectQuery(clientID, verifier, "boxes connect")
+	var approved struct {
+		Redirect string `json:"redirect"`
+	}
+	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "boxes": boxes, "connectors": connectors}, &approved)
+	u, err := url.Parse(approved.Redirect)
+	if err != nil {
+		t.Fatalf("redirect = %q", approved.Redirect)
+	}
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {u.Query().Get("code")}, "client_id": {clientID}, "redirect_uri": {callback}, "code_verifier": {verifier}}
+	resp := e.post(t, oauth.TokenPath, "application/x-www-form-urlencoded", form.Encode())
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		Scope        string `json:"scope"`
+	}
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil {
+		t.Fatalf("token: %d", resp.StatusCode)
+	}
+	return tok.AccessToken, tok.RefreshToken, tok.Scope
+}
+
+func (e *env) rootRPC(t *testing.T, token, session, method string, params any) *http.Response {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("unified %s: %v", method, err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// rootTools returns the unified MCP's tools by name, each with its annotations.
+func (e *env) rootTools(t *testing.T, token string) map[string]string {
+	t.Helper()
+	var out struct {
+		Result struct {
+			Tools []struct {
+				Name        string         `json:"name"`
+				Annotations jsontext.Value `json:"annotations"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if resp := e.rootRPC(t, token, "", "tools/list", nil); resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &out) != nil {
+		t.Fatalf("unified tools/list: %d", resp.StatusCode)
+	}
+	tools := map[string]string{}
+	for _, tool := range out.Result.Tools {
+		tools[tool.Name] = string(tool.Annotations)
+	}
+	return tools
+}
+
+func (e *env) rootTool(t *testing.T, token, session, tool string, args map[string]any) (bool, string) {
+	t.Helper()
+	var out struct {
+		Result struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	resp := e.rootRPC(t, token, session, "tools/call", map[string]any{"name": tool, "arguments": args})
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &out) != nil || len(out.Result.Content) == 0 {
+		t.Fatalf("unified %s: %d", tool, resp.StatusCode)
+	}
+	return out.Result.IsError, out.Result.Content[0].Text
+}
+
+func (e *env) rootStream(t *testing.T, token string) io.ReadCloser {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.srv.URL+controlmcp.RootPath, nil)
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := e.client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("unified stream: %v %v", err, resp)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp.Body
+}
+
+func (e *env) door(t *testing.T, token string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+connect.MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("door: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+func (e *env) boxOps() int {
+	e.boxes.mu.Lock()
+	defer e.boxes.mu.Unlock()
+	return e.boxes.ops
+}
+
+type connectConsent struct {
+	oauth.Consent
+	Connectors []struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Account string `json:"account"`
+	} `json:"connectors"`
+	ChosenConnectors []string `json:"chosen_connectors"`
 }
 
 // fakeBoxes keeps box rows in the users service, as boxes.Service does, and every box runs at once.
@@ -1095,6 +1390,23 @@ func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	agent.Start()
 	t.Cleanup(agent.Close)
 	return agent
+}
+
+func connectQuery(clientID, verifier, scope string) url.Values {
+	return url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(verifier)},
+		"code_challenge_method": {"S256"}, "state": {"st"}, "scope": {scope},
+	}
+}
+
+func readEvent(t *testing.T, stream io.Reader) string {
+	t.Helper()
+	buf := make([]byte, 512)
+	n, err := stream.Read(buf)
+	if err != nil {
+		t.Fatalf("read the stream: %v", err)
+	}
+	return string(buf[:n])
 }
 
 func challenge(verifier string) string {

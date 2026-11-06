@@ -52,8 +52,12 @@ async function load() {
     ? "The answer goes to " + c.redirect_host + " on this computer. Allow it only if you started this from an agent on this computer just now."
     : "The answer goes to " + c.redirect_host + ".";
   $("existing").hidden = !c.existing;
-  $("choice-list").replaceChildren(...c.boxes.map((b) => checkbox(b, c.chosen.includes(b.id))));
+  $("choice-list").replaceChildren(...c.boxes.map((b) => checkbox("box", b.id, b.name, c.chosen.includes(b.id))));
   $("choices").hidden = !c.boxes.length;
+  $("connector-list").replaceChildren(
+    ...c.connectors.map((a) => checkbox("connector", a.id, a.account ? a.name + " (" + a.account + ")" : a.name, c.chosen_connectors.includes(a.id))),
+  );
+  $("connectors").hidden = !c.connectors.length;
   const f = $("consent-form");
   f.max_boxes.value = c.defaults.max_boxes;
   f.max_running.value = c.defaults.max_running;
@@ -61,14 +65,14 @@ async function load() {
   show("consent");
 }
 
-function checkbox(box, checked) {
+function checkbox(name, value, text, checked) {
   const label = document.createElement("label");
   const input = document.createElement("input");
   input.type = "checkbox";
-  input.name = "box";
-  input.value = box.id;
+  input.name = name;
+  input.value = value;
   input.checked = checked;
-  label.append(input, " " + box.name);
+  label.append(input, " " + text);
   return label;
 }
 
@@ -94,7 +98,8 @@ $("consent-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
   const boxes = [...f.querySelectorAll("input[name=box]:checked")].map((i) => i.value);
-  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value), boxes })
+  const connectors = [...f.querySelectorAll("input[name=connector]:checked")].map((i) => i.value);
+  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value), boxes, connectors })
     .then(({ redirect }) => {
       show("");
       notice("Allowed. Returning to the agent; you can close this tab.");
