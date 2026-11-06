@@ -2,45 +2,6 @@
 
 Measurements and lessons from the bench host (GCP c3-standard-22-lssd).
 
-## Clone timing
-
-Measured on 2026-09-30 on the cocoon-cb stack: provisioning about 30 s on a warm apt cache; snapshot save 48–64 s (13 GB, and ext4 has no reflink, so each clone copies its disk in full); clone to Ready 37 s for v1 (probe 22) and 20 s for v2 (probe 7443); hibernate 144–154 s (uncompressed push); wake 18–19 s.
-
-History: the cocoon-cb store and CocoonSet clones, removed 2026-10-01. Measured 2026-09-30 over four v2 clones with a host tracer (1 s samples of the new CH process and of `nvme0n1`), in-guest timings through `vm exec`, and a page-cache residency probe.
-
-Storage: snapshot `cocoonbox-desktop-v2` keeps `memory-ranges` (8.0 GiB) and `cow.raw` (40 GiB sparse, 4.4 GiB used). That is on `/` (ext4) on `nvme0n1`, the GCP persistent disk. The two unused local NVMe drives are not used for this.
-
-Quiet host (run 4, Ready at +23 s):
-
-| t (s) | Event | Evidence |
-|---|---|---|
-| 0–6 | `cocoon vm clone` copies `cow.raw` in full, because ext4 has no reflink | 837 MiB read from the disk; host Dirty+Writeback rises to 4.5 GiB |
-| 7 | CH runs; vk starts the post-clone `vm exec` | vk log `post-clone setup starting` |
-| 7–22 | the guest waits on disk I/O while the host flushes the copy | CH is flat: minflt 28.3k, majflt 25, read_bytes 116 MB, RSS 504 MB, ~3 CPU ticks/s. Host writeback drains at ~290 MB/s. Guest `drop_caches` takes 14,670 ms and guest io pressure goes from avg10 11 to 76 |
-| 22 | host writeback reaches 11 MiB; both drop_caches calls (vk's and the probe's) finish in the same second | guest kernel `drop_caches: 3` at 08:42:13.17 |
-| 22–23 | the rest of the script and readiness | networkd restart ~20 ms, cold read 16 ms, sync 101 ms |
-
-Guest memory page-in is not the cost. `memory-ranges` is mostly in the host page cache, and the guest touches about 0.5 GiB of it. `vm exec` over vsock works 0.66 s after restore (strace: `CONNECT 1024` answered in 54 ms). The stall comes from direct I/O: CH opens writable disks with O_DIRECT, and direct I/O on a file whose page cache is still dirty waits until that range is written back.
-
-Under other host writes (run 3, while another box was hibernating, with host Dirty already at 7.4 GiB), the copy itself was throttled: 78 s from CreatePod to CH start, and 91 s to Ready.
-
-Run 5 (quiet host, the requested single instrumented clone). The memory file is the snapshot's `memory-ranges`, 8 GiB, on `/dev/nvme0n1p1` (ext4, `nvme_card-pd`), 36% resident in the host page cache at start. CH majflt stays at 0, read_bytes at 15.7 MB and RSS at 574 MB. Post-clone ran from 08:47:19.59 to 08:47:35.48 (15.9 s). Guest `drop_caches` finished at 35.40 and networkd reported `Started` at 35.48, while host dirty+writeback went from 4.3 GiB to 1 MiB over the same window. Run warm right after Ready, the same three commands take 0.010 s (`drop_caches`), 0.004 s (rewrite the networkd file) and 0.137 s (`systemctl restart systemd-networkd`).
-
-### After the move (2026-09-30, 10:04Z)
-
-| Metric | Persistent disk (ext4) | Local NVMe (XFS reflink) |
-|---|---|---|
-| Disk use per clone (`df` delta on `/srv/cb`) | ~4.4 GiB copy | 4 MiB and 5 MiB |
-| `cow.raw` extents | private copy | 3913 extents with `0x2000` shared (`xfs_io -c 'fiemap -v'`), `filefrag -v` reports `shared` |
-| Clone to Ready, quiet host | 20–37 s | 10.1 s cold (memory file not yet in page cache: CH read 2.4 GB, majflt 216), 3.9 s warm |
-| vk `post-clone … attempt_dur` | 15.9–16.3 s | 4.45 s cold, 2.39 s warm |
-| Hibernate (suspend to `Suspended`) | 144–159 s | 80 s |
-| Wake to Ready | 18–19 s | 4.6 s (dev-agent and smoke) |
-
-The marker `/etc/cocoonbox/nvme-move-marker` survived hibernate, move and wake on dev-agent, and hibernate and wake on smoke.
-
-Phase timings: hibernate both boxes 60 s + 159 s (serial), stop 4 s, re-check + mkfs + mount 3 s, rsync of 49 GB allocated (159 GB apparent) 287 s, verify (248-entry tree diff, `cmp` of meta.db and the v2 memory file) about 30 s, swap + fstab + quota + `VK_NODE_STORAGE=320Gi` 1 s, restart 32 s, wake dev-agent 4.6 s. The two boxes were unavailable for about 12 min.
-
 ## VNC server: x11vnc (v2) vs TigerVNC (v3)
 
 Measured on 2026-09-30 on the golden (clone of v2), real Xorg `:0` with the dummy driver at 1280x800. The client is an RFB benchmark script on the host, through `ssh -L` to the guest's `127.0.0.1:5900` (Raw encoding, 32 bpp). It answers fences and runs notify/request/provide for the extended clipboard. The driver script runs 45 s idle, a first connect, 20 s of static desktop, then 20 s full-frame and 20 s incremental against a fullscreen `xfce4-terminal` streaming base64. CPU comes from sampling `/proc` in the guest, where 100% is one vCPU.
@@ -181,6 +142,7 @@ v3 smoke clone (probePort 7443) on NVMe:
 - Vault render (v32): a 30+30 key burst left a deleted key rendered, since `EnvironmentFile=` snapshots the file at job start and a rewrite during activation is merged and lost. The render now reads `/run/silkd.env` itself until the file holds still: 40 direct rewrites per trial left it stale in 22/40 trials before, 0/140 after.
 - Modal dialogs (v29): an agent that clicks the "Save As..." push button element through its AT-SPI DoAction deadlocks the modal (reproduced identically on v25). Since v30 an element click on a shown push button or menu item is a hit-tested pointer click in a one-shot driver session.
 - Test gates: a gates run started with `&` from a non-interactive ssh shell inherited SIGINT as ignored (`SigIgn 0x7`), so the Exec signal test hung on its `trap`; run the gates in the foreground.
+- Cut proof (2026-10-01): `cut.sh -p cbdesk:v11 v11b` with no change to `image/`: boot 5 s, provision 30 s (apt and the Chrome and cua-driver downloads through `cut-proxy.py`), seal 3 s, export 38 s, import 55 s, 682 MB. Against v11's tarball: the same dpkg package set (Chrome 154.0.8037.92-1), no ssh host keys, one mode change (`xfwm4.xml`, reinstalled by provision), and otherwise only runtime churn (journal, `/tmp`, `random-seed`, the agent's WAL). `deploy/cbsbx/smoke cbdesk:v11b`: PASS. The template, its golden and its tarball were deleted afterwards. The first run lost three apt `InRelease` files: the guest's overlay (`metacopy=on`) copies metadata-only changes up as metacopy entries, and the export mounted without `metacopy`, so those files vanished from the tarball. The export now mounts with `metacopy=on`; the v11 golden's cow held one such entry (`/var/lib/dpkg/diversions-old`), so earlier templates lost only that backup file.
 
 ## gw notes
 
@@ -193,24 +155,16 @@ Prompt caching on the `openai-chat` wire (2026-10-06): gw moved from the v0.2.7 
 
 Daily counters: without Redis, gw's daily counters are in process, so they restarted with gw and reset every 24 h from the process start, not at UTC midnight. The console's "spent today" is the ledger since UTC midnight.
 
-## New image cut
+## New pool template
 
-As of 2026-10-01, for the frozen cbdesk family; the current flow is [Box image](image.md#cut).
+After a cut ([Box image](image.md#cut)), a new template `cbcore:vN` becomes a pool:
 
-1. `sudo image/cut.sh [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... cbdesk:vN-1 vN`. `-p` reruns `provision.sh` (only when `image/` changed); `-a` installs an agent binary; each `-r` adds a runtime directory whose `provision.sh` runs in the guest, in order; `-f cbcore` cuts `cbcore:vN` instead, adding `image/desk` when no `-r` is given (its cua-driver tarball goes into `image/desk/vendor/` first) and running `image/clean-gate.sh` in the guest after the agent step. It uses only the cbsbx cocoon CLI and silkd's egress relay: no claim, no api. The script stops at the first failure, keeping the VM for inspection (it prints the `vm rm` line). The steps:
-   - `cocoon-cbsbx vm run --name cbcut-vN --nics 0` from `cbdesk:vN-1` (a cold boot, as the sandboxd golden does), then wait for Xorg and the session;
-   - with `-p`, serve `image/cut-proxy.py` (an HTTP forward proxy, stdlib only, no allowlist) on the VM's `<vsock_socket>_2049` unix socket only, where the guest's silkd relays `127.0.0.1:3128`; copy `provision.sh` and `rootfs/` in and run provision as root through `vm exec` with `http(s)_proxy` set (apt has its own proxy conf); the trap stops the proxy;
-   - with `-a`, install the agent and enable `cocoonbox-agent`, run each runtime's `after-agent.sh`, and require the toolhost's shuttle service spec `/etc/cocoonbox/tools.d/cocoonbox.json`;
-   - `seal.sh` through `vm exec`, then `vm stop`;
-   - `image/export-rootfs.sh` on the stopped VM: it reads its layers and cow from `vm inspect` and overlays silkd, the proxy drop-ins, masked wait-online, an apt proxy conf, and a static `agent.env` (`GW_API_KEY=unprovisioned`, `AGENT_LISTEN=127.0.0.1:7443`, no `EDGE_TOKEN`); then `vm rm`;
-   - `cocoon-cbsbx image import cbdesk:vN /srv/cb/sbx/build/cocoonbox-desktop-vN.tar.gz`.
-2. Pools are API-owned since 2026-10-01 17:50Z: `/srv/cb/sbx/data/pools.json` (written by the first `PUT /v1/pools`) seeds the warm targets at boot and overrides the `pools` warm values in `sandboxd.json`; deleting it returns them to the config. A pool's egress, warmup, storage and capture_trim stay config-owned and load only at boot, so a new template key needs one restart today (cocoonstack/sandbox#288 asks for a runtime reload):
-   - `sudo cbsbx-conf cbdesk:vN-1=1 cbdesk:vN=0 …` with every template that is still pooled, so `sandboxd.json` carries vN's egress, warmup and 40G storage (its warm value no longer matters), then one `sudo systemctl restart cbsbx-sandboxd`, which keeps running claims;
-   - then switch the warm targets online with `PUT /v1/pools` (root token, from `/etc/cocoonbox/sandboxd-token`), naming every pool to keep, since an omitted pool is drained: `{"pools": [{"template": "cbdesk:vN", "net": "none", "size": "xlarge", "warm": 1}, {"template": "cbdesk:vN-1", "net": "none", "size": "xlarge", "warm": 0}, …]}`. It answers the new `GET /v1/info` and needs no restart; no claim's VM is touched. The body must not carry egress, warmup or storage (400). The golden builds within about 30 s of the restart even at warm 0; `GET /v1/info` then shows `golden: true`, `warm: 1`.
-3. `sudo deploy/cbsbx/smoke cbdesk:vN`, which must print `PASS`. It uses one claim (no `cb_machine` metadata) and a throwaway gw key, generated by gw's admin API with the tenant token and deleted by its `ak_id`; both are removed at the end. It checks: guest units, the 40 GiB root, gw 200 through the claim secret, the store and the internet through the proxy, 10.203.0.1 :5432/:18200/:22 refused by the proxy (502; the `CB-OUTPUT` reset counter does not move), no key in the guest's environ, `/etc` or `/run`, `GET env` hiding it, the agent answering through the relay, and gw 401 after `PATCH env` removes `GW_KEY`.
-4. Set `image: cbdesk:vN` in `/etc/cocoonbox/api.yaml` (the previous one into `rebase_images` if it is v14 or later; older agents cannot take the paged Restore) and restart the api.
+1. Pools are API-owned since 2026-10-01 17:50Z: `/srv/cb/sbx/data/pools.json` (written by the first `PUT /v1/pools`) seeds the warm targets at boot and overrides the `pools` warm values in `sandboxd.json`; deleting it returns them to the config. A pool's egress, warmup, storage and capture_trim stay config-owned and load only at boot, so a new template key needs one restart today (cocoonstack/sandbox#288 asks for a runtime reload):
+   - `sudo cbsbx-conf cbcore:vN-1=1 cbcore:vN=0 …` with every template that is still pooled, so `sandboxd.json` carries vN's egress, warmup and 40G storage (its warm value no longer matters), then one `sudo systemctl restart cbsbx-sandboxd`, which keeps running claims;
+   - then switch the warm targets online with `PUT /v1/pools` (root token, from `/etc/cocoonbox/sandboxd-token`), naming every pool to keep, since an omitted pool is drained: `{"pools": [{"template": "cbcore:vN", "net": "none", "size": "xlarge", "warm": 1}, {"template": "cbcore:vN-1", "net": "none", "size": "xlarge", "warm": 0}, …]}`. It answers the new `GET /v1/info` and needs no restart; no claim's VM is touched. The body must not carry egress, warmup or storage (400). The golden builds within about 30 s of the restart even at warm 0; `GET /v1/info` then shows `golden: true`, `warm: 1`.
+2. `sudo deploy/cbsbx/smoke cbcore:vN`, which must print `PASS`. It uses one claim (no `cb_machine` metadata) and a throwaway gw key, generated by gw's admin API with the tenant token and deleted by its `ak_id`; both are removed at the end. It checks: guest units, the 40 GiB root, gw 200 through the claim secret, the store and the internet through the proxy, 10.203.0.1 :5432/:18200/:22 refused by the proxy (502; the `CB-OUTPUT` reset counter does not move), no key in the guest's environ, `/etc` or `/run`, `GET env` hiding it, the agent answering through the relay, and gw 401 after `PATCH env` removes `GW_KEY`.
+3. Set `image: cbcore:vN` in `/etc/cocoonbox/api.yaml`, move the previous one into `rebase_images`, and restart the api.
 
-Proof, 2026-10-01: `cut.sh -p cbdesk:v11 v11b` with no change to `image/`: boot 5 s, provision 30 s (apt and the Chrome and cua-driver downloads through `cut-proxy.py`), seal 3 s, export 38 s, import 55 s, 682 MB. Against v11's tarball: the same dpkg package set (Chrome 154.0.8037.92-1), no ssh host keys, one mode change (`xfwm4.xml`, reinstalled by provision), and otherwise only runtime churn (journal, `/tmp`, `random-seed`, the agent's WAL). `deploy/cbsbx/smoke cbdesk:v11b`: PASS. The template, its golden and its tarball were deleted afterwards. The first run lost three apt `InRelease` files: the guest's overlay (`metacopy=on`) copies metadata-only changes up as metacopy entries, and the export mounted without `metacopy`, so those files vanished from the tarball. The export now mounts with `metacopy=on`; the v11 golden's cow held one such entry (`/var/lib/dpkg/diversions-old`), so earlier templates lost only that backup file.
 - sandboxd keeps the golden of a removed pool (`/srv/cb/sbx/data/goldens/<hash>`, ~8 GB each); delete it by hand after dropping a pool for good. The stamp file next to it names the image.
 
 Safety rule for every command on a node: each `sandboxd` or `cocoon` invocation carries an explicit `-config` (`--config` for cocoon) or goes through `cocoon-cbsbx`. Check a version with `sandboxd -version` or `go version -m`, never with a bare binary or an unknown argument, and never pipe into `head` a command that can still act. sandboxd ignores positional arguments and starts with the default `/etc/sandboxd/config.json`, and its startup reconcile removes every `sbx-` VM no claim of that config owns. On 2026-10-01 a `sandboxd version` run this way removed two warm VMs of the host's other sandboxd instance before `head -3` closed its pipe.
@@ -219,7 +173,7 @@ Safety rule for every command on a node: each `sandboxd` or `cocoon` invocation 
 
 A Rebase always saves the current machine first, then restores that save. Never Rebase a freshly created, empty machine to restore a box: the Rebase saves the empty state and restores it. Use restore-on-missing instead (api ≥ fda6d5d). When a box has no machine, Ensure creates one and restores the box's head: `PHASE_RESTORING`, then "restored snapshot <id>". The new machine starts from the latest image of the family recorded in the head (`image`, since the 2026-10-07 api); a head without it, such as a hand-written one, restores onto the default image.
 - Free a box's machine for a window: run SaveState and check the new head. Then release that machine's claim (`POST http://127.0.0.1:17780/v1/sandboxes/{id}/release` with the root token); its gw key is the user's and stays. Ensure brings the box back from that head.
-- Restore a snapshot older than the head: release the machine first, so no scheduled save moves the head. Back up `<box>/head.json` and rewrite it to `{"latest": "<id>", "saved_at_ms": <its saved_at_ms>, "image": "<the old head's image>"}`. Restart the api, because it caches heads, then run Ensure. Since 2026-10-02 the GC keeps only the snapshots of the retention rule (design §25.3), so pick the id from the box's `timeline.json`; a head that is not in it stops the user's GC pass with an error.
+- Restore a snapshot older than the head: release the machine first, so no scheduled save moves the head. Back up `<user>/boxes/<box>/head.json` and rewrite it to `{"latest": "<id>", "saved_at_ms": <its saved_at_ms>, "image": "<the old head's image>"}`. With `cluster.shared` the api reads the head from the `box_heads` row (`user_id`, `box`) of the cluster database, not from the file: rewrite that row's `head` instead. Restart every api, because each caches heads, then run Ensure. Since 2026-10-02 the GC keeps only the snapshots of the retention rule (design §25.3), so pick the id from the box's `timeline.json`; a head that is not in it stops the user's GC pass with an error.
 
 ## Deploying a binary into a box
 
@@ -234,15 +188,10 @@ A change made this way lasts until the box's next Rebase; ship it in the next te
 
 ## Switch to the sandboxd backend (M4.8, 2026-09-30)
 
-Every provisioned user moved from CocoonSets to claims on the cbsbx instance (design §14): a quiesced SaveState on cocoonset, the api flipped to `backend: sandboxd`, then `Ensure` restored each box through restore-on-missing. Restore into the new claim: boot 1 s, restore 2 s; round trip on the new backend: hibernate 23 s, wake op DONE in 1.0 s.
-
-On the old backend, the hibernate push spooled 8 GiB to `/tmp` on the root fs; the kubelet evicted the registry and cocoon-operator (DiskPressure) and the hibernate timed out. With `TMPDIR` on the NVMe the next hibernate took 106 s with the root fs flat.
-
 Two defects surfaced on hardware; unit tests missed both:
 - MCP hang: the sandboxd endpoint key was `sandboxd:<id>`, no host:port. `edge/mcp.go` puts the key into the upstream URL host, and net/http then never found the connection it had dialed and redialed until the client gave up. gRPC was unaffected. Fix `fbae11c`: key `<id>.sandboxd:<agent port>`.
 - Wake operations timed out on a ready box: the sandboxd `Watch` deduplicated on state, reason, incarnation and revision, so the provisioner's `SetMeta` of the wake id sent no update and the operation waited 10 min. Fix `64415a1`: the dedup key includes `Meta`, as `Watch`'s contract (an update on every change) requires.
 
 ## Known gaps
 
-- Claims keep the golden's hostname, because they are memory clones of it (and, up to v11, its SSH host keys).
 - The `anthropic/` models reach OpenRouter through gw's messages→chat translation (the `openrouter` kind speaks only `openai-chat`).
