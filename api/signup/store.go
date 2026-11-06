@@ -35,7 +35,6 @@ var (
 // taken says which link of an identity already exists: the IdP account's, or the user's own for that IdP.
 type taken int
 
-// querier reads and writes within a transaction or on the pool.
 type querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
@@ -243,7 +242,6 @@ func (s *store) addInvite(ctx context.Context, inv Invite, codeSHA256 string) (I
 	return inv, nil
 }
 
-// invites lists the invites, only token's when it is not empty.
 func (s *store) invites(ctx context.Context, token string) ([]Invite, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, uses_left, expires_at, created_by, coalesce(token_id, ''), created_at FROM signup_invites
 		WHERE $1 = '' OR token_id = $1 ORDER BY created_at DESC LIMIT $2`, token, maxListed)
@@ -384,7 +382,6 @@ func (s *store) removeIdentity(ctx context.Context, user, idp string) error {
 	return s.one(ctx, "DELETE FROM identities WHERE user_id = $1 AND idp = $2", user, idp)
 }
 
-// one runs a change that must touch a row, ErrNotFound when it touched none.
 func (s *store) one(ctx context.Context, sql string, args ...any) error {
 	tag, err := s.pool.Exec(ctx, sql, args...)
 	if err != nil {

@@ -1,5 +1,4 @@
-// Package signup signs people in with GitHub and, while an admin has it on, lets a new person sign up: a seat makes the
-// account at once, and with every seat taken the person waits in an ordered queue that admission drains as seats open.
+// Package signup signs people in with GitHub and admits new ones into seats through an ordered queue.
 package signup
 
 import (
