@@ -4,7 +4,7 @@ Native client for cocoonbox: sign in, start or wake the box, talk to its agents,
 
 | Target | What |
 |---|---|
-| `CocoonBoxKit` | the app's only interface below the UI: `BoxConnection` (one HTTP/2 connection; Boxes, Agents and Session calls and the resumable event follower, with the gRPC clients kept internal) and `LiveScreen` (the swift-rfb client and view over `Session.Screen`) |
+| `CocoonBoxKit` | the app's interface below the UI, next to `CocoonBoxTerminal`: `BoxConnection` (one HTTP/2 connection; Boxes, Agents and Session calls and the resumable event follower, with the gRPC clients kept internal) and `LiveScreen` (the swift-rfb client and view over `Session.Screen`) |
 | `CocoonBox` | the SwiftUI + AppKit app |
 | `MockBox` | a local server for Boxes, Agents and Session with canned turns and a synthetic RFB desktop |
 | `RFBTestServer` | the synthetic RFB 3.8 server used by MockBox and the tests |
@@ -78,7 +78,7 @@ cocoonbox share create main --ttl 7d  # a read-only share link of a box (default
 
 Every client runs `cocoonbox mcp`, a stdio MCP server. It reads the token from the Keychain and keeps it only in memory. Lifecycle tools go to the control MCP (`/cocoonbox.mcp/control`) and box tools to `/cocoonbox.mcp/<box id>`. The client's own `initialize` is passed through, so the app lists the session under the client's name. With the box hibernated, `tools/list` answers from the box's last list (`~/Library/Caches/cocoonbox`), and the first box-tool call wakes the box, reporting progress on the caller's token; `--no-wake` refuses instead. No client config holds a token or a URL.
 
-The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.json`), not from the environment, because `codex` passes MCP servers only a fixed set of variables. The CLI keeps its own Keychain item while builds are ad hoc signed. Each rebuild has a new code hash, so the first read after a rebuild raises a Keychain prompt, and the bridge waits on it, which a client may count as a failed start; run `cocoonbox login` again after rebuilding. `cocoonbox login --from-app` copies the app's token after one "Always Allow".
+The endpoint comes from `--endpoint`, `COCOONBOX_ENDPOINT` or `login`'s `~/Library/Application Support/CocoonBox/cli.json`; client configs carry none, because `codex` passes MCP servers only a fixed set of variables. The CLI keeps its own Keychain item while builds are ad hoc signed. Each rebuild has a new code hash, so the first read after a rebuild raises a Keychain prompt, and the bridge waits on it, which a client may count as a failed start; run `cocoonbox login` again after rebuilding. `cocoonbox login --from-app` copies the app's token after one "Always Allow".
 
 `scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP and the browser sign-in (it allows at once; `BROWSER` names a stub that follows the consent URL).
 

@@ -74,8 +74,8 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
   - It streams every file to `serve`, which splits the bytes with FastCDC (256 KiB / 1 MiB / 4 MiB).
   - Chunk id = hex HMAC-SHA256. Each chunk is compressed with zstd, then sealed with AES-256-GCM using a random nonce and the id as associated data. Both keys are derived from the per-request user key, which is never stored.
   - SQLite files are read through the online backup API when possible, and their `-wal` and `-journal` sidecars are then left out. `agent.db` goes through `Store::backup_to`.
-  - Under LIVE, a file that changes during two reads, or that the toolhost cannot read, is recorded in `skipped`; a toolhost out of reach fails the plan. QUIESCED pauses new turns (it waits up to 30 s for a running one and answers `UNAVAILABLE` otherwise) and closes Chrome through CDP; Chrome restarts afterwards.
-  - New chunks and the sealed manifest are spooled under `/var/lib/cocoonbox/state` until Upload. Chunks the last upload already held under the same key are not spooled. At start the agent clears that directory but for the list of chunks the last upload held, so what a killed operation left there goes.
+  - Under LIVE, a file that changes during two reads, or that the toolhost cannot read, is recorded in `skipped`; a toolhost out of reach fails the plan. QUIESCED pauses new turns (it waits 30 s for a running one, interrupts share MCP calls, waits 5 s more, then answers `UNAVAILABLE`) and closes Chrome through CDP; Chrome restarts afterwards.
+  - New chunks and the sealed manifest are spooled under `/var/lib/cocoonbox/state` until Upload. At start the agent clears that directory but for the list of chunks the last upload held, so what a killed operation left there goes.
 - **Upload.** It PUTs the requested chunks (32 concurrent, 3 attempts) and streams `TransferProgress`. It may span several calls: only the call that carries `manifest` writes it (last), finishes with `manifest_id == snapshot_id`, and unpins the snapshot. A Plan without `parent` spools every chunk; with one, chunks the last upload already held are not spooled.
 - **Restore.** A bidi stream: the first message carries the key and the manifest URL, later ones pages of chunk URLs (2048 at most). Fetching starts with the first page, and the next page is read only when the queue runs low. After the last page, every chunk the manifest references must have had a URL (`no url for chunk` otherwise).
   - It writes each root into a staging dir as `user` while it downloads and verifies every chunk (authentication and id). Then it pauses turns, closes Chrome and swaps.
@@ -92,7 +92,6 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 - Delta events are not coalesced: one gw SSE chunk produces one event. A slow client that falls behind the live channel gets `DATA_LOSS` and reconnects with `from_offset`.
 - The main agent's history from earlier turns keeps no images.
 - Directory mtimes are not restored. If the desktop session cannot be stopped (grant missing), Restore aborts after staging and leaves `.cb-restore-*` dirs behind.
-- A QUIESCED plan waits a fixed 30 s for a running turn; that path has no test.
 - Plan spools every new chunk to disk, so the first snapshot needs free space about the size of the compressed state.
 
 ## Environment
