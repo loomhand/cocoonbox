@@ -934,6 +934,9 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 }
 
 func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
+	if err := boxes.CheckStart(ctx); err != nil {
+		return nil, err
+	}
 	record := boxes.AgentRecord(ctx)
 	b, err := f.users.AddBox(ctx, users.Box{ID: "cb-" + hex.EncodeToString([]byte(rand.Text()))[:12], Owner: auth.User(ctx), Name: req.GetName(), Agent: record != nil})
 	if err != nil {
@@ -948,6 +951,9 @@ func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest)
 }
 
 func (f *fakeBoxes) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
+	if err := boxes.CheckStart(ctx); err != nil {
+		return nil, err
+	}
 	list := f.users.Boxes(auth.User(ctx))
 	i := slices.IndexFunc(list, func(b users.Box) bool { return req.GetBoxId() == "" || b.ID == req.GetBoxId() })
 	if i < 0 {
