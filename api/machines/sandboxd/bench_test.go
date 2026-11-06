@@ -85,7 +85,7 @@ func benchSeeded(b *testing.B, op func(context.Context, *Backend) error) {
 func seedBackend(b *testing.B, n int) *Backend {
 	b.Helper()
 	fake := newFakeSandboxd(b)
-	be, err := New(b.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Shared: clustertest.Open(b)})
+	be, err := New(b.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(b)})
 	if err != nil {
 		b.Fatalf("New: %v", err)
 	}

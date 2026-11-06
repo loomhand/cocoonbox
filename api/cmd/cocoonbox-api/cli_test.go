@@ -51,34 +51,39 @@ func TestImportStateKeyTakesTheBoxKeyOrDrawsOne(t *testing.T) {
 }
 
 func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
-	token := filepath.Join(t.TempDir(), "token")
+	dir := t.TempDir()
+	token := filepath.Join(dir, "token")
 	if err := os.WriteFile(token, []byte("root"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	cfg := &config.Config{Sandboxd: config.Sandboxd{URL: "http://127.0.0.1:1", TokenFile: token}, Flavor: config.Flavor{VCPUs: 1, MemoryMiB: 512}}
+	cfg := &config.Config{Sandboxd: config.Sandboxd{URL: "http://127.0.0.1:1", TokenFile: token}, Flavor: config.Flavor{VCPUs: 1, MemoryMiB: 1000}}
+	cfg.Accounts.DSNFile = filepath.Join(dir, "missing.dsn")
 	var out bytes.Buffer
-	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
-		t.Fatalf("check of a valid config = %q, %v", out.String(), err)
-	}
-	cfg.Flavor.MemoryMiB = 1000
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "not a sandboxd tier") {
 		t.Errorf("check of a flavor that is no tier = %v, want the startup refusal", err)
 	}
 	cfg.Flavor.MemoryMiB = 512
-	cfg.Cluster.Ledger, cfg.Accounts.DSNFile = true, filepath.Join(t.TempDir(), "missing.dsn")
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "database dsn") {
-		t.Errorf("check with the ledger on and no dsn file = %v, want the startup refusal", err)
+		t.Errorf("check with no dsn file = %v, want the startup refusal", err)
 	}
 	dsn := clustertest.EmptyDSN(t)
 	if err := os.WriteFile(cfg.Accounts.DSNFile, []byte(dsn), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	out.Reset()
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || !strings.Contains(out.String(), "migrations the next start applies") {
 		t.Fatalf("check with migrations pending = %q, %v; want them listed", out.String(), err)
 	}
 	if pending, err := cluster.PendingMigrations(t.Context(), dsn); err != nil || len(pending) == 0 {
 		t.Errorf("pending migrations after check = %v, %v; want check to apply none", pending, err)
+	}
+	st, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	st.Close()
+	out.Reset()
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
+		t.Errorf("check of a valid config = %q, %v", out.String(), err)
 	}
 }
 

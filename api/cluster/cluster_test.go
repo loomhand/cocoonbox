@@ -69,6 +69,31 @@ func TestUpdateMachineRoundTripsEveryField(t *testing.T) {
 	}
 }
 
+func TestAnOpWithoutALeaseEndsWhenTheMigrationsRun(t *testing.T) {
+	st, dsn := clustertest.OpenDSN(t)
+	putMachine(t, st, cluster.Machine{ID: "cb-held", Owner: "u-1", CreatedAt: time.Now(), Op: "claim"})
+	putMachine(t, st, cluster.Machine{ID: "cb-leased", Owner: "u-1", CreatedAt: time.Now(), Op: "wake", OpUntil: time.Now().Add(time.Minute)})
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(t.Context(), "DELETE FROM cluster_schema_migrations WHERE version = 5"); err != nil {
+		t.Fatalf("unapply 0005: %v", err)
+	}
+	again, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	again.Close()
+	if m, err := st.Machine(t.Context(), "cb-held"); err != nil || m.Op != "" {
+		t.Errorf("an op without a lease after the migration = %+v, %v, want it ended", m, err)
+	}
+	if m, err := st.Machine(t.Context(), "cb-leased"); err != nil || m.Op != "wake" {
+		t.Errorf("an op with a lease after the migration = %+v, %v, want it kept", m, err)
+	}
+}
+
 func TestEqualIgnoresTheVersionAndHowTheRowStoresTimesAndEmptyValues(t *testing.T) {
 	at := time.Now()
 	m := cluster.Machine{ID: "cb-1", CreatedAt: at, Meta: map[string]string{}, Claim: []byte{}, Version: 3}

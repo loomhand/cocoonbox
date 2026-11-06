@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"slices"
 	"strconv"
@@ -31,23 +30,7 @@ const (
 	template  = "cbdesk:v8"
 )
 
-var (
-	xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
-
-	onSharedTable bool
-)
-
-// TestMain runs every test on a backend in memory, then on a shared table when COCOONBOX_TEST_DSN names a server.
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if os.Getenv("COCOONBOX_TEST_DSN") != "" {
-		onSharedTable = true
-		if shared := m.Run(); shared != 0 {
-			code = shared
-		}
-	}
-	os.Exit(code)
-}
+var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
 
 func TestNewRefusesAFlavorThatIsNoTier(t *testing.T) {
 	fake := newFakeSandboxd(t)
@@ -206,7 +189,7 @@ func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
 
 func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk"})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1715,14 +1698,7 @@ func (f *fakeSandboxd) renewed() []string {
 
 func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 	t.Helper()
-	if onSharedTable {
-		return newSharedBackend(t, fake, clustertest.Open(t))
-	}
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return b
+	return newSharedBackend(t, fake, clustertest.Open(t))
 }
 
 func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
@@ -1734,7 +1710,7 @@ func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Back
 
 func openSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Shared: db})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: db})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

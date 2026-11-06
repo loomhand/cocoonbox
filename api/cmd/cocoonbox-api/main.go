@@ -94,12 +94,12 @@ func main() {
 	pool := dialer.NewPool()
 	defer pool.Close()
 	var loops leaderLoops
-	ledger, err := openLedger(ctx, cfg)
+	db, err := openCluster(ctx, cfg)
 	if err != nil {
-		logger.Fatalf(ctx, err, "open the cluster ledger")
+		logger.Fatalf(ctx, err, "open the cluster store")
 	}
-	defer ledger.Close()
-	backend, err := newBackend(ctx, cfg, flavors, ledger)
+	defer db.Close()
+	backend, err := newBackend(ctx, cfg, flavors, db)
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
@@ -152,7 +152,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts, &loops)
 		library = flows.NewLibrary(st, accounts)
 	}
-	enableLedger(ctx, cfg, ledger, backend, svc)
+	enableLedger(ctx, cfg, db, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -260,10 +260,10 @@ func main() {
 		timer.Stop()
 	}()
 	loops.add(func(ctx context.Context) { svc.RunAlarms(ctx, alarmInterval) })
+	loops.add(backend.Run)
 	var shared *cluster.Store
 	if cfg.Cluster.Shared {
-		loops.add(backend.Run)
-		shared = ledger
+		shared = db
 	}
 	loops.run(ctx, shared)
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
@@ -518,20 +518,20 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 	})
 }
 
-func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor, ledger *cluster.Store) (*sandboxd.Backend, error) {
-	opts, err := backendOptions(cfg, flavors, ledger)
+func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor, db *cluster.Store) (*sandboxd.Backend, error) {
+	opts, err := backendOptions(cfg, flavors, db)
 	if err != nil {
 		return nil, err
 	}
 	return sandboxd.New(ctx, opts)
 }
 
-func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *cluster.Store) (sandboxd.Options, error) {
+func backendOptions(cfg *config.Config, flavors []machines.Flavor, db *cluster.Store) (sandboxd.Options, error) {
 	token, err := cfg.SandboxdToken()
 	if err != nil {
 		return sandboxd.Options{}, err
 	}
-	opts := sandboxd.Options{
+	return sandboxd.Options{
 		URL:               cfg.Sandboxd.URL,
 		Token:             token,
 		Image:             cfg.Image,
@@ -539,17 +539,11 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
-	}
-	if cfg.Cluster.Shared {
-		opts.Shared = ledger
-	}
-	return opts, nil
+		Store:             db,
+	}, nil
 }
 
-func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
-	if !cfg.Cluster.Ledger {
-		return nil, nil
-	}
+func openCluster(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
 	dsn, err := cfg.DSN()
 	if err != nil {
 		return nil, err
@@ -557,13 +551,13 @@ func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error)
 	return cluster.Open(ctx, dsn)
 }
 
-func enableLedger(ctx context.Context, cfg *config.Config, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
-	if ledger == nil {
+func enableLedger(ctx context.Context, cfg *config.Config, db *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
+	if !cfg.Cluster.Ledger {
 		return
 	}
-	svc.EnableLedger(ctx, ledger)
+	svc.EnableLedger(ctx, db)
 	if cfg.Cluster.Shared {
-		svc.EnableShared(ctx, ledger)
+		svc.EnableShared(ctx, db)
 		svc.SyncMachines(backend.SyncOwner)
 	}
 	go verifyLedger(ctx, backend, svc)
