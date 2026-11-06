@@ -46,12 +46,8 @@ func (s *Service) IssueDevice(ctx context.Context, id, client, label string) (st
 		return "", err
 	}
 	s.published(ctx, "issued device "+d.id)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if cur, ok := s.byID[id]; ok {
-		cur.devices = append(slices.Clone(cur.devices), d)
-		s.byID[id] = cur
-		addTokens(s.byToken, cur)
+	if err := s.Load(ctx); err != nil {
+		return "", err
 	}
 	return token, nil
 }
@@ -90,6 +86,7 @@ func (s *Service) RevokeDeviceSHA256(ctx context.Context, sum string) error {
 // dropDevice takes a revoked device token out of the index and tells the other apis to reload theirs.
 func (s *Service) dropDevice(ctx context.Context, id, device, sum string) {
 	s.mu.Lock()
+	s.indexGen++
 	delete(s.byToken, sum)
 	if r, ok := s.byID[id]; ok {
 		r.devices = slices.DeleteFunc(slices.Clone(r.devices), func(d deviceToken) bool { return d.id == device })
