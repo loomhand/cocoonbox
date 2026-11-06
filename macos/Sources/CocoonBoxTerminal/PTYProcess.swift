@@ -10,6 +10,7 @@ final class PTYProcess: @unchecked Sendable {
     private var reader: DispatchSourceRead?
     private var exitWatch: DispatchSourceProcess?
     private var reaped = false
+    private var drained = false
 
     init(arguments: [String], environment: [String: String], directory: String, columns: UInt16, rows: UInt16) throws {
         let argv = arguments.map { strdup($0) } + [nil]
@@ -43,7 +44,8 @@ final class PTYProcess: @unchecked Sendable {
             if count > 0 {
                 output(Data(buffer[..<count]))
             } else {
-                reader.cancel()
+                reader.suspend()
+                self.drained = true
             }
         }
         reader.setCancelHandler { [writer] in writer.async { close(master) } }
@@ -83,10 +85,12 @@ final class PTYProcess: @unchecked Sendable {
 
     // hangUp closes the terminal and signals the process group, then kills what is left after `grace`.
     func hangUp(grace: Duration = .seconds(2)) {
-        kill(-pid, SIGHUP)
-        queue.sync {
+        let live = queue.sync {
+            if drained { reader?.resume() }
             reader?.cancel()
+            return !reaped
         }
+        if live { kill(-pid, SIGHUP) }
         let deadline = ContinuousClock.now + grace
         if grace < .seconds(1) {
             while ContinuousClock.now < deadline, kill(pid, 0) == 0 { usleep(20_000) }
