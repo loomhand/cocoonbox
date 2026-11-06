@@ -439,13 +439,22 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
         let (half, wr) = tokio::io::split(stream);
         (exec::AgentRead { half, pipe }, wr)
     };
-    let call: Call = match rpc::read_frame(&mut rd).await {
+    let mut call: Call = match rpc::read_frame(&mut rd).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("toolhost: bad request: {e}");
             return;
         }
     };
+    if matches!(call.tool.as_str(), "state_apply" | "state_swap") && call.args.is_null() {
+        call.args = match rpc::read_state_args(&mut rd).await {
+            Ok(args) => args,
+            Err(e) => {
+                eprintln!("toolhost: read state args: {e}");
+                return;
+            }
+        };
+    }
     match call.tool.as_str() {
         "state_read" => {
             if let Err(e) = state::read(call.args, &mut wr).await {
