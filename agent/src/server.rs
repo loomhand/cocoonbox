@@ -109,7 +109,13 @@ impl Agents for AgentsSvc {
         &self,
         req: Request<pb::SendRequest>,
     ) -> Result<Response<pb::SendResponse>, Status> {
-        let turn_id = self.rt.send(req.into_inner()).await?;
+        let rt = Arc::clone(&self.rt);
+        let turn_id = self
+            .rt
+            .tasks
+            .spawn(async move { rt.send(req.into_inner()).await })
+            .await
+            .map_err(|e| Status::internal(format!("send turn task: {e}")))??;
         Ok(Response::new(pb::SendResponse { turn_id }))
     }
 
@@ -171,7 +177,7 @@ impl Agents for AgentsSvc {
     async fn end(&self, req: Request<pb::EndRequest>) -> Result<Response<pb::EndResponse>, Status> {
         match req.into_inner().target {
             Some(pb::end_request::Target::AgentId(id)) => self.mcp.end_agent(&id).await?,
-            Some(pb::end_request::Target::ShareId(id)) => self.mcp.end_share(&id).await,
+            Some(pb::end_request::Target::ShareId(id)) => self.mcp.end_share(&id).await?,
             None => {
                 return Err(Status::invalid_argument(
                     "end needs an agent_id or a share_id",
@@ -637,5 +643,116 @@ mod tests {
             stream.nodelay().unwrap(),
             "TCP_NODELAY is off on an accepted socket"
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_send_still_queues_its_committed_turn_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = Arc::clone(&requests);
+        let app = axum::Router::new().route(
+            "/chat/completions",
+            axum::routing::post(move || {
+                calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                async {
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+                }
+            }),
+        );
+        let gateway = tokio::spawn(async move {
+            Server::builder()
+                .accept_http1(true)
+                .add_routes(Routes::from(app))
+                .serve_with_incoming(incoming(listener))
+                .await
+                .unwrap()
+        });
+        let cfg = crate::testing::config(dir.path(), &url);
+        let model = llm::Client::new(&url, "test", false).unwrap();
+        let tools = Arc::new(rpc::Client::new(cfg.toolhost_socket.clone()));
+        let gate = Arc::new(Gate::new(cfg.identity_path.clone(), cfg.identity_owner));
+        let rt = Runtime::open(cfg, model, tools).await.unwrap();
+        let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
+        let svc = AgentsSvc {
+            rt: Arc::clone(&rt),
+            mcp,
+        };
+        let agent = rt
+            .create_agent(pb::CreateAgentRequest::default())
+            .await
+            .unwrap();
+        let req = pb::SendRequest {
+            agent_id: agent.id.clone(),
+            text: "hello".into(),
+            client_nonce: "cancelled-send".into(),
+            attachments: Vec::new(),
+        };
+        let connection = rusqlite::Connection::open(dir.path().join("agent.db")).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let mut send = svc.send(Request::new(req.clone()));
+        assert!(futures_util::poll!(&mut send).is_pending());
+        drop(send);
+        connection.execute_batch("COMMIT").unwrap();
+        let page = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let page = rt
+                    .journal
+                    .store
+                    .transcript(agent.id.clone(), 0, 100)
+                    .await
+                    .unwrap();
+                if !page.entries.is_empty() {
+                    break page;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let turn_id = page.entries[0].turn_id.clone();
+        let retried = svc.send(Request::new(req)).await.unwrap().into_inner();
+        assert_eq!(retried.turn_id, turn_id);
+        let completed = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let page = rt
+                    .journal
+                    .store
+                    .transcript(agent.id.clone(), 0, 100)
+                    .await
+                    .unwrap();
+                if page
+                    .entries
+                    .iter()
+                    .any(|e| matches!(e.body, Some(pb::transcript_entry::Body::TurnEnd(_))))
+                {
+                    break page;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the committed turn never finished after Send was cancelled");
+        assert_eq!(
+            completed
+                .entries
+                .iter()
+                .filter(|e| e.role == pb::Role::User as i32)
+                .count(),
+            1
+        );
+        assert_eq!(
+            completed
+                .entries
+                .iter()
+                .filter(|e| matches!(e.body, Some(pb::transcript_entry::Body::TurnEnd(_))))
+                .count(),
+            1
+        );
+        assert_eq!(requests.load(std::sync::atomic::Ordering::Relaxed), 1);
+        rt.stop.cancel();
+        rt.drain(Duration::from_secs(1)).await;
+        gateway.abort();
     }
 }
