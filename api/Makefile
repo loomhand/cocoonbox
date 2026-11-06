@@ -14,12 +14,10 @@ BUILD_OUT := bin/$(BINARY_NAME)-$(GOOS)-$(GOARCH)
 endif
 endif
 
-## Location to install dependencies to
 LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
-## Tool versions
 GOLANGCILINT_VERSION ?= v2.13.2
 GOLANGCILINT_ROOT := $(LOCALBIN)/golangci-lint-$(GOLANGCILINT_VERSION)
 GOLANGCILINT := $(GOLANGCILINT_ROOT)/golangci-lint
@@ -40,7 +38,6 @@ PROTOCGENGOGRPC_VERSION ?= v1.6.2
 PROTOCGENGOGRPC_ROOT := $(LOCALBIN)/protoc-gen-go-grpc-$(PROTOCGENGOGRPC_VERSION)
 PROTOCGENGOGRPC := $(PROTOCGENGOGRPC_ROOT)/protoc-gen-go-grpc
 
-## Tool download targets
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCILINT)
 $(GOLANGCILINT):
@@ -66,11 +63,7 @@ protoc-gen-go-grpc: $(PROTOCGENGOGRPC)
 $(PROTOCGENGOGRPC): | $(LOCALBIN)
 	GOBIN=$(PROTOCGENGOGRPC_ROOT) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOCGENGOGRPC_VERSION)
 
-# --- Primary targets ---
-
 all: deps fmt lint test build ## Full pipeline: deps, fmt, lint, test, build
-
-# --- Dependencies ---
 
 deps: ## Tidy Go modules
 	go mod tidy
@@ -83,20 +76,14 @@ proto: protoc-gen-go protoc-gen-go-grpc ## Regenerate gen/ from ../proto (requir
 		--go-grpc_out=. --go-grpc_opt=module=github.com/loomhand/cocoonbox/api \
 		$(shell cd $(PROTO_DIR) && find cocoonbox -name '*.proto')
 
-# --- Build ---
-
 build: ## Build cocoonbox-api binary
 	CGO_ENABLED=0 go build -ldflags "-s" -o $(BUILD_OUT) ./cmd/cocoonbox-api
-
-# --- Testing ---
 
 test: vet ## Run tests with race detection and coverage
 	go test -race -timeout 300s -count=1 -cover -coverprofile=coverage.out ./...
 
 coverage: test ## Generate and display coverage report
 	go tool cover -func=coverage.out
-
-# --- Code quality ---
 
 vet: ## Run go vet on every target OS
 	@for goos in $(GOOSES); do \
@@ -118,14 +105,10 @@ fmt-check: gofumpt goimports ## Check formatting (fails if files need formatting
 	@test -z "$$($(GOFMT) -l $$(find . -name '*.go' -not -path './gen/*' -not -path './bin/*'))" || { echo "Files need formatting (gofumpt)"; exit 1; }
 	@test -z "$$($(GOIMPORTS) -l --local '$(GOIMPORTS_LOCAL_PREFIXES)' $$(find . -name '*.go' -not -path './gen/*' -not -path './bin/*'))" || { echo "Files need formatting (goimports)"; exit 1; }
 
-# --- Maintenance ---
-
 clean: ## Remove build artifacts, coverage files, and test cache
 	rm -rf bin/
 	rm -f coverage.out
 	go clean -testcache
-
-# --- Help ---
 
 help: ## Show this help message
 	@echo "cocoonbox-api Makefile targets:"

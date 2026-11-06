@@ -92,8 +92,7 @@ func (f *viewOnly) feed(in []byte) ([]byte, error) {
 	return out, nil
 }
 
-// next sizes the unit at the head of buf and returns what to forward of it; size 0 waits for more bytes, and a size past
-// the buffer is only ever returned for a dropped message.
+// next sizes the unit at the head of buf and what to forward of it; size 0 waits for more bytes.
 func (f *viewOnly) next() (int, []byte, error) {
 	b := f.buf
 	switch f.stage {

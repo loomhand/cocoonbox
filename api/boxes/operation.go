@@ -241,7 +241,6 @@ func newOperations() *operations {
 	return &operations{watchers: &watchers{next: map[string]chan struct{}{}}, byID: map[string]*operation{}, active: map[string]*operation{}}
 }
 
-// start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one of user whose context derives from base.
 func (r *operations) start(base context.Context, user, boxID string, phase controlv1.Phase, gen int64, timeout time.Duration) (*operation, bool) {
 	return r.begin(base, &operation{user: user, boxID: boxID, phase: phase, gen: gen}, timeout)
 }

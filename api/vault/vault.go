@@ -1,5 +1,4 @@
-// Package vault keeps each user's API keys sealed and puts them on the user's boxes as egress credentials: the box holds a
-// placeholder, and sandboxd swaps in the value on requests to the key's hosts.
+// Package vault seals each user's API keys and puts them on the user's boxes as placeholders that sandboxd swaps for the value.
 package vault
 
 import (

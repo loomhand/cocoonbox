@@ -613,7 +613,7 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	return h, nil
 }
 
-// keepHead caches p's head unless an invalidation came after dropped or a head is cached that is newer or, for a read, any, and mirrors what it cached without a shared table.
+// keepHead caches h unless an invalidation followed dropped or the cache holds a newer head, or any head for a read.
 func (l *stateLayer) keepHead(p statePath, h head, dropped uint64, read bool) {
 	l.mu.Lock()
 	cur, cached := l.heads[p]

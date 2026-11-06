@@ -44,11 +44,12 @@ func (s *Store) Lead(ctx context.Context, lead Work) {
 	}
 }
 
-// Lock holds the advisory lock of name in every process until the returned func runs; LockLong serves holds that last a save, so they never take the connections of the short ones.
+// Lock holds the advisory lock of name in every process until the returned func runs.
 func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.locks, name)
 }
 
+// LockLong is Lock for holds that last a save, on connections the short locks never use.
 func (s *Store) LockLong(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.longLocks, name)
 }
