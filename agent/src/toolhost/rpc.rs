@@ -36,6 +36,8 @@ pub const SIGNAL: u8 = 6;
 /// Tag of a terminal size, big-endian u16 rows and cols, to the toolhost.
 pub const RESIZE: u8 = 7;
 
+const STATE_ARGS_LIMIT: usize = 512 << 20;
+
 #[cfg(windows)]
 const ERROR_PIPE_BUSY: i32 = 231;
 #[cfg(windows)]
@@ -156,7 +158,24 @@ impl Client {
         let mut stream = connect(&self.socket)
             .await
             .map_err(|e| format!("connect toolhost {}: {e}", self.socket.display()))?;
-        write_frame(&mut stream, call).await?;
+        if matches!(call.tool.as_str(), "state_apply" | "state_swap") {
+            let body =
+                serde_json::to_vec(&call.args).map_err(|e| format!("encode state args: {e}"))?;
+            if body.len() > STATE_ARGS_LIMIT {
+                return Err("state args exceed the size limit".to_owned());
+            }
+            write_frame(
+                &mut stream,
+                &json!({"agent_id": call.agent_id, "tool": call.tool}),
+            )
+            .await?;
+            for block in body.chunks(1 << 20) {
+                write_data(&mut stream, block).await?;
+            }
+            write_data(&mut stream, b"").await?;
+        } else {
+            write_frame(&mut stream, call).await?;
+        }
         Ok(stream)
     }
 }
@@ -276,6 +295,17 @@ pub async fn read_tagged<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>
     Ok((head[0], data))
 }
 
+pub(crate) async fn read_state_args<R: AsyncRead + Unpin>(r: &mut R) -> Result<Value, String> {
+    let mut body = Vec::new();
+    while let Some(block) = read_data(r).await? {
+        if body.len() + block.len() > STATE_ARGS_LIMIT {
+            return Err("state args exceed the size limit".to_owned());
+        }
+        body.extend_from_slice(&block);
+    }
+    serde_json::from_slice(&body).map_err(|e| format!("decode state args: {e}"))
+}
+
 /// Connects to the endpoint `path`.
 #[cfg(unix)]
 pub(crate) async fn connect(path: &Path) -> io::Result<Stream> {
@@ -298,6 +328,76 @@ pub(crate) async fn connect(path: &Path) -> io::Result<Stream> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn large_apply_and_swap_args_cross_the_frame_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = crate::testing::endpoint(dir.path(), "toolhost.sock");
+        let mut listener = crate::toolhost::bind(&path, "").unwrap();
+        let count = 270_000;
+        let server = tokio::spawn(async move {
+            for (tool, field) in [("state_apply", "dirs"), ("state_swap", "names")] {
+                let mut s = crate::toolhost::accept(&mut listener).await.unwrap();
+                let head: Call = read_frame(&mut s).await.unwrap();
+                assert_eq!(head.tool, tool);
+                assert_eq!(head.agent_id, "state");
+                assert!(head.args.is_null());
+                let args = read_state_args(&mut s).await.unwrap();
+                assert_eq!(args[field].as_array().unwrap().len(), count);
+                if tool == "state_apply" {
+                    assert_eq!(args["modes"], json!([{"path": "parent", "mode": 0o500}]));
+                    assert_eq!(
+                        args["symlinks"],
+                        json!([{"path": "link", "target": "target"}])
+                    );
+                } else {
+                    assert_eq!(args["keep"], json!(["kept"]));
+                }
+                write_frame(&mut s, &Output::text("applied")).await.unwrap();
+            }
+        });
+        let client = Client::new(path);
+        let prefix = "d".repeat(240);
+        for (tool, field) in [("state_apply", "dirs"), ("state_swap", "names")] {
+            let entries: Vec<Value> = (0..count)
+                .map(|i| {
+                    let path = format!("{prefix}{i:06}");
+                    if tool == "state_apply" {
+                        json!({"path": path, "mode": 0o700})
+                    } else {
+                        path.into()
+                    }
+                })
+                .collect();
+            let mut args = json!({
+                "root": "/workspace", "staging": "/workspace/.cb-restore-test", "keep": ["kept"],
+                "modes": [{"path": "parent", "mode": 0o500}],
+                "symlinks": [{"path": "link", "target": "target"}]
+            });
+            args[field] = entries.into();
+            assert!(serde_json::to_vec(&args).unwrap().len() > MAX_FRAME);
+            let call = Call {
+                agent_id: "state".into(),
+                tool: tool.into(),
+                args,
+            };
+            assert_eq!(client.call(&call).await.unwrap().text, "applied");
+        }
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn state_args_need_complete_frames_and_valid_json() {
+        for (body, ended) in [(b"{}".as_slice(), false), (b"{".as_slice(), true)] {
+            let (mut a, mut b) = tokio::io::duplex(64);
+            write_data(&mut a, body).await.unwrap();
+            if ended {
+                write_data(&mut a, b"").await.unwrap();
+            }
+            a.shutdown().await.unwrap();
+            assert!(read_state_args(&mut b).await.is_err());
+        }
+    }
 
     #[tokio::test]
     async fn frame_round_trip() {
