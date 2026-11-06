@@ -111,19 +111,18 @@ impl Host {
 
     /// Executes one call; failures become error outputs for the model.
     async fn dispatch(&self, call: Call) -> Output {
+        let out = self.route(call).await;
+        timing::note("error", out.is_error);
+        out
+    }
+
+    async fn route(&self, call: Call) -> Output {
         let call = match self.shuttle_call(call).await {
-            Ok(result) => {
-                let out = result.unwrap_or_else(Output::error);
-                timing::note("error", out.is_error);
-                return out;
-            }
+            Ok(result) => return result.unwrap_or_else(Output::error),
             Err(call) => call,
         };
         let call = match self.relay(call).await {
-            Ok(out) => {
-                timing::note("error", out.is_error);
-                return out;
-            }
+            Ok(out) => return out,
             Err(call) => call,
         };
         let result = match call.tool.as_str() {
@@ -195,9 +194,7 @@ impl Host {
                 .map(Output::text),
             other => Err(format!("unknown tool {other}")),
         };
-        let out = result.unwrap_or_else(Output::error);
-        timing::note("error", out.is_error);
-        out
+        result.unwrap_or_else(Output::error)
     }
 
     /// Runs `run_screenshot` and a desk box's `computer_act`; every other call comes back, its screen tools under shuttle's names.
