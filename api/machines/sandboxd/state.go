@@ -52,7 +52,7 @@ type entry struct {
 	// created stands in for the claim time until the claim row exists.
 	created time.Time
 	row     *row
-	// ownerAddr names the node that holds the claim as the mesh names it; an older api wrote "" for its entry node.
+	// ownerAddr names the node that holds the claim as the mesh names it.
 	ownerAddr string
 
 	op    string

@@ -845,7 +845,7 @@ func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 	}
 	var r row
 	var addr string
-	if sandbox != "" && e.ownerAddr != "" {
+	if sandbox != "" {
 		r, addr, err = b.read(ctx, id, e.ownerAddr, sandbox)
 	} else {
 		r, addr, err = b.find(ctx, id)
@@ -1237,9 +1237,9 @@ func (b *Backend) lostLocked(addr string, now time.Time) bool {
 	return ok && now.Sub(since) >= nodeLostAfter
 }
 
-// node returns the client of the node at addr, the entry node's for its own address and for the "" an older api wrote.
+// node returns the client of the node at addr, the entry node's for its own address.
 func (b *Backend) node(addr string) (*client, error) {
-	if addr == "" || addr == b.entryAddr {
+	if addr == b.entryAddr {
 		return b.api, nil
 	}
 	b.nodeMu.Lock()
