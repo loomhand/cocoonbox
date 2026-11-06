@@ -112,7 +112,10 @@ func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error
 
 // Get returns one flow and its content.
 func (l *Library) Get(ctx context.Context, user, name string) (Entry, []byte, error) {
-	unlock := l.users.Lock(user)
+	unlock, err := l.lock(ctx, user)
+	if err != nil {
+		return Entry{}, nil, err
+	}
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {

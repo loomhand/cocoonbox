@@ -61,6 +61,68 @@ func TestSharedLibrariesKeepBothConcurrentReplacements(t *testing.T) {
 	}
 }
 
+func TestSharedGetKeepsItsObjectUntilTheReadFinishes(t *testing.T) {
+	for _, remove := range []bool{false, true} {
+		t.Run(map[bool]string{false: "replace", true: "delete"}[remove], func(t *testing.T) {
+			shared, dsn := clustertest.OpenDSN(t)
+			other, err := cluster.Open(t.Context(), dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(other.Close)
+			st, seed := newLibrary()
+			if _, err := seed.Put(t.Context(), "alice", "a.json", []byte("old"), Origin{}); err != nil {
+				t.Fatal(err)
+			}
+			gate := &libraryReadGate{memStore: st, entered: make(chan struct{}), resume: make(chan struct{})}
+			resume := sync.OnceFunc(func() { close(gate.resume) })
+			defer resume()
+			reader, writer := NewLibrary(gate, fixedKeys{}), NewLibrary(st, fixedKeys{})
+			reader.EnableShared(shared)
+			writer.EnableShared(other)
+			read, written := make(chan error, 1), make(chan error, 1)
+			go func() {
+				_, content, err := reader.Get(t.Context(), "alice", "a.json")
+				if string(content) != "old" {
+					t.Errorf("read content %q, want old", content)
+				}
+				read <- err
+			}()
+			<-gate.entered
+			var finished atomic.Bool
+			go func() {
+				var err error
+				if remove {
+					_, err = writer.Delete(t.Context(), "alice", []string{"a.json"})
+				} else {
+					_, err = writer.Put(t.Context(), "alice", "a.json", []byte("new"), Origin{})
+				}
+				written <- err
+				finished.Store(true)
+			}()
+			conn, err := pgx.Connect(t.Context(), dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close(t.Context())
+			clustertest.WaitFor(t, "the writer waits for the reader", func() bool {
+				var waiting bool
+				err := conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))").Scan(&waiting)
+				return finished.Load() || err == nil && waiting
+			})
+			if finished.Load() {
+				t.Error("the writer removed the object before its reader finished")
+			}
+			resume()
+			for _, done := range []chan error{read, written} {
+				if err := <-done; err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 type libraryReadGate struct {
 	*memStore
 	entered chan struct{}
