@@ -342,6 +342,20 @@ fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
     }
 }
 
+fn mcp_text(out: &Value) -> &str {
+    out["content"][0]["text"].as_str().unwrap()
+}
+
+fn tool_result<'a>(entries: &'a [pb::TranscriptEntry], call_id: &str) -> &'a pb::ToolResult {
+    entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == call_id => Some(r),
+            _ => None,
+        })
+        .unwrap()
+}
+
 fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
     let args = args.to_string();
     let (a, b) = args.split_at(args.len() / 2);
@@ -1222,26 +1236,14 @@ async fn run_delegate(messages_wire: bool) {
         sub_texts.contains(&"Typed hello into Mousepad."),
         "{sub_texts:?}"
     );
-    let state = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "toolu_1" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let state = tool_result(&entries, "toolu_1");
     assert!(
         state.text.starts_with("Windows (frontmost first):"),
         "{}",
         state.text
     );
     assert!(state.image.starts_with(b"\x89PNG"));
-    let delegate = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "call_d" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let delegate = tool_result(&entries, "call_d");
     assert!(
         delegate.text.starts_with("Typed hello into Mousepad."),
         "{}",
@@ -1627,13 +1629,7 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     send(&mut agents, &agent_id, "look", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
     assert!(turn_end(&entries).ok);
-    let delegate = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "call_d" => Some(r),
-            _ => None,
-        })
-        .unwrap();
+    let delegate = tool_result(&entries, "call_d");
     assert!(delegate.is_error);
     assert!(
         delegate.text.starts_with("The computer subagent stopped at its 30-step cap. Its progress report: Opened the editor; the save dialog never came up."),
@@ -1918,13 +1914,9 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
-            _ => None,
-        })
-    })
-    .await;
+    let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
+        .await
+        .approval_id;
     let listed = agents
         .list(authed(pb::ListAgentsRequest {}))
         .await
@@ -2003,13 +1995,9 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
-            _ => None,
-        })
-    })
-    .await;
+    let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
+        .await
+        .approval_id;
 
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
@@ -2091,7 +2079,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let agent_id = create_agent(&mut agents).await;
 
     send(&mut agents, &agent_id, "make x", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, 0).await;
+    let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
     assert_eq!(asked.summary, "Mock: create_item (title=\"x\")");
     let listed = agents
         .list(authed(pb::ListAgentsRequest {}))
@@ -2112,14 +2100,8 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 1).await;
-    let result = |id: &str| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == id => Some(r.clone()),
-            _ => None,
-        })
-    };
-    assert_eq!(result("c1").unwrap().text, "items: a");
-    let created = result("c2").unwrap();
+    assert_eq!(tool_result(&entries, "c1").text, "items: a");
+    let created = tool_result(&entries, "c2");
     assert!(!created.is_error);
     assert_eq!(
         created.text,
@@ -2127,7 +2109,13 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     );
 
     send(&mut agents, &agent_id, "make y", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, entries.last().unwrap().seq).await;
+    let asked = asked_approval(
+        &mut agents,
+        &agent_id,
+        "connector",
+        entries.last().unwrap().seq,
+    )
+    .await;
     agents
         .respond(authed(pb::RespondRequest {
             agent_id: agent_id.clone(),
@@ -2138,13 +2126,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 2).await;
-    let declined = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "c3" => Some(r.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let declined = tool_result(&entries, "c3");
     assert!(declined.is_error);
     assert_eq!(declined.text, "The user declined the call.");
     let approved_calls = door_log
@@ -2261,7 +2243,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "make x", "").await;
-    let asked = connector_approval(&mut agents, &agent_id, 0).await;
+    let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
     let came_back = wait_until(Duration::from_secs(5), || {
         door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
     })
@@ -2275,13 +2257,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
         )
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 1).await;
-    let created = entries
-        .iter()
-        .find_map(|e| match &e.body {
-            Some(Body::ToolResult(r)) if r.call_id == "c1" => Some(r.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let created = tool_result(&entries, "c1");
     assert!(!created.is_error, "{created:?}");
     assert_eq!(
         created.text,
@@ -2336,14 +2312,15 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     assert!(ran.lines().any(|l| l == "demo_run"), "{ran}");
 }
 
-async fn connector_approval(
+async fn asked_approval(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
+    kind: &str,
     after_seq: u64,
 ) -> pb::ApprovalRequest {
     wait_transcript(agents, agent_id, after_seq, |entries| {
         entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == "connector" => Some(a.clone()),
+            Some(Body::Approval(a)) if a.kind == kind => Some(a.clone()),
             _ => None,
         })
     })
@@ -3380,13 +3357,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         )
         .await;
     assert_eq!(shell["isError"], false);
-    assert!(
-        shell["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("from-mcp"),
-        "{shell}"
-    );
+    assert!(mcp_text(&shell).starts_with("from-mcp"), "{shell}");
     assert!(h.workspace.join("m.txt").exists());
 
     let shot = mcp.call("screenshot", json!({"max_edge": 640})).await;
@@ -3501,7 +3472,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         )
         .await;
     assert_eq!(ok["isError"], false, "{ok}");
-    let report: Value = serde_json::from_str(ok["content"][0]["text"].as_str().unwrap()).unwrap();
+    let report: Value = serde_json::from_str(mcp_text(&ok)).unwrap();
     assert_eq!(report["result"], json!({"params": {"text": "hi"}}));
     assert_eq!(report["exit_code"], 0);
     assert_eq!(report["snapshot"], "outline");
@@ -3519,8 +3490,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         .call(tool, json!({"script": "flow.mjs", "screenshot": false}))
         .await;
     assert_eq!(failed["isError"], true, "{failed}");
-    let report: Value =
-        serde_json::from_str(failed["content"][0]["text"].as_str().unwrap()).unwrap();
+    let report: Value = serde_json::from_str(mcp_text(&failed)).unwrap();
     assert_eq!(
         report["error"],
         json!({"kind": "exception", "message": "Error: boom"})
@@ -3534,13 +3504,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
         .await;
     assert_eq!(refused["isError"], true, "{refused}");
     let missing = mcp.call(tool, json!({"script": "nope.mjs"})).await;
-    assert!(
-        missing["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("does not exist"),
-        "{missing}"
-    );
+    assert!(mcp_text(&missing).contains("does not exist"), "{missing}");
 }
 
 #[tokio::test]
@@ -4184,22 +4148,12 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     let mut nudged = Vec::new();
     for _ in 0..3 {
         let out = mcp.call("computer_act", press.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     mcp.call("list_dir", json!({})).await;
     for _ in 0..2 {
         let out = mcp.call("computer_act", press.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     assert_eq!(nudged, [false, true, false, false, true]);
 
@@ -4209,12 +4163,7 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     mcp.call("list_dir", json!({})).await;
     for args in [&launch, &click, &launch, &click] {
         let out = mcp.call("computer_act", args.clone()).await;
-        nudged.push(
-            out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("GUI steps in a row"),
-        );
+        nudged.push(mcp_text(&out).contains("GUI steps in a row"));
     }
     assert_eq!(nudged, [false, false, false, true]);
 }
@@ -4226,10 +4175,7 @@ async fn mcp_a_desktop_call_hears_of_another_session_driving_the_desktop() {
     let mut second = McpClient::connect(&h).await;
     let press = json!({"action": "key", "key": "a"});
     let busy = |out: Value| {
-        out["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("Another agent (test-client) also drives this box's desktop")
+        mcp_text(&out).contains("Another agent (test-client) also drives this box's desktop")
     };
     assert!(!busy(first.call("computer_act", press.clone()).await));
     assert!(!busy(first.call("computer_act", press.clone()).await));
@@ -4497,7 +4443,6 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
     std::fs::write(h.workspace.join("flows/save.json"), "{\"typed\":\"x\"}").unwrap();
     std::fs::write(h.workspace.join("notes.txt"), "shared\n").unwrap();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
     for (tool, args) in [
@@ -4507,18 +4452,18 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         let out = reader.call(tool, args).await;
         assert_eq!(out["isError"], true, "{tool}: {out}");
         assert!(
-            text(&out).contains("does not read saved flows"),
+            mcp_text(&out).contains("does not read saved flows"),
             "{tool}: {out}"
         );
     }
     let out = reader.call("read_file", json!({"path": "notes.txt"})).await;
-    assert!(text(&out).contains("shared"), "{out}");
+    assert!(mcp_text(&out).contains("shared"), "{out}");
 
     let mut owner = McpClient::connect_as(&h, Some(edge.owner())).await;
     let out = owner
         .call("read_file", json!({"path": "flows/save.json"}))
         .await;
-    assert!(text(&out).contains("typed"), "{out}");
+    assert!(mcp_text(&out).contains("typed"), "{out}");
 
     let android = Harness::with_android().await;
     let edge = Edge::provision(&android);
@@ -4529,7 +4474,7 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         .call("read_file", json!({"path": "flows/save.json"}))
         .await;
     assert!(
-        text(&out).contains("does not read saved flows"),
+        mcp_text(&out).contains("does not read saved flows"),
         "an Android read share: {out}"
     );
 
@@ -4560,7 +4505,6 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     std::os::unix::fs::symlink("../home/.claude", h.workspace.join("rel")).unwrap();
     let ws = h.workspace.display().to_string();
     let secret = claude.join("x").display().to_string();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
     for path in [
@@ -4570,13 +4514,13 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     ] {
         let out = reader.call("read_file", json!({"path": path})).await;
         assert_eq!(out["isError"], false, "{path}: {out}");
-        assert!(text(&out).contains("shared"), "{path}: {out}");
+        assert!(mcp_text(&out).contains("shared"), "{path}: {out}");
     }
     for path in [json!({}), json!({"path": ws}), json!({"path": "docs"})] {
         let out = reader.call("list_dir", path.clone()).await;
         assert_eq!(out["isError"], false, "{path}: {out}");
     }
-    assert!(text(&reader.call("list_dir", json!({})).await).contains("docs/"));
+    assert!(mcp_text(&reader.call("list_dir", json!({})).await).contains("docs/"));
     let escapes = [
         (secret.clone(), claude.display().to_string()),
         (
@@ -4600,10 +4544,10 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
                 let out = reader.call(tool, args).await;
                 assert_eq!(out["isError"], true, "{tool} {path}: {out}");
                 assert!(
-                    text(&out).contains("is refused: a read-only share reads files only under"),
+                    mcp_text(&out).contains("is refused: a read-only share reads files only under"),
                     "{tool} {path}: {out}"
                 );
-                assert!(!text(&out).contains("secret"), "{tool} {path}: {out}");
+                assert!(!mcp_text(&out).contains("secret"), "{tool} {path}: {out}");
             }
         }
     }
@@ -4613,7 +4557,7 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
     for client in [&mut owner, &mut writer] {
         for (file, dir) in &escapes {
             let out = client.call("read_file", json!({"path": file})).await;
-            assert!(text(&out).contains("secret"), "{file}: {out}");
+            assert!(mcp_text(&out).contains("secret"), "{file}: {out}");
             let out = client.call("list_dir", json!({"path": dir})).await;
             assert_eq!(out["isError"], false, "{dir}: {out}");
         }
@@ -4631,7 +4575,7 @@ async fn only_a_box_that_runs_gui_plans_says_that_shell_capped_its_timeout() {
             .call("shell", json!({"command": "echo hi", "timeout_s": 2400}))
             .await;
         assert_eq!(out["isError"], false, "{out}");
-        let text = out["content"][0]["text"].as_str().unwrap();
+        let text = mcp_text(&out);
         assert_eq!(
             text.ends_with(
                 "[exit status 0]\n[timeout_s 2400 is over the 600 s maximum; ran with 600 s]"
@@ -4760,13 +4704,7 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
     );
     let out = call.await.unwrap();
     assert_eq!(out["isError"], true, "{out}");
-    assert!(
-        out["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .starts_with("interrupted"),
-        "{out}"
-    );
+    assert!(mcp_text(&out).starts_with("interrupted"), "{out}");
     assert!(
         wait_gone(&pid).await,
         "the guest's sleep outlived the quiesce"
@@ -4920,7 +4858,7 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
         b.call("browser_navigate", json!({"url": url_b("/b")}))
     );
     for (nav, field) in [(&na, "field /a"), (&nb, "field /b")] {
-        let text = nav["content"][0]["text"].as_str().unwrap();
+        let text = mcp_text(nav);
         assert!(
             text.contains(&format!("textbox \"{field}\" [ref=e1]")),
             "{text}"
@@ -5016,16 +4954,15 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
         .await
         .unwrap();
     let id = user["id"].as_str().unwrap();
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
 
     let nav = mcp
         .call("browser_navigate", json!({"url": url("/user"), "tab": id}))
         .await;
     assert!(
-        text(&nav).contains("textbox \"field /user\" [ref=e1]"),
+        mcp_text(&nav).contains("textbox \"field /user\" [ref=e1]"),
         "{nav}"
     );
-    let listed = text(&mcp.call("browser_tabs", json!({})).await);
+    let listed = mcp_text(&mcp.call("browser_tabs", json!({})).await).to_owned();
     assert!(
         listed.contains(&format!("- tab {id} \"/user\" ({})", url("/user"))),
         "{listed}"
@@ -5044,7 +4981,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
     assert_eq!(tab_eval(&ws(url("/user")), value).await, "for the user");
     assert_eq!(tab_eval(&ws(url("/agent")), value).await, "");
     let own = mcp.call("browser_snapshot", json!({})).await;
-    assert!(text(&own).contains("field /agent"), "{own}");
+    assert!(mcp_text(&own).contains("field /agent"), "{own}");
 }
 
 #[tokio::test]
@@ -5054,10 +4991,9 @@ async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
     };
     let page = format!("http://{}/spa", feed_pages().await);
     let desk = Harness::with_chrome(Vec::new(), &chrome).await;
-    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
     for tool in ["browser_navigate", "browser_fetch"] {
         let mut mcp = McpClient::connect(&desk).await;
-        let out = text(&mcp.call(tool, json!({"url": page})).await);
+        let out = mcp_text(&mcp.call(tool, json!({"url": page})).await).to_owned();
         assert!(out.contains("feed item one"), "{tool}: {out}");
     }
 }
