@@ -15,7 +15,6 @@ import (
 const (
 	offloadStatus   = "cocoonbox-agent offload status"
 	commandNotFound = 127
-	inboxDown       = 4
 	maxStatusOutput = 1 << 20
 )
 
@@ -44,7 +43,7 @@ func (d *Dialer) Busy(ctx context.Context, box string, ep machines.Endpoint) (bo
 	switch {
 	case err != nil:
 		return false, fmt.Errorf("offload status: %w", err)
-	case code == commandNotFound, code == inboxDown:
+	case code == commandNotFound:
 		return false, nil
 	case code != 0:
 		return false, fmt.Errorf("offload status exited %d", code)
