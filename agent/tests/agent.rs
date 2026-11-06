@@ -182,11 +182,7 @@ impl Harness {
         let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
         let shuttle_socket = dir.path().join("desk.sock");
-        fake_shuttle(
-            &shuttle_socket,
-            dir.path().join("shuttle.log"),
-            Arc::clone(&desk_log),
-        );
+        fake_shuttle(&shuttle_socket, Arc::clone(&desk_log));
         let (chrome_bin, cdp_port) = match &chrome {
             Some(bin) => {
                 let wrapper = dir.path().join("chrome-headless");
@@ -287,6 +283,11 @@ impl Harness {
 
     async fn session(&self) -> SessionClient<Channel> {
         SessionClient::new(self.channel().await)
+    }
+
+    fn shuttle_tools(&self) -> Vec<String> {
+        let log = self.desk_log.lock().unwrap();
+        log.iter().map(|(tool, _)| tool.clone()).collect()
     }
 }
 
@@ -644,17 +645,13 @@ async fn mock_door(
     url
 }
 
-fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
+fn fake_shuttle(path: &Path, calls: Log) {
     let listener = UnixListener::bind(path).unwrap();
     let mut ended = HashSet::new();
     tokio::spawn(async move {
         loop {
             let (mut conn, _) = listener.accept().await.unwrap();
             let call: Call = read_frame(&mut conn).await.unwrap();
-            let mut logged = std::fs::read_to_string(&log).unwrap_or_default();
-            logged.push_str(&call.tool);
-            logged.push('\n');
-            std::fs::write(&log, logged).unwrap();
             calls
                 .lock()
                 .unwrap()
@@ -2295,8 +2292,8 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
         .map(|(_, v)| v.clone())
         .collect();
     assert!(calls.is_empty(), "{calls:?}");
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    assert!(ran.lines().any(|l| l == "demo_run"), "{ran}");
+    let ran = h.shuttle_tools();
+    assert!(ran.iter().any(|t| t == "demo_run"), "{ran:?}");
 }
 
 async fn asked_approval(
@@ -3496,9 +3493,9 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
 async fn mcp_plugin_runs_on_shuttle_as_its_own_tool() {
     let h = Harness::with_plugin(Vec::new()).await;
     reports_result_logs_and_a_screenshot(&h, "demo_run").await;
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    let runs: Vec<&str> = ran.lines().filter(|t| t.ends_with("_run")).collect();
-    assert_eq!(runs, ["demo_run", "demo_run"], "{ran}");
+    let ran = h.shuttle_tools();
+    let runs: Vec<&String> = ran.iter().filter(|t| t.ends_with("_run")).collect();
+    assert_eq!(runs, ["demo_run", "demo_run"], "{ran:?}");
 }
 
 #[tokio::test]
@@ -3571,7 +3568,7 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
             out["error"]["message"], "unknown tool: demo_run",
             "{automation:?}: {out}"
         );
-        assert!(!h.dir.path().join("shuttle.log").exists(), "{automation:?}");
+        assert!(h.shuttle_tools().is_empty(), "{automation:?}");
     }
 }
 
@@ -3691,10 +3688,11 @@ async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
         .call("computer_act", json!({"action": "tap", "element": 0}))
         .await;
     assert_eq!(tap["isError"], false, "{tap}");
-    let log = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
+    let log = h.shuttle_tools();
     assert_eq!(
-        log, "desk_look\ndesk_computer_state\ndesk_computer_act\n",
-        "{log}"
+        log,
+        ["desk_look", "desk_computer_state", "desk_computer_act"],
+        "{log:?}"
     );
 }
 
@@ -3759,8 +3757,8 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 2}}), "{report}");
-    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
-    let ran: Vec<&str> = ran.lines().filter(|l| *l != "desk_screen").collect();
+    let ran = h.shuttle_tools();
+    let ran: Vec<&String> = ran.iter().filter(|t| *t != "desk_screen").collect();
     assert_eq!(ran, ["demo_run"]);
 }
 
