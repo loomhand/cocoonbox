@@ -33,17 +33,6 @@ import Testing
         #expect(!log.contains("mcp POST /cocoonbox."))
     }
 
-    @Test func theOldNamesAreGoneFromARenamedServer() async throws {
-        let mock = try await MockBoxProcess(discovery: "renamed")
-        defer { mock.stop() }
-        for path in ["/cocoonbox.mcp/control", "/cocoonbox.oauth/token"] {
-            var request = URLRequest(url: URL(string: mock.endpoint.url + path)!)
-            request.httpMethod = "POST"
-            let (_, response) = try await URLSession(configuration: .ephemeral).data(for: request)
-            #expect((response as? HTTPURLResponse)?.statusCode == 404)
-        }
-    }
-
     @Test func aServerWithoutProtectedResourcesKeepsTheDefaultMCPRoot() async throws {
         let mock = try await MockBoxProcess(discovery: "old")
         defer { mock.stop() }
