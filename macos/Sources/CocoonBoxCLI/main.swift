@@ -65,7 +65,7 @@ usage: cocoonbox <command> [options]
   rsh [--box NAME|ID] [-t] [HOST] COMMAND...
                                         run COMMAND in a box with its stdin, stdout and stderr; exits
                                         with its exit code, or 255 when the box cannot run it
-  offload [--box NAME|ID] [--kind claude|codex|cursor] [--dir PATH] [--handover FILE] [--yes] [--json]
+  offload [--box NAME|ID] [--kind claude|codex] [--dir PATH] [--handover FILE] [--yes] [--json]
                                         move this repo's task into a box: preflight, copy, and a fresh box CLI
                                         session that starts from the hand-over
   offload --handover-prompt [--kind K]  print the request to paste into Codex (or another CLI without the
@@ -1146,7 +1146,7 @@ func offload() async {
         }
     }
     if sub == "secrets" { return secrets() }
-    if let named = value(of: "--kind"), OffloadKind(rawValue: named) == nil { fail("--kind is claude, codex or cursor") }
+    if let named = value(of: "--kind"), OffloadKind(rawValue: named) == nil { fail("--kind is claude or codex") }
     if flags.contains("--handover-prompt") {
         let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) ?? .codex
         do {
@@ -1205,7 +1205,7 @@ func offload() async {
             }
         default:
             guard let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) else {
-                fail("name the box CLI with --kind claude, codex or cursor")
+                fail("name the box CLI with --kind claude or codex")
             }
             let key = offloadKey()
             let file = try value(of: "--handover").map { URL(fileURLWithPath: $0) } ?? offloadStore.handover(key)

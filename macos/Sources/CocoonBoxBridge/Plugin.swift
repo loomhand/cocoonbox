@@ -100,7 +100,7 @@ public enum Plugin {
            prints, with the template below. Fill every section; write "none" for an empty one. Be
            concrete: exact commands, versions you saw, file paths, error messages, decisions with
            their reasons. Under "Secrets needed" give names only, never values.
-        3. Run `cocoonbox offload --kind <claude|codex|cursor>` with a 10-minute command timeout,
+        3. Run `cocoonbox offload --kind <claude|codex>` with a 10-minute command timeout,
            naming the CLI you are unless the user asked for another one in the box. Add
            `--box NAME` when the user names a box.
            - Exit 3 is a block: stop and tell the user why, one line per finding. If the box CLI is

@@ -9,7 +9,6 @@ import Testing
         (.claude, "https://console.anthropic.com/oauth/authorize?code=true"),
         (.codex, "https://auth.openai.com/codex/device"),
         (.codex, "https://chatgpt.com/auth/login"),
-        (.cursor, "https://cursor.com/loginDeepControl?challenge=abc&uuid=d4"),
     ])
     func vendorLinksAreFound(kind: OffloadKind, link: String) {
         #expect(SignInLink.find(in: "Browser didn't open? Use the url below to sign in\r\n\(link)\r\n\r\nPaste code here if prompted > ", kind: kind)?.absoluteString == link)

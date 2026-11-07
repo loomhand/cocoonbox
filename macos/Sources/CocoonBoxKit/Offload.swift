@@ -5,13 +5,11 @@ import Foundation
 public enum OffloadKind: String, CaseIterable, Codable, Sendable {
     case claude
     case codex
-    case cursor
 
     public var title: String {
         switch self {
         case .claude: "Claude Code"
         case .codex: "Codex"
-        case .cursor: "Cursor"
         }
     }
 
@@ -19,7 +17,6 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         switch self {
         case .claude: "claude"
         case .codex: "codex"
-        case .cursor: "cursor-agent"
         }
     }
 
@@ -28,7 +25,6 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         switch self {
         case .claude: "curl -fsSL https://claude.ai/install.sh | bash"
         case .codex: "curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh | CODEX_NON_INTERACTIVE=1 sh"
-        case .cursor: "curl -fsSL https://cursor.com/install | bash"
         }
     }
 
@@ -37,7 +33,6 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         let command = switch self {
         case .claude: "claude auth login"
         case .codex: "codex login --device-auth"
-        case .cursor: "cursor-agent login"
         }
         return "BROWSER=true NO_OPEN_BROWSER=1 \(command)"
     }
@@ -60,7 +55,7 @@ public enum Handover {
     public static let template = """
     # Hand-over: <one-line goal>
 
-    From: <Mac | box>   Agent: <claude|codex|cursor>   Repo: <path>   Branch: <branch> @ <short sha>
+    From: <Mac | box>   Agent: <claude|codex>   Repo: <path>   Branch: <branch> @ <short sha>
 
     ## Goal and definition of done
     <what the user asked for, in their words where it matters; what "done" means>

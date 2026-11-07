@@ -19,7 +19,6 @@ public enum SignInLink {
         switch kind {
         case .claude: ["claude.ai", "claude.com", "anthropic.com"]
         case .codex: ["auth.openai.com", "chatgpt.com"]
-        case .cursor: ["cursor.com"]
         }
     }
 }
