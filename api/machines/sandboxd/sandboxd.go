@@ -236,18 +236,20 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	if _, err := b.lookup(ctx, id); err != nil {
 		return machines.Machine{}, err
 	}
-	started, missing, sandbox, addr := false, false, "", ""
+	started, missing, starting, sandbox, addr := false, false, false, "", ""
 	e, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-		started, missing = false, e == nil || e.row == nil
+		started, missing, starting = false, e == nil || e.row == nil, false
 		if missing {
 			return e, false
 		}
 		now := time.Now()
-		if state, _ := e.state(); state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
+		state, _ := e.state()
+		if state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
 			sandbox, addr, started = e.row.ID, e.ownerAddr, true
 			e.begin(opHibernate, now, b.leaseFor)
 			return e, true
 		}
+		starting = state == machines.StateStarting
 		return e, false
 	})
 	switch {
@@ -255,6 +257,8 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 		return machines.Machine{}, err
 	case missing:
 		return machines.Machine{}, machines.ErrNotFound
+	case starting:
+		return machines.Machine{}, fmt.Errorf("machine %s is being claimed or woken: %w", id, machines.ErrConflict)
 	}
 	if started {
 		b.run(id, opHibernate, e.revision, func(ctx context.Context) error {

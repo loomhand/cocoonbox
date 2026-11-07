@@ -505,6 +505,21 @@ func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	}
 }
 
+func TestHibernateDuringAWakeIsAConflict(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	if _, err := b.mutate(t.Context(), boxID, func(e *entry) (*entry, bool) {
+		e.begin(opWake, time.Now(), b.leaseFor)
+		return e, true
+	}); err != nil {
+		t.Fatalf("begin a wake: %v", err)
+	}
+	if _, err := b.Hibernate(t.Context(), boxID); !errors.Is(err, machines.ErrConflict) || fake.count("hibernate") != 0 {
+		t.Errorf("Hibernate during a wake = %v after %d hibernates, want ErrConflict and none", err, fake.count("hibernate"))
+	}
+}
+
 func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
