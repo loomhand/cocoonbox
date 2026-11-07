@@ -4,7 +4,6 @@ BINARY_NAME := cocoonbox-api
 GOIMPORTS_LOCAL_PREFIXES := github.com/loomhand/cocoonbox
 PROTO_DIR := ../proto
 
-## Target OSes for vet / lint
 GOOSES ?= linux darwin
 
 BUILD_OUT ?= bin/$(BINARY_NAME)
@@ -15,8 +14,6 @@ endif
 endif
 
 LOCALBIN ?= $(shell pwd)/bin
-$(LOCALBIN):
-	mkdir -p $(LOCALBIN)
 
 GOLANGCILINT_VERSION ?= v2.13.2
 GOLANGCILINT_ROOT := $(LOCALBIN)/golangci-lint-$(GOLANGCILINT_VERSION)
@@ -45,22 +42,22 @@ $(GOLANGCILINT):
 
 .PHONY: gofumpt
 gofumpt: $(GOFMT)
-$(GOFMT): | $(LOCALBIN)
+$(GOFMT):
 	GOBIN=$(GOFUMPT_ROOT) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 
 .PHONY: goimports
 goimports: $(GOIMPORTS)
-$(GOIMPORTS): | $(LOCALBIN)
+$(GOIMPORTS):
 	GOBIN=$(GOIMPORTS_ROOT) go install golang.org/x/tools/cmd/goimports@$(GOIMPORTS_VERSION)
 
 .PHONY: protoc-gen-go
 protoc-gen-go: $(PROTOCGENGO)
-$(PROTOCGENGO): | $(LOCALBIN)
+$(PROTOCGENGO):
 	GOBIN=$(PROTOCGENGO_ROOT) go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOCGENGO_VERSION)
 
 .PHONY: protoc-gen-go-grpc
 protoc-gen-go-grpc: $(PROTOCGENGOGRPC)
-$(PROTOCGENGOGRPC): | $(LOCALBIN)
+$(PROTOCGENGOGRPC):
 	GOBIN=$(PROTOCGENGOGRPC_ROOT) go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOCGENGOGRPC_VERSION)
 
 all: deps fmt lint test build ## Full pipeline: deps, fmt, lint, test, build
