@@ -20,7 +20,6 @@ xfs_quota -x -c "project -s cbsbx" /srv/cb >/dev/null
 xfs_quota -x -c "limit -p bhard=$QUOTA cbsbx" /srv/cb
 
 for b in sandboxd silkd cocoon cloud-hypervisor firecracker; do
-	[ -e "$S/bin/$b" ] && cp -p "$S/bin/$b" "$S/bin/$b.prev"
 	install -m 0755 "$BIN_SRC/$b" "$S/bin/$b"
 done
 cpus=${CB_VM_CPUS:-$(python3 - <<'PY'

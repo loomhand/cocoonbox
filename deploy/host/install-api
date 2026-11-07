@@ -2,7 +2,7 @@
 # Installs cocoonbox-api with its unit and drop-ins; idempotent. A missing /etc/cocoonbox/api.yaml is written from the
 # environment, and a missing master.key, edge-signing.key and pg.dsn are made fresh. Needs install-pg, install-gw and
 # deploy/cbsbx/install first, and /etc/cocoonbox/store.env (STORE_ACCESS_KEY, STORE_SECRET_KEY of the state bucket).
-# Connect is on when /etc/cocoonbox/connect.env exists, sign-in with GitHub when /etc/cocoonbox/login.env does.
+# An api.yaml written while /etc/cocoonbox/connect.env exists turns Connect on; connect.env and login.env go into the unit environment.
 #   CB_PUBLIC_URL      the api's public https origin (required)
 #   CB_IMAGE           the default sandboxd template (required)
 #   CB_STATE_ENDPOINT  the state store's S3 host:port (required); CB_STATE_BUCKET (cocoonbox-state), CB_STATE_REGION (us-east-1)
