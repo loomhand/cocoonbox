@@ -41,6 +41,12 @@ type seenClaim struct {
 	kept    time.Time
 }
 
+// placement names a claim on the node that holds it.
+type placement struct {
+	addr    string
+	sandbox string
+}
+
 // entry is the backend's record of one machine: its claim row and what the backend knows beyond it.
 type entry struct {
 	id    string

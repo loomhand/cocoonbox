@@ -264,7 +264,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 			if err != nil {
 				return err
 			}
-			return b.reread(ctx, id, at, sandbox)
+			return b.reread(ctx, id, addr, at, sandbox)
 		})
 	}
 	return b.machine(e), nil
@@ -670,7 +670,7 @@ func (b *Backend) claim(ctx context.Context, spec machines.Spec, template, size 
 	if err != nil {
 		return err
 	}
-	return b.reread(ctx, spec.ID, node, sandbox)
+	return b.reread(ctx, spec.ID, "", node, sandbox)
 }
 
 // claimFollow claims on the entry node and follows its redirect as the sandboxd SDK does, and returns the claim and its node.
@@ -710,8 +710,8 @@ func (b *Backend) claimAt(ctx context.Context, addr, tenant string, req claimReq
 	return resp, err
 }
 
-func (b *Backend) wake(ctx context.Context, id, addr, sandbox string, wakes int) error {
-	addr, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "wake", nil) })
+func (b *Backend) wake(ctx context.Context, id, from, sandbox string, wakes int) error {
+	addr, err := b.atOwner(ctx, id, from, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "wake", nil) })
 	if err != nil {
 		return err
 	}
@@ -724,11 +724,11 @@ func (b *Backend) wake(ctx context.Context, id, addr, sandbox string, wakes int)
 	}); err != nil {
 		return err
 	}
-	return b.reread(ctx, id, addr, sandbox)
+	return b.reread(ctx, id, from, addr, sandbox)
 }
 
 // reread replaces machine id's row with the current one of sandbox on node addr, or on the node the mesh names its owner.
-func (b *Backend) reread(ctx context.Context, id, addr, sandbox string) error {
+func (b *Backend) reread(ctx context.Context, id, from, addr, sandbox string) error {
 	r, addr, err := b.read(ctx, id, addr, sandbox)
 	if err != nil {
 		return err
@@ -739,7 +739,7 @@ func (b *Backend) reread(ctx context.Context, id, addr, sandbox string) error {
 	token := r.Token
 	r.Token = ""
 	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-		if e == nil {
+		if e == nil || (e.row != nil && e.ownerAddr != from) {
 			return e, false
 		}
 		e.row, e.ownerAddr = &r, addr
@@ -876,7 +876,7 @@ func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 		return nil, err
 	}
 	known := map[string]*entry{id: e}
-	if err := b.index(ctx, addr, []row{r}, known, true); err != nil {
+	if err := b.index(ctx, addr, []row{r}, known, e.ownerAddr); err != nil {
 		return nil, err
 	}
 	if known[id] == nil {
@@ -954,7 +954,7 @@ func (b *Backend) refresh(ctx context.Context) error {
 	}
 	b.trackAway(addrs, lists, known)
 	for addr, rows := range lists {
-		if err := b.index(ctx, addr, rows, known, false); err != nil {
+		if err := b.index(ctx, addr, rows, known, ""); err != nil {
 			return err
 		}
 	}
@@ -1016,14 +1016,14 @@ func (b *Backend) forgetTokens(known map[string]*entry, read time.Time) {
 	})
 }
 
-// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only when moved says the backend itself followed the claim there.
-func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, moved bool) error {
+// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only from node from, where the backend itself followed the claim from, and only while the machine is still there.
+func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, from string) error {
 	node, err := b.node(addr)
 	if err != nil {
 		return err
 	}
 	placed := func(e *entry, sandbox string) bool {
-		return sandbox != "" && e.sandbox() == sandbox && (moved || e.ownerAddr == addr)
+		return sandbox != "" && e.sandbox() == sandbox && (e.ownerAddr == addr || from != "" && e.ownerAddr == from)
 	}
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
@@ -1063,30 +1063,29 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 	return nil
 }
 
-// dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
+// dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim or lists it.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
-	type claimKey struct{ addr, sandbox string }
-	present, listed := map[claimKey]bool{}, map[string]bool{}
+	present, listed := map[placement]bool{}, map[string]bool{}
 	for addr, rows := range lists {
 		for _, r := range rows {
-			present[claimKey{addr, r.ID}], listed[r.ID] = true, true
+			present[placement{addr, r.ID}], listed[r.ID] = true, true
 		}
 	}
 	now := time.Now()
 	b.mu.Lock()
-	missing := map[string]string{}
+	missing := map[string]placement{}
 	for id, e := range known {
-		if e.busy(now) || e.row == nil || present[claimKey{e.ownerAddr, e.row.ID}] {
+		if e.busy(now) || e.row == nil || present[placement{e.ownerAddr, e.row.ID}] {
 			continue
 		}
 		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
-			missing[id] = e.row.ID
+			missing[id] = placement{e.ownerAddr, e.row.ID}
 		}
 	}
 	b.mu.Unlock()
 	for id, sandbox := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
-		if listed[sandbox] && b.token(id, sandbox) == "" {
-			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, which no api holds the token of; the machine stays until an api that holds it follows the claim", sandbox)
+		if listed[sandbox] {
+			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, but no agreed owner took it; the machine stays", sandbox)
 			continue
 		}
 		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox })
@@ -1101,19 +1100,19 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 }
 
 // unadopted returns the machines of missing that no node at addrs answers for, and rereads the others on the node that does.
-func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[string]string) map[string]string {
+func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[string]placement) map[string]string {
 	var mu sync.Mutex
 	out := map[string]string{}
 	var g errgroup.Group
 	g.SetLimit(probeFanout)
-	for id, sandbox := range missing {
+	for id, at := range missing {
 		g.Go(func() error {
-			if to, ok := b.follow(ctx, addrs, id, sandbox); ok && b.reread(ctx, id, to, sandbox) == nil {
+			if to, ok := b.follow(ctx, addrs, id, at.sandbox); ok && b.reread(ctx, id, at.addr, to, at.sandbox) == nil {
 				return nil
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			out[id] = sandbox
+			out[id] = at.sandbox
 			return nil
 		})
 	}

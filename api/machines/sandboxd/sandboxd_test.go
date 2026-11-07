@@ -251,7 +251,7 @@ func TestARereadRefusesAnotherMachinesSandbox(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	fake.add(&fakeSandbox{row: row{ID: "sb_bob", Metadata: map[string]string{"cb_machine": "cb-bob", "cb_owner": "bob"}}})
-	if err := b.reread(t.Context(), boxID, fake.addr(), "sb_bob"); err == nil {
+	if err := b.reread(t.Context(), boxID, "", fake.addr(), "sb_bob"); err == nil {
 		t.Error("reread bound a machine to another machine's sandbox")
 	}
 }
@@ -275,6 +275,52 @@ func TestAMovedClaimWaitsForAnAPIThatHoldsItsTokenAndAListingLendsNone(t *testin
 	}
 	if e, err := holder.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() || holder.token(boxID, "sb_1") != token {
 		t.Errorf("after the token holder's refresh = %+v, %v; want it followed to %s with its own token", e, err, entry.addr())
+	}
+}
+
+func TestAStaleAnswerFromTheFormerNodeLeavesAMovedMachineMoved(t *testing.T) {
+	front, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	front.peers, front.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := openSharedBackend(t, front, clustertest.Open(t))
+	claimRunning(t, b)
+	stale, err := b.stored(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("stored: %v", err)
+	}
+	if _, err := b.mutate(t.Context(), boxID, func(e *entry) (*entry, bool) { e.ownerAddr = front.addr(); return e, true }); err != nil {
+		t.Fatalf("move: %v", err)
+	}
+	forged := *stale.row
+	forged.EnvMissing = true
+	if err := b.index(t.Context(), peer.addr(), []row{forged}, map[string]*entry{boxID: stale}, stale.ownerAddr); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if err := b.reread(t.Context(), boxID, peer.addr(), peer.addr(), "sb_1"); err != nil {
+		t.Fatalf("reread: %v", err)
+	}
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != front.addr() || e.row.EnvMissing {
+		t.Errorf("machine after stale answers from %s = %+v, %v; want it left on %s", peer.addr(), e, err, front.addr())
+	}
+}
+
+func TestARefreshKeepsAMachineWhoseNewNodesDisagree(t *testing.T) {
+	entry, peer, evil := newFakeSandboxd(t), newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer, evil}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	peer.mu.Lock()
+	sb := peer.sandboxes["sb_1"]
+	peer.mu.Unlock()
+	evil.mu.Lock()
+	evil.adoptable["sb_1"] = &fakeSandbox{row: sb.row, token: sb.token}
+	evil.mu.Unlock()
+	peer.moveTo(entry)
+
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != peer.addr() {
+		t.Errorf("machine = %+v, %v; want it kept on %s while its new nodes disagree", e, err, peer.addr())
 	}
 }
 
