@@ -955,6 +955,32 @@ mod tests {
         crate::toolhost::rpc::connect(&path).await.map(drop)
     }
 
+    fn admin_check(sddl: &str) -> Result<(), String> {
+        use windows::Win32::Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner};
+
+        let security = PipeSecurity::from_sddl(sddl).unwrap();
+        let (mut owner, mut dacl) = (PSID::default(), std::ptr::null_mut());
+        let (mut present, mut defaulted) = (false.into(), false.into());
+        // SAFETY: the descriptor lives until the end, and each out pointer receives a pointer into it.
+        unsafe {
+            GetSecurityDescriptorOwner(security.descriptor, &raw mut owner, &raw mut defaulted)
+                .unwrap();
+            GetSecurityDescriptorDacl(
+                security.descriptor,
+                &raw mut present,
+                &raw mut dacl,
+                &raw mut defaulted,
+            )
+            .unwrap();
+        }
+        let dacl = if present.as_bool() {
+            dacl
+        } else {
+            std::ptr::null_mut()
+        };
+        admin_acl(owner, dacl)
+    }
+
     #[tokio::test]
     async fn the_pipe_admits_its_user_and_a_group_with_read_and_write_and_refuses_a_reader() {
         let me = own_sid().unwrap();
@@ -1042,32 +1068,6 @@ mod tests {
                 ("sub".to_owned(), Some((true, 0)))
             ]
         );
-    }
-
-    fn admin_check(sddl: &str) -> Result<(), String> {
-        use windows::Win32::Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner};
-
-        let security = PipeSecurity::from_sddl(sddl).unwrap();
-        let (mut owner, mut dacl) = (PSID::default(), std::ptr::null_mut());
-        let (mut present, mut defaulted) = (false.into(), false.into());
-        // SAFETY: the descriptor lives until the end, and each out pointer receives a pointer into it.
-        unsafe {
-            GetSecurityDescriptorOwner(security.descriptor, &raw mut owner, &raw mut defaulted)
-                .unwrap();
-            GetSecurityDescriptorDacl(
-                security.descriptor,
-                &raw mut present,
-                &raw mut dacl,
-                &raw mut defaulted,
-            )
-            .unwrap();
-        }
-        let dacl = if present.as_bool() {
-            dacl
-        } else {
-            std::ptr::null_mut()
-        };
-        admin_acl(owner, dacl)
     }
 
     #[test]
