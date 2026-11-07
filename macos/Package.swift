@@ -35,7 +35,7 @@ let package = Package(
         ),
         .target(
             name: "CocoonBoxTerminal",
-            dependencies: [.product(name: "GhosttyTerminal", package: "libghostty-spm")]
+            dependencies: ["CocoonBoxKit", .product(name: "GhosttyTerminal", package: "libghostty-spm")]
         ),
         .target(
             name: "CocoonBoxBridge",
