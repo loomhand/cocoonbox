@@ -15,7 +15,6 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
-use zeroize::Zeroizing;
 
 use super::{rpc, timing};
 use crate::sys;
@@ -506,15 +505,13 @@ impl Browser {
         let submit = args["submit"].as_bool().unwrap_or(false);
         let _life = self.life.read().await;
         let mut cdp = self.attach().await?;
-        let user = js_secret(username);
-        let secret = js_secret(secret);
-        let mut expr = Zeroizing::new(String::with_capacity(
-            FILL_JS.len() + origin.len() * 6 + user.len() + secret.len() + 64,
-        ));
-        for part in [FILL_JS, "(", &js_str(origin), ",", &user, ",", &secret, ","] {
-            expr.push_str(part);
-        }
-        let _ = write!(expr, "{},{submit})", js_str(kind));
+        let expr = format!(
+            "{FILL_JS}({},{},{},{},{submit})",
+            js_str(origin),
+            js_str(username),
+            js_str(secret),
+            js_str(kind)
+        );
         let mut r = cdp.eval(&expr).await?;
         if let Some(e) = r["error"].as_str() {
             return Err(e.to_owned());
@@ -1875,24 +1872,6 @@ fn js_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_default()
 }
 
-/// `s` as a JS string literal in a buffer sized for the worst-case escape, so it never reallocates.
-fn js_secret(s: &str) -> Zeroizing<String> {
-    let mut out = Zeroizing::new(String::with_capacity(s.len() * 6 + 2));
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if u32::from(c) < 0x20 || c == '\u{2028}' || c == '\u{2029}' => {
-                let _ = write!(out, "\\u{:04x}", u32::from(c));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
 #[cfg(test)]
 pub(super) mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2423,11 +2402,9 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn js_secret_is_a_string_literal_of_its_input_without_reallocating() {
+    fn js_str_is_a_string_literal_of_its_input() {
         for s in ["plain", "quo\"te\\back", "line\nbreak\u{2028}", "密码", ""] {
-            let lit = js_secret(s);
-            assert_eq!(serde_json::from_str::<String>(&lit).unwrap(), s);
-            assert_eq!(lit.capacity(), s.len() * 6 + 2);
+            assert_eq!(serde_json::from_str::<String>(&js_str(s)).unwrap(), s);
         }
     }
 
