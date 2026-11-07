@@ -35,9 +35,11 @@ enum TranscriptRow: Identifiable {
     static func rows(_ entries: [Entry], answered: Set<String>) -> [TranscriptRow] {
         var results: [String: (Cocoonbox_Agent_V1_ToolResult, UInt64)] = [:]
         var calls: Set<String> = []
+        var ended: Set<String> = []
         for entry in entries {
             if case .toolResult(let result) = entry.body { results[result.callID] = (result, entry.seq) }
             if case .toolCall(let call) = entry.body { calls.insert(call.callID) }
+            if case .turnEnd = entry.body { ended.insert(entry.turnID) }
         }
         var rows: [TranscriptRow] = []
         for (index, entry) in entries.enumerated() {
@@ -52,7 +54,7 @@ enum TranscriptRow: Identifiable {
                 rows.append(.reasoning(entry.seq, block.text, subagent: block.subagent))
             case .toolCall(let call):
                 let paired = results[call.callID]
-                rows.append(.tool(entry.seq, call, paired?.0, paired?.1))
+                rows.append(.tool(entry.seq, call, paired?.0 ?? (ended.contains(entry.turnID) ? .with { $0.isError = true } : nil), paired?.1))
             case .toolResult(let result):
                 if !calls.contains(result.callID) { rows.append(.result(entry.seq, result)) }
             case .approval(let approval):
