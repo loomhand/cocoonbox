@@ -179,6 +179,17 @@ func TestDeletingAUserDropsItsKeysAndAudit(t *testing.T) {
 	}
 }
 
+func TestTheAuditOfADoneChangeOutlivesItsRequest(t *testing.T) {
+	svc := newService(t)
+	ctx, cancel := context.WithCancel(auth.WithUser(t.Context(), alice))
+	cancel()
+	svc.audit(ctx, &secret{id: "vs_gone", owner: alice, name: "K"}, opDelete)
+	var n int
+	if err := svc.store.pool.QueryRow(t.Context(), "SELECT count(*) FROM vault_audit WHERE secret_id = 'vs_gone'").Scan(&n); err != nil || n != 1 {
+		t.Errorf("audit rows after the request ended = %d, %v; want 1", n, err)
+	}
+}
+
 func TestKeysAnswerAStoreFailureWithoutItsText(t *testing.T) {
 	svc := newService(t)
 	svc.store.pool.Close()

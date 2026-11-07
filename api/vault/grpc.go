@@ -103,7 +103,7 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.KeyRef) (*controlv1
 func (s *Service) audit(ctx context.Context, sec *secret, op string) {
 	actor := actorOf(ctx)
 	logger := log.WithFunc("vault.Service.audit")
-	if err := s.store.audit(ctx, sec.owner, sec.id, sec.name, op, actor); err != nil {
+	if err := s.store.audit(context.WithoutCancel(ctx), sec.owner, sec.id, sec.name, op, actor); err != nil {
 		logger.Error(ctx, err, "write the audit record")
 	}
 	logger.Infof(ctx, "user %s: %s key %s (%s) from %s", sec.owner, op, sec.name, sec.id, actor)
