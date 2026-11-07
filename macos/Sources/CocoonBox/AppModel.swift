@@ -854,6 +854,13 @@ final class AppModel {
                 } catch {
                     if Task.isCancelled { return }
                     Perf.mark("watch_operation_error", "\(error)")
+                    if BoxConnection.isNotFound(error) {
+                        return self.record(operationEvent: .with {
+                            $0.operationID = id
+                            $0.phase = .failed
+                            $0.detail = "the server no longer knows this operation"
+                        })
+                    }
                 }
                 if self.operation?.finished ?? true { return }
                 try? await pause(backoff.delay(attempt: attempt))

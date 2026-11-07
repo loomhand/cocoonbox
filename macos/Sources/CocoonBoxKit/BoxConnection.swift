@@ -427,6 +427,10 @@ public final class BoxConnection: Sendable {
         return "\(error)"
     }
 
+    public static func isNotFound(_ error: any Error) -> Bool {
+        (error as? RPCError)?.code == .notFound
+    }
+
     // describeCredential renders an ActiveOrigin or FillCredential error; agents before v12 do not serve those calls.
     public static func describeCredential(_ error: any Error) -> String {
         guard let rpc = error as? RPCError else { return describe(error) }
