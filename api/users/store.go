@@ -46,10 +46,10 @@ func openStore(ctx context.Context, dsn string) (*store, error) {
 
 func (s *store) close() { s.pool.Close() }
 
-func (s *store) notify(ctx context.Context) error {
+func (s *store) notify(ctx context.Context, payload string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
 	defer cancel()
-	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, '')", notifyChannel); err != nil {
+	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
 		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
 	return nil
@@ -85,13 +85,31 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list users: %w", err)
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
-		var r record
-		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
-			&r.tokenSHA256, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.NoPark, &r.Policy.NoGC)
-		r.HasToken = r.tokenSHA256 != ""
-		return r, err
-	})
+	return pgx.CollectRows(rows, scanRecord)
+}
+
+func (s *store) one(ctx context.Context, id string) (record, []Box, error) {
+	rows, _ := s.pool.Query(ctx, "SELECT "+recordColumns+" FROM users WHERE id = $1", id)
+	r, err := pgx.CollectExactlyOneRow(rows, scanRecord)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return record{}, nil, ErrNotFound
+	}
+	if err == nil {
+		rows, _ = s.pool.Query(ctx, "SELECT id, sha256 FROM user_tokens WHERE user_id = $1 ORDER BY created_at, id", id)
+		r.devices, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (d deviceToken, err error) {
+			err = row.Scan(&d.id, &d.sha256)
+			return d, err
+		})
+	}
+	var boxes []Box
+	if err == nil {
+		rows, _ = s.pool.Query(ctx, "SELECT id, owner, name, agent, created_at FROM boxes WHERE owner = $1 ORDER BY created_at, id", id)
+		boxes, err = pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
+	}
+	if err != nil {
+		return record{}, nil, fmt.Errorf("read user %s: %w", id, err)
+	}
+	return r, boxes, nil
 }
 
 func (s *store) insert(ctx context.Context, r record, passwordHash string, first Box) error {
@@ -118,11 +136,7 @@ func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list boxes: %w", err)
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Box, error) {
-		var b Box
-		err := row.Scan(&b.ID, &b.Owner, &b.Name, &b.Agent, &b.CreatedAt)
-		return b, err
-	})
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
 }
 
 // insertBox adds b while the owner has fewer boxes of b's kind than max_boxes or max_agent_boxes; the owner's row lock orders concurrent adds.
@@ -577,6 +591,14 @@ func notifyIn(ctx context.Context, tx pgx.Tx) error {
 		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
 	return nil
+}
+
+func scanRecord(row pgx.CollectableRow) (record, error) {
+	var r record
+	err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
+		&r.tokenSHA256, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.NoPark, &r.Policy.NoGC)
+	r.HasToken = r.tokenSHA256 != ""
+	return r, err
 }
 
 func nullTime(t time.Time) *time.Time {

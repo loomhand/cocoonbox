@@ -42,6 +42,7 @@ const (
 
 	columnTenant   = "tenant_token"
 	columnStateKey = "state_key"
+	createdPayload = "user:"
 
 	passwordIDP = "password"
 	// githubIDP is signup's provider; an outside provider of that name would reach the users signup made.
@@ -194,6 +195,7 @@ type Service struct {
 	byID         map[string]record
 	byToken      map[string]tokenOwner
 	indexGen     int
+	spliced      []string
 	deviceUse    sync.Map
 	boxes        map[string][]Box
 	boxGen       int
@@ -260,7 +262,7 @@ func (s *Service) Close() {
 func (s *Service) Load(ctx context.Context) error {
 	for {
 		s.mu.RLock()
-		gen, indexGen := s.boxGen, s.indexGen
+		gen, indexGen, spliced := s.boxGen, s.indexGen, len(s.spliced)
 		s.mu.RUnlock()
 		records, err := s.store.all(ctx)
 		if err != nil {
@@ -292,6 +294,13 @@ func (s *Service) Load(ctx context.Context) error {
 			continue
 		}
 		s.indexGen++
+		for _, id := range s.spliced[spliced:] {
+			if r, ok := s.byID[id]; ok && byID[id].ID == "" {
+				byID[id], byOwner[id] = r, s.boxes[id]
+				addTokens(byToken, r)
+			}
+		}
+		s.spliced = nil
 		for id, r := range byID {
 			if r.Disabled && !s.byID[id].Disabled {
 				s.cutOwner(id, false)
@@ -330,7 +339,7 @@ func (s *Service) Load(ctx context.Context) error {
 	}
 }
 
-// Listen reloads the index and shares on each users notify and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
+// Listen reloads the index and shares on each users notify but a created user's, which it reads alone, and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
 func (s *Service) Listen(ctx context.Context) {
 	for {
 		err := s.listen(ctx)
@@ -841,7 +850,7 @@ func (s *Service) createOnce(ctx context.Context, idp, id string) (User, error) 
 	case !exists:
 		return s.create(ctx, NewUser{ID: id, Name: id, IDP: idp})
 	}
-	if err = s.Load(ctx); err != nil {
+	if err = s.loadUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	u, err := s.Get(id)
@@ -876,8 +885,10 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil))
 	}
-	s.published(ctx, "created user "+r.Name)
-	if err := s.Load(ctx); err != nil {
+	if err := s.store.notify(ctx, createdPayload+id); err != nil {
+		log.WithFunc("users.Service.create").Warnf(ctx, "created user %s; other apis read it on their next notify: %v", r.Name, err)
+	}
+	if err := s.loadUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	return s.Get(id)
@@ -968,10 +979,50 @@ func (s *Service) listen(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		reload = n.Channel != endedChannel
-		if !reload {
+		id, created := strings.CutPrefix(n.Payload, createdPayload)
+		reload = n.Channel != endedChannel && !created
+		switch {
+		case n.Channel == endedChannel:
 			s.endLocally(n.Payload)
+		case created:
+			if err := s.loadUser(ctx, id); err != nil {
+				return err
+			}
 		}
+	}
+}
+
+func (s *Service) loadUser(ctx context.Context, id string) error {
+	for {
+		s.mu.RLock()
+		gen, indexGen := s.boxGen, s.indexGen
+		s.mu.RUnlock()
+		r, boxes, err := s.store.one(ctx, id)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if s.indexGen != indexGen || s.boxGen != gen {
+			s.mu.Unlock()
+			continue
+		}
+		s.spliced = append(s.spliced, id)
+		dropTokens(s.byToken, s.byID[id])
+		s.byID[id] = r
+		addTokens(s.byToken, r)
+		var hooks []func(string)
+		if !slices.Equal(s.boxes[id], boxes) {
+			hooks = slices.Clone(s.onBoxes)
+		}
+		s.boxes[id] = boxes
+		s.mu.Unlock()
+		for _, fn := range hooks {
+			fn(id)
+		}
+		return nil
 	}
 }
 
@@ -1004,7 +1055,7 @@ func (s *Service) endGoneGrants(ctx context.Context) error {
 
 // published tells every api to reload after a write; a failed notify reaches them with the next one.
 func (s *Service) published(ctx context.Context, what string) {
-	if err := s.store.notify(ctx); err != nil {
+	if err := s.store.notify(ctx, ""); err != nil {
 		log.WithFunc("users.Service.published").Warnf(ctx, "%s; other apis reload on their next notify: %v", what, err)
 	}
 }

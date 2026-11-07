@@ -660,11 +660,14 @@ func (g *gatedTenants) PutTenant(ctx context.Context, name, token string, maxCla
 }
 
 type queryCounter struct {
-	n atomic.Int64
+	sql string
+	n   atomic.Int64
 }
 
-func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
-	c.n.Add(1)
+func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, c.sql) {
+		c.n.Add(1)
+	}
 	return ctx
 }
 
