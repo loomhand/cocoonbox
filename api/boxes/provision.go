@@ -1,7 +1,6 @@
 package boxes
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -137,6 +136,9 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, reke
 	if err != nil {
 		return err
 	}
+	if cur.State != machines.StateRunning {
+		return &machines.NotRunningError{State: cur.State}
+	}
 	if wakeOf(cur) != "" && !cur.EnvMissing && !rekey {
 		return nil
 	}
@@ -163,25 +165,34 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, reke
 	return lastErr
 }
 
-// provisionOnce issues m's gw key, provisions m with it and revokes it when that fails.
+// provisionOnce issues m's gw key and provisions m with it; a failure revokes the key or, once the incarnation has a wake id, every key of m, so the next pass keys it again.
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
 	keys := map[string]*machines.Secret{}
-	issued := ""
+	issued, keyOnly := "", wakeOf(m) != "" && !m.EnvMissing
 	if s.accounts != nil {
 		key, id, err := s.accounts.IssueMachineKey(ctx, m.Owner, m.ID, m.Incarnation)
-		if err != nil {
+		switch {
+		case err != nil && keyOnly:
 			return "", fmt.Errorf("issue gw key: %w", err)
+		case err != nil:
+			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the gw key; the next pass retries: %v", err)
+			keys[gwKeyEnv] = nil
+		default:
+			keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
 		}
-		keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
 	}
 	wake, err := s.provisionWith(ctx, m, keys)
-	if err != nil && issued != "" {
+	switch {
+	case err == nil || issued == "":
+	case wakeOf(m) != "":
+		s.revokeMachineKeys(context.WithoutCancel(ctx), m.ID)
+	default:
 		s.revokeMachineKey(context.WithoutCancel(ctx), m.ID, issued)
 	}
 	return wake, err
 }
 
-// provisionWith writes keys and m's other host-only entries and, unless the incarnation has a wake id, its identity; it fails while the backend still misses an entry.
+// provisionWith writes keys and m's other host-only entries and, unless the incarnation has a wake id, its identity; once every push succeeded it removes the entries the backend still lacks.
 func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys map[string]*machines.Secret) (string, error) {
 	logger := log.WithFunc("boxes.Service.provisionWith").WithField("machine", m.ID)
 	p := s.provision
@@ -219,16 +230,27 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	} else if err := s.machines.SetCredentials(ctx, m.ID, machines.Credentials{Secrets: keys}); err != nil {
 		return "", err
 	}
+	var pushErr error
 	if s.connect != nil && owned {
-		s.pushCredentials(ctx, m)
+		pushErr = s.pushCredentials(ctx, m)
 	}
 	if s.vault != nil && owned {
-		if err := s.pushVault(ctx, m); err != nil {
-			logger.Warnf(ctx, "push keys: %v", err)
-		}
+		pushErr = errors.Join(pushErr, s.pushVault(ctx, m))
 	}
-	if cur, err := s.machines.Get(ctx, m.ID); err != nil || cur.EnvMissing {
-		return "", cmp.Or(err, errEnvMissing)
+	cur, err := s.machines.Get(ctx, m.ID)
+	switch {
+	case err != nil:
+		return "", err
+	case cur.EnvMissing && pushErr != nil:
+		return "", errors.Join(errEnvMissing, pushErr)
+	case cur.EnvMissing:
+		dropped, err := s.machines.DropMissing(ctx, m.ID)
+		if err != nil {
+			return "", errors.Join(errEnvMissing, err)
+		}
+		logger.Warnf(ctx, "removed host-only entries nothing pushes again: %s", strings.Join(dropped, ", "))
+	case pushErr != nil:
+		logger.Warnf(ctx, "push credentials: %v", pushErr)
 	}
 	if wake != "" {
 		return wake, nil
@@ -285,11 +307,16 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(boxOfMachine(m.ID), wake))
 }
 
-// ready reports whether clients may reach m: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
+// ready reports whether the control plane may call m's agent: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
 	active := s.ops.activeFor(boxOfMachine(m.ID))
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "" && !m.EnvMissing) && !unrestored(m) &&
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !unrestored(m) &&
 		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
+}
+
+// reachable reports whether clients may reach m: ready and, with provisioning on, holding every host-only entry.
+func (s *Service) reachable(m machines.Machine) bool {
+	return s.ready(m) && (s.provision == nil || !m.EnvMissing)
 }
 
 // wakeOf returns the wake id recorded for m's current incarnation, "" when none.

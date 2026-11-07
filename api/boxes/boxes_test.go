@@ -525,6 +525,8 @@ type fakeMachines struct {
 	execs       []execCall
 	egress      []string
 	creds       []credCall
+	credErr     error
+	drops       int
 	keepMissing bool
 }
 
@@ -680,6 +682,9 @@ func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.C
 	if !ok {
 		return machines.ErrNotFound
 	}
+	if f.credErr != nil {
+		return f.credErr
+	}
 	call := credCall{machine: id, secrets: map[string]string{}}
 	for name, sec := range c.Secrets {
 		if sec != nil {
@@ -692,6 +697,19 @@ func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.C
 	f.creds = append(f.creds, call)
 	f.filled(id)
 	return nil
+}
+
+func (f *fakeMachines) DropMissing(_ context.Context, id string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[id]
+	if !ok {
+		return nil, machines.ErrNotFound
+	}
+	f.drops++
+	m.EnvMissing = false
+	f.machines[id] = m
+	return []string{"STALE"}, nil
 }
 
 func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {

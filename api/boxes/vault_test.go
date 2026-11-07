@@ -113,6 +113,7 @@ func lastPushTo(fake *fakeMachines, machine string) credCall {
 type fakeVault struct {
 	mu      sync.Mutex
 	digests map[string]string
+	err     error
 }
 
 func (v *fakeVault) Digests(context.Context) (map[string]string, error) {
@@ -124,6 +125,9 @@ func (v *fakeVault) Digests(context.Context) (map[string]string, error) {
 func (v *fakeVault) Credentials(_ context.Context, owner string) (machines.Credentials, string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.err != nil {
+		return machines.Credentials{}, "", v.err
+	}
 	c := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{vaultFlag: ""}, Prune: "CBV_"}
 	if d := v.digests[owner]; d != "" {
 		c.Secrets["CBV_1"] = &machines.Secret{Value: "v-" + owner}
