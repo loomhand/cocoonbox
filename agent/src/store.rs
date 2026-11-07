@@ -1,4 +1,4 @@
-//! SQLite state: agents, turns, transcript entries, client-nonce dedupe and the flow library sync.
+//! SQLite state: agents, turns, transcript entries and the flow library sync.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -35,12 +35,6 @@ CREATE TABLE IF NOT EXISTS entries (
     body BLOB NOT NULL
 );
 CREATE INDEX IF NOT EXISTS entries_by_agent ON entries (agent_id, seq);
-CREATE TABLE IF NOT EXISTS nonces (
-    scope TEXT NOT NULL,
-    nonce TEXT NOT NULL,
-    value TEXT NOT NULL,
-    PRIMARY KEY (scope, nonce)
-);
 CREATE TABLE IF NOT EXISTS flow_sync (
     name TEXT PRIMARY KEY,
     rev INTEGER NOT NULL,
@@ -71,19 +65,13 @@ impl Store {
         })
     }
 
-    /// Creates an agent, or returns the one created earlier with the same nonce.
+    /// Creates an agent.
     pub async fn create_agent(
         &self,
         name: String,
         main_model: String,
-        nonce: String,
     ) -> Result<pb::Agent, String> {
         self.call(move |c| {
-            let tx = c.transaction()?;
-            if let Some(id) = nonce_value(&tx, "create", &nonce)? {
-                let agent = agent_row(&tx, &id)?;
-                return Ok(agent);
-            }
             let now = now_ms();
             let mut agent = pb::Agent {
                 id: new_id("ag"),
@@ -93,18 +81,15 @@ impl Store {
                 created_at_ms: now,
                 updated_at_ms: now,
             };
-            tx.execute(
+            c.execute(
                 "INSERT INTO agents (id, name, main_model, status, created_at_ms, updated_at_ms)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
                 params![agent.id, agent.name, agent.main_model, agent.status, now],
             )?;
-            put_nonce(&tx, "create", &nonce, &agent.id)?;
-            tx.commit()?;
             agent.name = display_name(agent.name);
-            Ok(Some(agent))
+            Ok(agent)
         })
-        .await?
-        .ok_or_else(|| "agent for nonce vanished".to_owned())
+        .await
     }
 
     /// Returns every agent, oldest first.
@@ -176,7 +161,7 @@ impl Store {
         .await
     }
 
-    /// Deletes an agent with its turns, entries and nonces; returns whether it existed.
+    /// Deletes an agent with its turns and entries; returns whether it existed.
     pub async fn delete_agent(&self, id: String) -> Result<bool, String> {
         self.call(move |c| {
             let tx = c.transaction()?;
@@ -187,22 +172,14 @@ impl Store {
         .await
     }
 
-    /// Records a user turn, deduplicated by `(agent, nonce)`; `None` when the agent does not exist.
+    /// Records a user turn; `None` when the agent does not exist.
     pub async fn queue_turn(
         &self,
         agent_id: String,
         text: String,
-        nonce: String,
     ) -> Result<Option<Queued>, String> {
         self.call(move |c| {
             let tx = c.transaction()?;
-            let scope = format!("send:{agent_id}");
-            if let Some(turn_id) = nonce_value(&tx, &scope, &nonce)? {
-                return Ok(Some(Queued {
-                    turn_id,
-                    entry: None,
-                }));
-            }
             let turn_id = new_id("turn");
             let queued = tx.execute(
                 "INSERT INTO turns (id, agent_id)
@@ -223,12 +200,8 @@ impl Store {
                 ..Default::default()
             };
             let entry = insert_entry(&tx, entry, false)?;
-            put_nonce(&tx, &scope, &nonce, &turn_id)?;
             tx.commit()?;
-            Ok(Some(Queued {
-                turn_id,
-                entry: Some(entry),
-            }))
+            Ok(Some(Queued { turn_id, entry }))
         })
         .await
     }
@@ -247,7 +220,7 @@ impl Store {
     }
 
     /// Deletes agents named `prefix*` that are neither running nor waiting and were last
-    /// updated before `before_ms`, with their turns, entries and nonces; returns their ids.
+    /// updated before `before_ms`, with their turns and entries; returns their ids.
     pub async fn prune_agents(
         &self,
         prefix: String,
@@ -460,10 +433,10 @@ impl Store {
     }
 }
 
-/// Result of a Send: the turn id and, for a new turn, the persisted user entry.
+/// Result of a Send: the turn id and the persisted user entry.
 pub struct Queued {
     pub turn_id: String,
-    pub entry: Option<TranscriptEntry>,
+    pub entry: TranscriptEntry,
 }
 
 fn insert_entry(
@@ -489,10 +462,6 @@ fn insert_entry(
 fn delete_rows(c: &Connection, id: &str) -> rusqlite::Result<bool> {
     c.execute("DELETE FROM entries WHERE agent_id = ?1", [id])?;
     c.execute("DELETE FROM turns WHERE agent_id = ?1", [id])?;
-    c.execute(
-        "DELETE FROM nonces WHERE scope = 'send:' || ?1 OR (scope = 'create' AND value = ?1)",
-        [id],
-    )?;
     Ok(c.execute("DELETE FROM agents WHERE id = ?1", [id])? > 0)
 }
 
@@ -536,29 +505,6 @@ fn display_name(name: String) -> String {
     }
 }
 
-fn nonce_value(c: &Connection, scope: &str, nonce: &str) -> rusqlite::Result<Option<String>> {
-    if nonce.is_empty() {
-        return Ok(None);
-    }
-    c.query_row(
-        "SELECT value FROM nonces WHERE scope = ?1 AND nonce = ?2",
-        [scope, nonce],
-        |r| r.get(0),
-    )
-    .optional()
-}
-
-fn put_nonce(c: &Connection, scope: &str, nonce: &str, value: &str) -> rusqlite::Result<()> {
-    if nonce.is_empty() {
-        return Ok(());
-    }
-    c.execute(
-        "INSERT INTO nonces (scope, nonce, value) VALUES (?1, ?2, ?3)",
-        [scope, nonce, value],
-    )
-    .map(drop)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,58 +517,10 @@ mod tests {
 
     async fn agent(store: &Store) -> String {
         store
-            .create_agent(String::new(), "m".into(), String::new())
+            .create_agent(String::new(), "m".into())
             .await
             .unwrap()
             .id
-    }
-
-    #[tokio::test]
-    async fn create_dedupes_by_nonce() {
-        let (_dir, store) = open();
-        let a = store
-            .create_agent("a".into(), "m".into(), "n1".into())
-            .await
-            .unwrap();
-        let b = store
-            .create_agent("other".into(), "m".into(), "n1".into())
-            .await
-            .unwrap();
-        let c = store
-            .create_agent("a".into(), "m".into(), String::new())
-            .await
-            .unwrap();
-        assert_eq!(a.id, b.id);
-        assert_ne!(a.id, c.id);
-        assert_eq!(store.list_agents().await.unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn send_dedupes_by_nonce_per_agent() {
-        let (_dir, store) = open();
-        let ag1 = agent(&store).await;
-        let ag2 = agent(&store).await;
-        let first = store
-            .queue_turn(ag1.clone(), "hi".into(), "n".into())
-            .await
-            .unwrap()
-            .unwrap();
-        let again = store
-            .queue_turn(ag1.clone(), "hi".into(), "n".into())
-            .await
-            .unwrap()
-            .unwrap();
-        let other = store
-            .queue_turn(ag2, "hi".into(), "n".into())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(first.turn_id, again.turn_id);
-        assert!(first.entry.is_some());
-        assert!(again.entry.is_none());
-        assert_ne!(first.turn_id, other.turn_id);
-        let page = store.transcript(ag1, 0, 10).await.unwrap();
-        assert_eq!(page.entries.len(), 1);
     }
 
     #[tokio::test]
@@ -630,10 +528,7 @@ mod tests {
         let (_dir, store) = open();
         let id = agent(&store).await;
         assert!(store.delete_agent(id.clone()).await.unwrap());
-        let queued = store
-            .queue_turn(id.clone(), "hi".into(), String::new())
-            .await
-            .unwrap();
+        let queued = store.queue_turn(id.clone(), "hi".into()).await.unwrap();
         assert!(queued.is_none());
         assert!(store.unfinished_turns().await.unwrap().is_empty());
         assert!(
@@ -651,7 +546,7 @@ mod tests {
         let (_dir, store) = open();
         let ag = agent(&store).await;
         let q = store
-            .queue_turn(ag.clone(), "u".into(), String::new())
+            .queue_turn(ag.clone(), "u".into())
             .await
             .unwrap()
             .unwrap();
@@ -686,12 +581,12 @@ mod tests {
         let (_dir, store) = open();
         let ag = agent(&store).await;
         let t1 = store
-            .queue_turn(ag.clone(), "first".into(), String::new())
+            .queue_turn(ag.clone(), "first".into())
             .await
             .unwrap()
             .unwrap();
         let t2 = store
-            .queue_turn(ag.clone(), "second".into(), String::new())
+            .queue_turn(ag.clone(), "second".into())
             .await
             .unwrap()
             .unwrap();

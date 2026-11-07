@@ -147,8 +147,6 @@ public nonisolated struct Cocoonbox_Agent_V1_CreateAgentRequest: Sendable {
   /// Empty: the first line of the first message, cut to 24 characters; "agent" until then.
   public var name: String = String()
 
-  public var clientNonce: String = String()
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -184,8 +182,6 @@ public nonisolated struct Cocoonbox_Agent_V1_SendRequest: Sendable {
   public var agentID: String = String()
 
   public var text: String = String()
-
-  public var clientNonce: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -681,7 +677,7 @@ nonisolated extension Cocoonbox_Agent_V1_Agent: SwiftProtobuf.Message, SwiftProt
 
 nonisolated extension Cocoonbox_Agent_V1_CreateAgentRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CreateAgentRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{3}client_nonce\0\u{b}main_model\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{b}client_nonce\0\u{b}main_model\0\u{c}\u{2}\u{1}\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -690,7 +686,6 @@ nonisolated extension Cocoonbox_Agent_V1_CreateAgentRequest: SwiftProtobuf.Messa
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.clientNonce) }()
       default: break
       }
     }
@@ -700,15 +695,11 @@ nonisolated extension Cocoonbox_Agent_V1_CreateAgentRequest: SwiftProtobuf.Messa
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
     }
-    if !self.clientNonce.isEmpty {
-      try visitor.visitSingularStringField(value: self.clientNonce, fieldNumber: 2)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_CreateAgentRequest, rhs: Cocoonbox_Agent_V1_CreateAgentRequest) -> Bool {
     if lhs.name != rhs.name {return false}
-    if lhs.clientNonce != rhs.clientNonce {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -765,7 +756,7 @@ nonisolated extension Cocoonbox_Agent_V1_ListAgentsResponse: SwiftProtobuf.Messa
 
 nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SendRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{1}text\0\u{4}\u{2}client_nonce\0\u{b}attachments\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{1}text\0\u{b}attachments\0\u{b}client_nonce\0\u{c}\u{3}\u{1}\u{c}\u{4}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -775,7 +766,6 @@ nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, Swi
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.agentID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.clientNonce) }()
       default: break
       }
     }
@@ -788,16 +778,12 @@ nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, Swi
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
     }
-    if !self.clientNonce.isEmpty {
-      try visitor.visitSingularStringField(value: self.clientNonce, fieldNumber: 4)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_SendRequest, rhs: Cocoonbox_Agent_V1_SendRequest) -> Bool {
     if lhs.agentID != rhs.agentID {return false}
     if lhs.text != rhs.text {return false}
-    if lhs.clientNonce != rhs.clientNonce {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -73,7 +73,6 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         .send(authed(pb::SendRequest {
             agent_id: agent_id.clone(),
             text: "hang".into(),
-            ..Default::default()
         }))
         .await
         .unwrap();

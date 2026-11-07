@@ -131,7 +131,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     let world: MockWorld
 
     func create(request: Cocoonbox_Agent_V1_CreateAgentRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_Agent {
-        await world.createAgent(name: request.name, nonce: request.clientNonce)
+        await world.createAgent(name: request.name)
     }
 
     func list(request: Cocoonbox_Agent_V1_ListAgentsRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ListAgentsResponse {
@@ -140,7 +140,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     }
 
     func send(request: Cocoonbox_Agent_V1_SendRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_SendResponse {
-        let turn = try await world.send(agent: request.agentID, text: request.text, nonce: request.clientNonce)
+        let turn = try await world.send(agent: request.agentID, text: request.text)
         return .with { $0.turnID = turn }
     }
 

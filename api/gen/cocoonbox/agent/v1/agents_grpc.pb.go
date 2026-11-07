@@ -40,7 +40,7 @@ const (
 type AgentsClient interface {
 	Create(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*Agent, error)
 	List(ctx context.Context, in *ListAgentsRequest, opts ...grpc.CallOption) (*ListAgentsResponse, error)
-	// Send queues a user turn. Duplicate client_nonce values return the first result.
+	// Send queues a user turn.
 	Send(ctx context.Context, in *SendRequest, opts ...grpc.CallOption) (*SendResponse, error)
 	Transcript(ctx context.Context, in *TranscriptRequest, opts ...grpc.CallOption) (*TranscriptPage, error)
 	Respond(ctx context.Context, in *RespondRequest, opts ...grpc.CallOption) (*RespondResponse, error)
@@ -165,7 +165,7 @@ func (c *agentsClient) End(ctx context.Context, in *EndRequest, opts ...grpc.Cal
 type AgentsServer interface {
 	Create(context.Context, *CreateAgentRequest) (*Agent, error)
 	List(context.Context, *ListAgentsRequest) (*ListAgentsResponse, error)
-	// Send queues a user turn. Duplicate client_nonce values return the first result.
+	// Send queues a user turn.
 	Send(context.Context, *SendRequest) (*SendResponse, error)
 	Transcript(context.Context, *TranscriptRequest) (*TranscriptPage, error)
 	Respond(context.Context, *RespondRequest) (*RespondResponse, error)

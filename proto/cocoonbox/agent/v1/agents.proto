@@ -10,7 +10,7 @@ option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;ag
 service Agents {
   rpc Create(CreateAgentRequest) returns (Agent);
   rpc List(ListAgentsRequest) returns (ListAgentsResponse);
-  // Send queues a user turn. Duplicate client_nonce values return the first result.
+  // Send queues a user turn.
   rpc Send(SendRequest) returns (SendResponse);
   rpc Transcript(TranscriptRequest) returns (TranscriptPage);
   rpc Respond(RespondRequest) returns (RespondResponse);
@@ -53,11 +53,10 @@ message Agent {
 }
 
 message CreateAgentRequest {
-  reserved 3;
-  reserved "main_model";
+  reserved 2, 3;
+  reserved "client_nonce", "main_model";
   // Empty: the first line of the first message, cut to 24 characters; "agent" until then.
   string name = 1;
-  string client_nonce = 2;
 }
 
 message ListAgentsRequest {}
@@ -67,11 +66,10 @@ message ListAgentsResponse {
 }
 
 message SendRequest {
-  reserved 3;
-  reserved "attachments";
+  reserved 3, 4;
+  reserved "attachments", "client_nonce";
   string agent_id = 1;
   string text = 2;
-  string client_nonce = 4;
 }
 
 message SendResponse {

@@ -457,27 +457,18 @@ fn in_box(routing: &str) -> String {
 
 async fn create_agent(agents: &mut AgentsClient<Channel>) -> String {
     agents
-        .create(authed(pb::CreateAgentRequest {
-            name: "t".into(),
-            ..Default::default()
-        }))
+        .create(authed(pb::CreateAgentRequest { name: "t".into() }))
         .await
         .unwrap()
         .into_inner()
         .id
 }
 
-async fn send(
-    agents: &mut AgentsClient<Channel>,
-    agent_id: &str,
-    text: &str,
-    nonce: &str,
-) -> String {
+async fn send(agents: &mut AgentsClient<Channel>, agent_id: &str, text: &str) -> String {
     agents
         .send(authed(pb::SendRequest {
             agent_id: agent_id.into(),
             text: text.into(),
-            client_nonce: nonce.into(),
         }))
         .await
         .unwrap()
@@ -487,7 +478,7 @@ async fn send(
 
 async fn ask(agents: &mut AgentsClient<Channel>, text: &str) -> (String, Vec<pb::TranscriptEntry>) {
     let agent_id = create_agent(agents).await;
-    send(agents, &agent_id, text, "").await;
+    send(agents, &agent_id, text).await;
     let entries = wait_turn_end(agents, &agent_id).await;
     (agent_id, entries)
 }
@@ -1132,7 +1123,7 @@ async fn run_delegate(messages_wire: bool) {
         .await
         .unwrap()
         .into_inner();
-    send(&mut agents, &agent_id, "type hello", "").await;
+    send(&mut agents, &agent_id, "type hello").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
 
     let end = turn_end(&entries);
@@ -1858,9 +1849,7 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
         .await
         .unwrap()
         .into_inner();
-    let turn = send(&mut agents, &agent_id, "run uname", "nonce-1").await;
-    let again = send(&mut agents, &agent_id, "run uname", "nonce-1").await;
-    assert_eq!(turn, again);
+    let turn = send(&mut agents, &agent_id, "run uname").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
 
     let bodies: Vec<&Body> = entries
@@ -2501,7 +2490,7 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "log in", "").await;
+    send(&mut agents, &agent_id, "log in").await;
     let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
         .await
         .approval_id;
@@ -2526,7 +2515,7 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
         |e| matches!(&e.body, Some(Body::ToolResult(r)) if r.text.contains("User note: done"))
     ));
 
-    send(&mut agents, &agent_id, "sleep", "").await;
+    send(&mut agents, &agent_id, "sleep").await;
     let started = h.workspace.join("started");
     assert!(
         wait_until(Duration::from_secs(5), || started.exists()).await,
@@ -2570,7 +2559,7 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "log in", "").await;
+    send(&mut agents, &agent_id, "log in").await;
     let approval_id = asked_approval(&mut agents, &agent_id, "take_over", 0)
         .await
         .approval_id;
@@ -2648,7 +2637,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
 
-    send(&mut agents, &agent_id, "make x", "").await;
+    send(&mut agents, &agent_id, "make x").await;
     let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
     assert_eq!(asked.summary, "Mock: create_item (title=\"x\")");
     let listed = agents
@@ -2672,7 +2661,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         format!("created \"x\" with {}", asked.approval_id)
     );
 
-    send(&mut agents, &agent_id, "make y", "").await;
+    send(&mut agents, &agent_id, "make y").await;
     let asked = asked_approval(
         &mut agents,
         &agent_id,
@@ -2707,7 +2696,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    send(&mut agents, &agent_id, "list", "").await;
+    send(&mut agents, &agent_id, "list").await;
     turn_ends(&mut agents, &agent_id, 3).await;
     let bodies = gw_bodies(&h.gw_log, "/v1/chat/completions");
     let first = offered(&bodies[0]);
@@ -2791,7 +2780,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "make x", "").await;
+    send(&mut agents, &agent_id, "make x").await;
     let asked = asked_approval(&mut agents, &agent_id, "connector", 0).await;
     let came_back = wait_until(Duration::from_secs(5), || {
         door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
@@ -2876,8 +2865,8 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         .await
         .unwrap()
         .into_inner();
-    send(&mut agents, &doomed, "sleep", "n1").await;
-    send(&mut agents, &doomed, "queued behind the sleep", "n2").await;
+    send(&mut agents, &doomed, "sleep").await;
+    send(&mut agents, &doomed, "queued behind the sleep").await;
     let sleep_pid = h.workspace.join("sleep.pid");
     wait_transcript(&mut agents, &doomed, 0, |entries| {
         (entries
@@ -2935,7 +2924,6 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         .send(authed(pb::SendRequest {
             agent_id: doomed.clone(),
             text: "hello?".into(),
-            ..Default::default()
         }))
         .await
         .unwrap_err();
@@ -2943,7 +2931,6 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
     let recreated = agents
         .create(authed(pb::CreateAgentRequest {
             name: "fresh".into(),
-            ..Default::default()
         }))
         .await
         .unwrap()
@@ -2962,7 +2949,7 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
     };
     assert_eq!(deleted, doomed);
 
-    send(&mut agents, &kept, "still here", "").await;
+    send(&mut agents, &kept, "still here").await;
     let entries = wait_turn_end(&mut agents, &kept).await;
     assert!(
         entries
@@ -3041,7 +3028,6 @@ async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
         &mut agents,
         &untitled.id,
         "\n  帮我整理一下桌面上的下载文件夹，并按照文件类型分类放好  \n谢谢",
-        "",
     )
     .await;
     wait_turn_end(&mut agents, &untitled.id).await;
@@ -3101,7 +3087,6 @@ async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
         &mut agents,
         &named_first.id,
         "a message that would title it",
-        "",
     )
     .await;
     wait_turn_end(&mut agents, &named_first.id).await;
@@ -3490,7 +3475,7 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "wait", "").await;
+    send(&mut agents, &agent_id, "wait").await;
     wait_transcript(&mut agents, &agent_id, 0, |entries| {
         entries
             .iter()
@@ -5241,7 +5226,6 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
     let intruder = agents
         .create(authed(pb::CreateAgentRequest {
             name: "intruder".into(),
-            ..Default::default()
         }))
         .await
         .unwrap()

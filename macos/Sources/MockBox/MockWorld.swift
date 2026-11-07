@@ -73,7 +73,6 @@ actor MockWorld {
     private var shares: [String: Share] = [:]
     private(set) var wakeSchedules: [Cocoonbox_Control_V1_WakeSchedule] = []
     private var sharesCreated = 0
-    private var nonces: [String: String] = [:]
     private var transcripts: [String: [Entry]] = [:]
     private var nextSeq: UInt64 = 1
     private var ring: [Event] = []
@@ -521,10 +520,7 @@ actor MockWorld {
         }
     }
 
-    func createAgent(name: String, nonce: String) -> Agent {
-        if !nonce.isEmpty, let id = nonces["create:\(nonce)"], let agent = agents[id] {
-            return agent
-        }
+    func createAgent(name: String) -> Agent {
         var agent = Agent()
         agent.id = Self.id("ag-", 8)
         agent.name = name.isEmpty ? "agent" : name
@@ -535,9 +531,6 @@ actor MockWorld {
         agents[agent.id] = agent
         if name.isEmpty {
             untitled.insert(agent.id)
-        }
-        if !nonce.isEmpty {
-            nonces["create:\(nonce)"] = agent.id
         }
         publish(.agent(agent))
         return agent
@@ -553,17 +546,11 @@ actor MockWorld {
         return (page, all.count > page.count)
     }
 
-    func send(agent id: String, text: String, nonce: String) throws -> String {
+    func send(agent id: String, text: String) throws -> String {
         guard agents[id] != nil else {
             throw RPCError(code: .notFound, message: "agent \(id) not found")
         }
-        if !nonce.isEmpty, let turn = nonces["send:\(id):\(nonce)"] {
-            return turn
-        }
         let turn = Self.id("turn-", 8)
-        if !nonce.isEmpty {
-            nonces["send:\(id):\(nonce)"] = turn
-        }
         append(agent: id, turn: turn, role: .user, body: .text(.with { $0.text = text }))
         if untitled.contains(id), let title = Self.title(text), var agent = agents[id] {
             untitled.remove(id)
@@ -896,7 +883,7 @@ actor MockWorld {
 
     // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
     func openExternal(client: String, version: String) -> String {
-        let id = createAgent(name: "mcp:\(client)", nonce: "").id
+        let id = createAgent(name: "mcp:\(client)").id
         openSessions.insert(id)
         setStatus(agent: id, .running)
         append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session opened by \(client) \(version)" }))

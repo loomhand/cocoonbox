@@ -377,17 +377,13 @@ public final class BoxConnection: Sendable {
     }
 
     public func createAgent(name: String) async throws -> Cocoonbox_Agent_V1_Agent {
-        try await agents.create(.with {
-            $0.name = name
-            $0.clientNonce = UUID().uuidString
-        })
+        try await agents.create(.with { $0.name = name })
     }
 
     public func send(agentID: String, text: String) async throws {
         _ = try await agents.send(.with {
             $0.agentID = agentID
             $0.text = text
-            $0.clientNonce = UUID().uuidString
         })
     }
 

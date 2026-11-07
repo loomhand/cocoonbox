@@ -56,7 +56,7 @@ Rule: the wire is the per-deployment switch `GW_ANTHROPIC_WIRE` (default `chat`)
 
 Privilege split: the loop runs as `cbagent`; tools (shell, files, browser, cua-driver, MCP servers) run as the desktop user `user` in its session. The loop holds no real gw key: gw calls go through the egress proxy, which injects the machine's gw key like any other surrogate, so a key leaked by a tool is worthless and the user's daily cap bounds any abuse.
 
-State: SQLite (`/var/lib/cocoonbox/agent.db`) for agents, transcript, nonces and flow sync rows; `/workspace` for user files. Both survive hibernate (disk is in the snapshot).
+State: SQLite (`/var/lib/cocoonbox/agent.db`) for agents, transcript and flow sync rows; `/workspace` for user files. Both survive hibernate (disk is in the snapshot).
 
 ## 4. Interfaces
 

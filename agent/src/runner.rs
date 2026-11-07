@@ -182,25 +182,24 @@ impl Runtime {
     /// Creates an agent on the box's main model; an empty name waits for the first message.
     pub async fn create_agent(&self, req: pb::CreateAgentRequest) -> Result<pb::Agent, Status> {
         self.journal
-            .create(req.name, self.cfg.model_main.clone(), req.client_nonce)
+            .create(req.name, self.cfg.model_main.clone())
             .await
             .map_err(Status::internal)
     }
 
-    /// Queues a user turn and returns its id; duplicate nonces return the first turn.
+    /// Queues a user turn and returns its id.
     pub async fn send(self: &Arc<Self>, req: pb::SendRequest) -> Result<String, Status> {
         let title = title(&req.text);
         let queued = self
             .journal
             .store
-            .queue_turn(req.agent_id.clone(), req.text, req.client_nonce)
+            .queue_turn(req.agent_id.clone(), req.text)
             .await
             .map_err(Status::internal)?
             .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))?;
-        let Some(entry) = queued.entry else {
-            return Ok(queued.turn_id);
-        };
-        self.journal.bus.publish(event::Body::Transcript(entry));
+        self.journal
+            .bus
+            .publish(event::Body::Transcript(queued.entry));
         if let Some(title) = title {
             self.journal.title(&req.agent_id, title).await;
         }

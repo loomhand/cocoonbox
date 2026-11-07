@@ -679,33 +679,13 @@ mod tests {
         let req = pb::SendRequest {
             agent_id: agent.id.clone(),
             text: "hello".into(),
-            client_nonce: "cancelled-send".into(),
         };
         let connection = rusqlite::Connection::open(dir.path().join("agent.db")).unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let mut send = svc.send(Request::new(req.clone()));
+        let mut send = svc.send(Request::new(req));
         assert!(futures_util::poll!(&mut send).is_pending());
         drop(send);
         connection.execute_batch("COMMIT").unwrap();
-        let page = tokio::time::timeout(Duration::from_secs(2), async {
-            loop {
-                let page = rt
-                    .journal
-                    .store
-                    .transcript(agent.id.clone(), 0, 100)
-                    .await
-                    .unwrap();
-                if !page.entries.is_empty() {
-                    break page;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
-        let turn_id = page.entries[0].turn_id.clone();
-        let retried = svc.send(Request::new(req)).await.unwrap().into_inner();
-        assert_eq!(retried.turn_id, turn_id);
         let completed = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 let page = rt

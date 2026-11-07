@@ -212,7 +212,7 @@ extension Cocoonbox_Agent_V1_Agents {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+        /// > Send queues a user turn.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Agent_V1_SendRequest` messages.
@@ -373,7 +373,7 @@ extension Cocoonbox_Agent_V1_Agents {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+        /// > Send queues a user turn.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_SendRequest` message.
@@ -532,7 +532,7 @@ extension Cocoonbox_Agent_V1_Agents {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+        /// > Send queues a user turn.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Agent_V1_SendRequest` message.
@@ -1035,7 +1035,7 @@ extension Cocoonbox_Agent_V1_Agents {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+        /// > Send queues a user turn.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_SendRequest` message.
@@ -1271,7 +1271,7 @@ extension Cocoonbox_Agent_V1_Agents {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+        /// > Send queues a user turn.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_SendRequest` message.
@@ -1556,7 +1556,7 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+    /// > Send queues a user turn.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Agent_V1_SendRequest` message.
@@ -1813,7 +1813,7 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Send queues a user turn. Duplicate client_nonce values return the first result.
+    /// > Send queues a user turn.
     ///
     /// - Parameters:
     ///   - message: request message to send.

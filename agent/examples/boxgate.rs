@@ -772,7 +772,6 @@ async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
     let agent = agents
         .create(edge.signed(pb::CreateAgentRequest {
             name: "boxgate".into(),
-            client_nonce: uuid::Uuid::new_v4().to_string(),
         })?)
         .await
         .map_err(|e| format!("create agent: {e}"))?
@@ -781,7 +780,6 @@ async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
         .send(edge.signed(pb::SendRequest {
             agent_id: agent.id.clone(),
             text,
-            client_nonce: uuid::Uuid::new_v4().to_string(),
         })?)
         .await
         .map_err(|e| format!("send: {e}"))?

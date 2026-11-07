@@ -321,7 +321,7 @@ impl Mcp {
                 let agent = self
                     .rt
                     .journal
-                    .create(name, "external".to_owned(), String::new())
+                    .create(name, "external".to_owned())
                     .await
                     .map_err(internal)?;
                 let turn_id = self

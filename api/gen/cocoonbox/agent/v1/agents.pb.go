@@ -219,7 +219,6 @@ type CreateAgentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Empty: the first line of the first message, cut to 24 characters; "agent" until then.
 	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	ClientNonce   string `protobuf:"bytes,2,opt,name=client_nonce,json=clientNonce,proto3" json:"client_nonce,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -257,13 +256,6 @@ func (*CreateAgentRequest) Descriptor() ([]byte, []int) {
 func (x *CreateAgentRequest) GetName() string {
 	if x != nil {
 		return x.Name
-	}
-	return ""
-}
-
-func (x *CreateAgentRequest) GetClientNonce() string {
-	if x != nil {
-		return x.ClientNonce
 	}
 	return ""
 }
@@ -352,7 +344,6 @@ type SendRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
-	ClientNonce   string                 `protobuf:"bytes,4,opt,name=client_nonce,json=clientNonce,proto3" json:"client_nonce,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -397,13 +388,6 @@ func (x *SendRequest) GetAgentId() string {
 func (x *SendRequest) GetText() string {
 	if x != nil {
 		return x.Text
-	}
-	return ""
-}
-
-func (x *SendRequest) GetClientNonce() string {
-	if x != nil {
-		return x.ClientNonce
 	}
 	return ""
 }
@@ -1743,18 +1727,16 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\n" +
 	"main_model\x18\x04 \x01(\tR\tmainModel\x12\"\n" +
 	"\rcreated_at_ms\x18\x05 \x01(\x03R\vcreatedAtMs\x12\"\n" +
-	"\rupdated_at_ms\x18\x06 \x01(\x03R\vupdatedAtMs\"]\n" +
+	"\rupdated_at_ms\x18\x06 \x01(\x03R\vupdatedAtMs\"N\n" +
 	"\x12CreateAgentRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
-	"\fclient_nonce\x18\x02 \x01(\tR\vclientNonceJ\x04\b\x03\x10\x04R\n" +
+	"\x04name\x18\x01 \x01(\tR\x04nameJ\x04\b\x02\x10\x03J\x04\b\x03\x10\x04R\fclient_nonceR\n" +
 	"main_model\"\x13\n" +
 	"\x11ListAgentsRequest\"G\n" +
 	"\x12ListAgentsResponse\x121\n" +
-	"\x06agents\x18\x01 \x03(\v2\x19.cocoonbox.agent.v1.AgentR\x06agents\"r\n" +
+	"\x06agents\x18\x01 \x03(\v2\x19.cocoonbox.agent.v1.AgentR\x06agents\"c\n" +
 	"\vSendRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
-	"\x04text\x18\x02 \x01(\tR\x04text\x12!\n" +
-	"\fclient_nonce\x18\x04 \x01(\tR\vclientNonceJ\x04\b\x03\x10\x04R\vattachments\"'\n" +
+	"\x04text\x18\x02 \x01(\tR\x04textJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\vattachmentsR\fclient_nonce\"'\n" +
 	"\fSendResponse\x12\x17\n" +
 	"\aturn_id\x18\x01 \x01(\tR\x06turnId\"a\n" +
 	"\x11TranscriptRequest\x12\x19\n" +
