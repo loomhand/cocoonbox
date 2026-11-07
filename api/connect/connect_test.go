@@ -50,7 +50,7 @@ var (
 	})
 
 	modeB = caller{user: alice, door: DoorMCP, name: "mcp:test"}
-	modeA = caller{user: alice, door: DoorBox, name: "box:test"}
+	modeA = caller{user: alice, door: doorBox, name: "box:test"}
 )
 
 func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
@@ -1117,7 +1117,7 @@ func TestDoorKeepsAtMostMaxSessionsClientNames(t *testing.T) {
 func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
-	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, DoorBox))
+	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, doorBox))
 	t.Cleanup(srv.Close)
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mock_create_item","arguments":{"title":"x"}%s}}`
 	var first struct {
@@ -1142,7 +1142,7 @@ func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
-	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, DoorBox))
+	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, doorBox))
 	t.Cleanup(srv.Close)
 	modeBWatch, stop := env.svc.watchers.add(alice, false)
 	defer stop()
@@ -1173,7 +1173,7 @@ func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 func TestABoxDoorStreamReplaysTheAnswersNotYetUsed(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
-	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, DoorBox))
+	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, doorBox))
 	t.Cleanup(srv.Close)
 	ctx := auth.WithUser(t.Context(), alice)
 	ask := func(args string, decision controlv1.ApprovalDecision) string {

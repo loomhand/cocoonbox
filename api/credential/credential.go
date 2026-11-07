@@ -30,6 +30,11 @@ const (
 
 var encoding = base64.RawURLEncoding
 
+type issued struct {
+	value string
+	exp   time.Time
+}
+
 // Signer issues owner credentials v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(ed25519)> and share ones (v2) with a fifth principal field, cached per box, wake and principal.
 type Signer struct {
 	key   ed25519.PrivateKey
@@ -105,9 +110,4 @@ func (s *Signer) sign(v, box, wake, principal string) string {
 	value := signed + "." + encoding.EncodeToString(ed25519.Sign(s.key, []byte(signed)))
 	s.cache[cacheKey] = issued{value: value, exp: exp}
 	return value
-}
-
-type issued struct {
-	value string
-	exp   time.Time
 }

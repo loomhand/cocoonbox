@@ -21,9 +21,9 @@ const (
 	envPrefix = "CBV_"
 	guestEnv  = "COCOONBOX_VAULT"
 
-	// ActorApp and ActorConsole name where a change comes from in the audit.
-	ActorApp     = "app"
+	// ActorConsole names a change from the console in the audit.
 	ActorConsole = "console"
+	actorApp     = "app"
 
 	opCreate = "create"
 	opRotate = "rotate"
@@ -87,6 +87,8 @@ type Options struct {
 
 // ChangeFunc runs after a key of owner is added, rotated or deleted.
 type ChangeFunc func(ctx context.Context, owner string)
+
+type actorKey struct{}
 
 // Service stores the keys and serves Keys.
 type Service struct {
@@ -166,8 +168,6 @@ func (s *Service) changed(ctx context.Context, owner string) {
 		s.onChange(ctx, owner)
 	}
 }
-
-type actorKey struct{}
 
 // secret is one stored key; sealed holds its value.
 type secret struct {
@@ -250,7 +250,7 @@ func actorOf(ctx context.Context) string {
 	if actor, ok := ctx.Value(actorKey{}).(string); ok {
 		return actor
 	}
-	return ActorApp
+	return actorApp
 }
 
 func renderedLen(template string, n int) int {

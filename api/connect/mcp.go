@@ -229,10 +229,10 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 		http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
 		return
 	}
-	watch, stop := d.svc.watchers.add(user, d.door == DoorBox)
+	watch, stop := d.svc.watchers.add(user, d.door == doorBox)
 	defer stop()
 	var replay []*approval
-	if d.door == DoorBox {
+	if d.door == doorBox {
 		var err error
 		if replay, err = d.svc.store.answered(r.Context(), user); err != nil {
 			log.WithFunc("connect.Door.stream").Errorf(r.Context(), err, "list the answered approvals of %s", user)
@@ -278,7 +278,7 @@ func (s *Service) NewDoor(authn Authenticator, door string) *Door {
 
 // NewBoxDoor serves the box door, authenticating each call by the door key of its machine and binding it to the machine's owner with authn.
 func (s *Service) NewBoxDoor(authn Authenticator) *Door {
-	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, bind: authn.Bind, authn: func(ctx context.Context, header string) (admitted, error) {
+	return &Door{svc: s, door: doorBox, clients: map[string]session{}, bind: authn.Bind, authn: func(ctx context.Context, header string) (admitted, error) {
 		user, machine, err := s.BoxCaller(ctx, header)
 		return admitted{user: user, machine: machine}, err
 	}}

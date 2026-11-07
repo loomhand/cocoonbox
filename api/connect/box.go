@@ -41,7 +41,7 @@ func (s *Service) PruneDoorKeys(ctx context.Context, live []string, cutoff time.
 	return s.store.pruneDoorKeys(ctx, live, cutoff)
 }
 
-// Credentials returns what owner's grants put on the egress of owner's boxes; an inactive grant maps to removals, and an unreadable token leaves out its entry, and guestEnv when the entry has guest records.
+// Credentials returns the egress entries of owner's grants; an inactive grant maps to removals, and an unreadable token omits its entries, and guestEnv too when it has guest records.
 func (s *Service) Credentials(ctx context.Context, owner string) (machines.Credentials, error) {
 	grants, err := s.store.grants(ctx, owner)
 	if err != nil {

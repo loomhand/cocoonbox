@@ -163,10 +163,10 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	case policy == policyOff:
 		rec.decision, rec.outcome = policyOff, outcomeError
 		return errorText("The tool " + name + " is off in your CocoonBox Connect settings."), nil
-	case policy == policyAsk && c.door == DoorBox && approvalID == "":
+	case policy == policyAsk && c.door == doorBox && approvalID == "":
 		rec.decision, rec.outcome = decisionRequired, outcomeError
 		return s.requestApproval(ctx, g, t, args, rec.argsSHA256)
-	case policy == policyAsk && c.door == DoorBox:
+	case policy == policyAsk && c.door == doorBox:
 		reason, useErr := s.store.useApproval(ctx, approvalID, c.user, g.id, t.Name, rec.argsSHA256)
 		if useErr != nil {
 			rec.outcome = outcomeError

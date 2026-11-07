@@ -30,9 +30,8 @@ const (
 
 	// DoorMCP is mode B: the user's own agents with the user token.
 	DoorMCP = "mcp"
-	// DoorBox is mode A: the box's agents, which need an approval for every ask tool.
-	DoorBox = "box"
-
+	// doorBox is mode A: the box's agents, which need an approval for every ask tool.
+	doorBox     = "box"
 	doorConsole = "console"
 
 	statusActive    = "active"

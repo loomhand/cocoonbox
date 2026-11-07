@@ -46,6 +46,11 @@ type Options struct {
 	Timeout   time.Duration
 }
 
+type answer struct {
+	review
+	until time.Time
+}
+
 // Hook is an auth.Resolver of the users the endpoint admits.
 type Hook struct {
 	opts     Options
@@ -172,19 +177,12 @@ type review struct {
 	TTLSeconds    int    `json:"ttlSeconds"`
 }
 
-// ttl is how long rv is kept: its ttlSeconds, capped at a minute for a token the endpoint knows and at seconds for one it does not.
 func (rv review) ttl() time.Duration {
 	limit := maxUnknownTTL
 	if rv.Authenticated {
 		limit = maxTTL
 	}
 	return min(max(time.Duration(rv.TTLSeconds)*time.Second, 0), limit)
-}
-
-// answer is a review the api keeps until until.
-type answer struct {
-	review
-	until time.Time
 }
 
 // decodeReview reads a review; only an explicit false refuses, and one missing its verdict is an outage, which never ends a call.
