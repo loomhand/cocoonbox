@@ -833,7 +833,8 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
     if msg["method"] == "initialize" {
         return match mcp.open(msg["params"].take(), principal).await {
             Ok((session, result)) => {
-                let mut reply = json!({"jsonrpc": "2.0", "id": msg["id"]});
+                let mut reply = json!({"jsonrpc": "2.0"});
+                reply["id"] = msg["id"].take();
                 reply["result"] = result;
                 let mut resp = json_response(StatusCode::OK, &reply);
                 if let Ok(v) = session.id.parse() {

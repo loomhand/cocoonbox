@@ -7,7 +7,7 @@ use crate::config::Automation;
 /// Where the image lists the box's API keys, one `NAME=placeholder;hosts;how` record per line.
 pub const KEYS_FILE: &str = "/run/cocoonbox-vault/keys";
 
-/// Sent once when a step returns neither a tool call nor visible text.
+/// Sent when a step ends without a tool call or a final answer.
 pub const CONTINUE: &str = "Continue: call the next tool, or give your final answer.";
 
 /// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.

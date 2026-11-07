@@ -465,7 +465,7 @@ impl Runtime {
     }
 
     /// Persists an entry of the current turn and publishes it.
-    pub async fn record(
+    async fn record(
         &self,
         ctx: &TurnCtx,
         role: Role,

@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::config::Automation;
 use crate::tools;
@@ -10,7 +11,7 @@ use crate::tools;
 const MAX_DESCRIPTION: usize = 2048;
 
 /// A file the plugin serves over MCP.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct Resource {
     pub uri: String,
     pub path: PathBuf,
@@ -19,7 +20,7 @@ pub struct Resource {
 }
 
 /// One plugin tool.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Deserialize)]
 pub struct Plugin {
     pub name: String,
     pub description: String,
@@ -61,15 +62,14 @@ impl Plugin {
 pub fn load(dir: &Path) -> Vec<Plugin> {
     let mut plugins: Vec<Plugin> = Vec::new();
     for file in sorted_files(dir, "json") {
-        let raw = std::fs::read(&file).map_err(|e| e.to_string());
-        if raw.as_ref().is_ok_and(|raw| {
-            serde_json::from_slice::<serde_json::Value>(raw)
-                .is_ok_and(|v| v.get("service").is_some())
-        }) {
+        let raw = std::fs::read(&file)
+            .map_err(|e| e.to_string())
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).map_err(|e| e.to_string()));
+        if raw.as_ref().is_ok_and(|v| v.get("service").is_some()) {
             continue;
         }
         let plugin = raw
-            .and_then(|raw| serde_json::from_slice::<Plugin>(&raw).map_err(|e| e.to_string()))
+            .and_then(|v| serde_json::from_value::<Plugin>(v).map_err(|e| e.to_string()))
             .and_then(|p| p.check().map(|()| p))
             .and_then(|p| {
                 if plugins.iter().any(|q| q.name == p.name) {
