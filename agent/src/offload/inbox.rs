@@ -35,6 +35,7 @@ const RELAY_RETRY: Duration = Duration::from_secs(2);
 const CHANGES: usize = 256;
 const CHANGE_LINE: u64 = 64 << 10;
 const TRANSCRIPT_TAIL: u64 = 256 << 10;
+const CODEX_DAYS: usize = 7;
 const SOCKET_GROUP: &str = "cbagent";
 const RECORD_FILE: &str = "session.json";
 const INBOX_FILE: &str = "inbox.jsonl";
@@ -1174,7 +1175,7 @@ async fn transcript_tail(path: &Path) -> Option<String> {
 
 /// The CLI's newest transcript for the session's directory and its mtime in unix ms.
 async fn newest_transcript(home: &Path, rec: &Record) -> Option<(PathBuf, i64)> {
-    let dir = match rec.cli.as_str() {
+    let dirs = match rec.cli.as_str() {
         "claude" => {
             let name: String = rec
                 .dir
@@ -1182,34 +1183,29 @@ async fn newest_transcript(home: &Path, rec: &Record) -> Option<(PathBuf, i64)> 
                 .chars()
                 .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
                 .collect();
-            home.join(".claude/projects").join(name)
+            vec![home.join(".claude/projects").join(name)]
         }
-        "codex" => {
-            let mut dir = home.join(".codex/sessions");
-            for _ in 0..3 {
-                match newest_child(&dir).await {
-                    Some(d) => dir = d,
-                    None => return None,
-                }
-            }
-            dir
-        }
+        "codex" => newest_days(home.join(".codex/sessions")).await,
         _ => return None,
     };
-    let mut rd = tokio::fs::read_dir(&dir).await.ok()?;
     let mut newest = None;
-    while let Ok(Some(e)) = rd.next_entry().await {
-        let path = e.path();
-        if !path.extension().is_some_and(|x| x == "jsonl") {
+    for dir in dirs {
+        let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
             continue;
-        }
-        if rec.cli == "codex" && codex_cwd(&path).await.as_deref() != Some(rec.dir.as_path()) {
-            continue;
-        }
-        if let Ok(m) = e.metadata().await {
-            let mtime = m.mtime() * 1000 + m.mtime_nsec() / 1_000_000;
-            if newest.as_ref().is_none_or(|(_, n)| mtime > *n) {
-                newest = Some((path, mtime));
+        };
+        while let Ok(Some(e)) = rd.next_entry().await {
+            let path = e.path();
+            if !path.extension().is_some_and(|x| x == "jsonl") {
+                continue;
+            }
+            if rec.cli == "codex" && codex_cwd(&path).await.as_deref() != Some(rec.dir.as_path()) {
+                continue;
+            }
+            if let Ok(m) = e.metadata().await {
+                let mtime = m.mtime() * 1000 + m.mtime_nsec() / 1_000_000;
+                if newest.as_ref().is_none_or(|(_, n)| mtime > *n) {
+                    newest = Some((path, mtime));
+                }
             }
         }
     }
@@ -1229,16 +1225,23 @@ async fn codex_cwd(path: &Path) -> Option<PathBuf> {
     v["payload"]["cwd"].as_str().map(PathBuf::from)
 }
 
-async fn newest_child(dir: &Path) -> Option<PathBuf> {
-    let mut rd = tokio::fs::read_dir(dir).await.ok()?;
-    let mut best: Option<std::ffi::OsString> = None;
-    while let Ok(Some(e)) = rd.next_entry().await {
-        let name = e.file_name();
-        if best.as_ref().is_none_or(|b| name > *b) {
-            best = Some(name);
+async fn newest_days(sessions: PathBuf) -> Vec<PathBuf> {
+    let mut dirs = vec![sessions];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for d in &dirs {
+            let Ok(mut rd) = tokio::fs::read_dir(d).await else {
+                continue;
+            };
+            while let Ok(Some(e)) = rd.next_entry().await {
+                next.push(e.path());
+            }
         }
+        next.sort_unstable_by(|a, b| b.cmp(a));
+        next.truncate(CODEX_DAYS);
+        dirs = next;
     }
-    best.map(|b| dir.join(b))
+    dirs
 }
 
 async fn load_records(state: &Path) -> HashMap<String, Record> {
@@ -1497,5 +1500,27 @@ mod tests {
             "exec codex --dangerously-bypass-approvals-and-sandbox -c 'notify=[\"cocoonbox-agent\",\"offload\",\"event\",\"--repo\",\"0123456789ab\",\"--cli\",\"codex\",\"--hook\",\"notify\"]' \"$(cat '/p/prompt.md')\""
         );
         assert_eq!(rec.tmux(), "cb-off-0123456789ab-codex");
+    }
+
+    #[tokio::test]
+    async fn a_codex_rollout_is_found_past_a_newer_day_of_another_session() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join(".codex/sessions");
+        for (day, cwd) in [("2026/10/31", "/work/repo"), ("2026/11/01", "/work/other")] {
+            std::fs::create_dir_all(sessions.join(day)).unwrap();
+            let meta = json!({"type": "session_meta", "payload": {"cwd": cwd}});
+            std::fs::write(
+                sessions.join(day).join("rollout.jsonl"),
+                format!("{meta}\n"),
+            )
+            .unwrap();
+        }
+        let rec = Record {
+            cli: "codex".into(),
+            dir: "/work/repo".into(),
+            ..Record::default()
+        };
+        let got = newest_transcript(home.path(), &rec).await.map(|t| t.0);
+        assert_eq!(got, Some(sessions.join("2026/10/31/rollout.jsonl")));
     }
 }
