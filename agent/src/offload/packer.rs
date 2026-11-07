@@ -772,8 +772,7 @@ async fn snapshot_tree(dir: &Path) -> Result<String, String> {
 async fn probe_cli(home: &Path, kind: &str) -> Value {
     let (version, auth) = match kind {
         "claude" => ("claude --version", "claude auth status"),
-        "codex" => ("codex --version", "codex login status"),
-        _ => ("cursor-agent --version", "cursor-agent status"),
+        _ => ("codex --version", "codex login status"),
     };
     let run = |cmd: &'static str| async move {
         tokio::time::timeout(super::PROBE_TIMEOUT, home_shell(home, cmd))

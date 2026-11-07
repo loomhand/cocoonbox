@@ -27,7 +27,7 @@ const INDEX_LOCK: &str = "index.lock";
 const EXCLUDES_FILE: &str = "excludes";
 const MAX_WAIT_S: u64 = 600;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
-const KINDS: [&str; 3] = ["claude", "codex", "cursor"];
+const KINDS: [&str; 2] = ["claude", "codex"];
 const USAGE: &str = "usage: cocoonbox-agent offload \
 <begin|send|read|status|end|wipe-secrets|restart|post|env|event|serve> [flags]";
 
@@ -653,5 +653,13 @@ mod tests {
             out,
             json!({"ok": false, "code": "refused", "error": "blocked by two", "findings": [1]})
         );
+    }
+
+    #[test]
+    fn begin_takes_only_a_kind_the_inbox_starts() {
+        for (kind, ok) in [("claude", true), ("codex", true), ("cursor", false)] {
+            let args = Args::parse(["--kind".to_owned(), kind.to_owned()]).unwrap();
+            assert_eq!(args.kind().is_ok(), ok, "{kind}");
+        }
     }
 }
