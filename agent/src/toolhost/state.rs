@@ -562,8 +562,6 @@ fn mtime_ms(t: Option<SystemTime>) -> i64 {
 mod tests {
     use std::os::unix::fs::symlink;
 
-    use desk_core::wire::MAX_FRAME;
-
     use super::*;
 
     fn excludes() -> Excludes {
@@ -766,7 +764,7 @@ mod tests {
             .walk(serde_json::json!({}))
             .await
             .unwrap();
-        assert!(body.len() > MAX_FRAME, "walk of {} bytes", body.len());
+        assert!(body.len() > rpc::MAX_FRAME, "walk of {} bytes", body.len());
         let got: Vec<Entry> = serde_json::from_slice(&body).unwrap();
         assert_eq!(got.len(), count);
         assert_eq!(got[count - 1], entry(count - 1));

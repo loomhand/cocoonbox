@@ -5,8 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use desk_core::args::parse;
-use desk_core::wire::MAX_FRAME;
-pub use desk_core::wire::{Call, Output, read_frame, write_frame};
+pub use desk_core::wire::{Call, read_frame, write_frame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -36,6 +35,7 @@ pub const SIGNAL: u8 = 6;
 /// Tag of a terminal size, big-endian u16 rows and cols, to the toolhost.
 pub const RESIZE: u8 = 7;
 
+pub(super) const MAX_FRAME: usize = 64 << 20;
 const STATE_ARGS_LIMIT: usize = 512 << 20;
 
 #[cfg(windows)]
@@ -49,6 +49,34 @@ pub type Stream = UnixStream;
 /// A connection to the toolhost or to shuttle's desk service: a unix socket, or a named pipe on Windows.
 #[cfg(windows)]
 pub type Stream = crate::sys::PipeClient;
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct Output {
+    pub text: String,
+    #[serde(default)]
+    pub is_error: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_b64: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<(String, String)>,
+}
+
+impl Output {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            ..Self::default()
+        }
+    }
+
+    pub fn error(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            is_error: true,
+            ..Self::default()
+        }
+    }
+}
 
 /// Size and mtime of a file before or after it was streamed.
 #[derive(Debug, Default, Deserialize, Serialize)]

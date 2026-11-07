@@ -39,7 +39,7 @@ CB_CHECKPOINT_NUDGE_MIN=40   <after 40 minutes of a turn the main loop asks once
 
 ## Toolhost wire (agent ↔ toolhost, desk API ↔ shuttle)
 
-The agent's toolhost (through shuttle's `/run/cocoonbox/desk.sock`, which splices the toolhost's calls to its service socket after the first frame) and the desk API (`/opt/desk/lib/desk.mts`, `desk`) speak [shuttle's desk wire](https://github.com/loomhand/shuttle/blob/main/docs/wire.md), implemented once in `shuttle-desk-core` (`desk_core::wire`, a git dependency pinned to a shuttle tag), which the toolhost also takes the desk call arguments from:
+The agent's toolhost (through shuttle's `/run/cocoonbox/desk.sock`, which splices the toolhost's calls to its service socket after the first frame) and the desk API (`/opt/desk/lib/desk.mts`, `desk`) speak [shuttle's desk wire](https://github.com/loomhand/shuttle/blob/main/docs/wire.md), implemented once in `shuttle-desk-core` (`desk_core::wire`, a git dependency pinned to a shuttle tag), which the toolhost also takes the desk call arguments from; the response type, which adds the toolhost's `secrets`, is the agent's own:
 
 - **One call per connection.** The client writes one frame and reads one frame; closing the connection cancels the call.
 - **Frame:** a big-endian u32 length, then that many bytes of JSON. A frame over 64 MiB is refused.
