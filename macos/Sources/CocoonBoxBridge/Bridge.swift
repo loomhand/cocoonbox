@@ -148,9 +148,9 @@ public actor Bridge {
         if name == "box_delete", let ref = arguments["box"] as? String {
             deleted = try? await resolve(ref)
         }
-        await forward(id, params)
+        let done = await forward(id, params)
         if name == "box_create" || name == "box_delete" { ids = [:] }
-        if let deleted {
+        if let deleted, done {
             await sessions.removeValue(forKey: deleted)?.close()
             if defaultBox == deleted { defaultBox = nil }
         }
@@ -557,14 +557,17 @@ public actor Bridge {
         return status
     }
 
-    private func forward(_ id: Any, _ params: [String: Any]) async {
+    private func forward(_ id: Any, _ params: [String: Any]) async -> Bool {
         do {
-            relay(id, try await call(try await openControl(), "tools/call", params))
+            let answer = try await call(try await openControl(), "tools/call", params)
+            relay(id, answer)
+            return (answer["result"] as? [String: Any]).map { $0["isError"] as? Bool != true } ?? false
         } catch MCPUpstream.Failure.sessionExpired {
             control = nil
-            await forward(id, params)
+            return await forward(id, params)
         } catch {
             reply(id, ToolFailure("Could not reach cocoonbox: \(error)").result)
+            return false
         }
     }
 

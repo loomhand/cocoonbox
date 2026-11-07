@@ -24,6 +24,18 @@ import Testing
         #expect(gone["isError"] as? Bool == true && ConnectTests.text(gone) == "The box simtest was deleted; box_list lists your boxes.", "\(gone)")
     }
 
+    @Test func anUnconfirmedBoxDeleteKeepsTheBoxSession() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let box = try await Self.running(mock.connection, try await mock.connection.createBox(name: "simtest").box.id)
+        let client = try await BridgeClient(mock, box: "simtest")
+        defer { client.close() }
+        _ = try await client.tool("list_dir", ["path": "/workspace"])
+        let refused = try await client.tool("box_delete", ["box": "simtest"])
+        #expect(refused["isError"] as? Bool == true, "\(refused)")
+        #expect(await !until(seconds: 2) { mock.log().contains("mcp DELETE /cocoonbox.mcp/\(box)") })
+    }
+
     @Test func renewedPairsADeletedBoxWithItsNamesake() {
         let box = { (id: String, name: String) in Cocoonbox_Control_V1_Box.with { $0.id = id; $0.name = name } }
         let old = [box("cb-1", "main"), box("cb-2", "simtest"), box("cb-3", "gone")]
