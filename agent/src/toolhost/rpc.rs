@@ -16,7 +16,7 @@ use tokio::net::UnixStream;
 use tokio::net::windows::named_pipe::ClientOptions;
 use zeroize::Zeroize;
 
-/// The bound of one desk or model call to shuttle's desk service.
+/// The bound of one desk call to shuttle's desk service.
 pub const DESK_DEADLINE: Duration = Duration::from_secs(30);
 /// What a call to shuttle's desk service gives when the service is missing or past the call's deadline.
 pub const DESK_DOWN: &str = "the desk service is not answering";

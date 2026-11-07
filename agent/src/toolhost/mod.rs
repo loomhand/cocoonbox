@@ -81,7 +81,7 @@ struct Host {
     /// The saved flows of a box that runs GUI plans, which a read-only share does not read.
     hidden: Option<PathBuf>,
     flow_writes: watch::Sender<u64>,
-    /// shuttle's daemon, which answers the desk verbs, model calls and runs.
+    /// shuttle's daemon, which answers the desk verbs and runs.
     shuttle: Client,
 }
 

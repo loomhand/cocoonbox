@@ -28,7 +28,7 @@ pub const BACK: &str = "BACK: ";
 
 const TEMPLATE: &str = "# Hand-over: <one-line goal>
 
-From: box   Agent: <claude|codex|cursor>   Repo: <path>   Branch: <branch> @ <short sha>
+From: box   Agent: <claude|codex>   Repo: <path>   Branch: <branch> @ <short sha>
 
 ## Goal and definition of done
 <what the user asked for, in their words where it matters; what \"done\" means>
