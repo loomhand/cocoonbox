@@ -601,14 +601,6 @@ mod tests {
         );
     }
 
-    fn word(text: &str, line: &str, x: f64) -> Word {
-        Word {
-            norm: norm(text),
-            line: line.to_owned(),
-            rect: [x, 10.0, 20.0, 8.0],
-        }
-    }
-
     #[test]
     fn matches_a_label_on_one_line_and_a_cut_last_word() {
         let words = [
@@ -836,5 +828,13 @@ mod tests {
         assert!(!libreoffice(std::process::id().into()));
         office.kill().unwrap();
         office.wait().unwrap();
+    }
+
+    fn word(text: &str, line: &str, x: f64) -> Word {
+        Word {
+            norm: norm(text),
+            line: line.to_owned(),
+            rect: [x, 10.0, 20.0, 8.0],
+        }
     }
 }

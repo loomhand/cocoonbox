@@ -348,58 +348,6 @@ mod tests {
 
     type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
-    fn card_file(dir: &Path) -> String {
-        let path = dir.join("card.json");
-        let card = json!({"spend_request_id": "lsrq_1", "card": {"number": PAN, "cvc": "321", "exp_month": 3, "exp_year": 2029, "brand": "visa", "billing_address": {"postal_code": "94107"}}});
-        std::fs::write(&path, card.to_string()).unwrap();
-        path.display().to_string()
-    }
-
-    fn fake_shuttle(socket: &Path, typed: usize) -> Calls {
-        let mut listener = super::super::bind(socket, "").unwrap();
-        let calls = Calls::default();
-        let log = Arc::clone(&calls);
-        tokio::spawn(async move {
-            loop {
-                let mut conn = super::super::accept(&mut listener).await.unwrap();
-                let call: Call = read_frame(&mut conn).await.unwrap();
-                let types = log
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|(tool, args)| tool == "desk_computer_act" && args["action"] == "type")
-                    .count();
-                let out = match call.tool.as_str() {
-                    "desk_computer_act" if call.args["action"] == "type" && types >= typed => {
-                        Output::error(format!("cannot type {}", call.args["text"]))
-                    }
-                    "desk_computer_act" => Output {
-                        image_b64: Some("YWN0".into()),
-                        ..Output::text(format!("{} done", call.args["action"]))
-                    },
-                    "desk_look" => Output {
-                        image_b64: Some("bG9vaw==".into()),
-                        ..Output::text("screenshot")
-                    },
-                    "desk_computer_scale" => Output::text(r#"{"scale": 2.0}"#),
-                    _ => Output::text("{}"),
-                };
-                log.lock().unwrap().push((call.tool, call.args));
-                write_frame(&mut conn, &out).await.unwrap();
-            }
-        });
-        calls
-    }
-
-    fn tools(calls: &Calls) -> Vec<String> {
-        calls
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(t, _)| t.clone())
-            .collect()
-    }
-
     #[tokio::test]
     async fn an_action_or_a_list_without_an_own_step_goes_to_shuttle_as_it_came() {
         let dir = tempfile::tempdir().unwrap();
@@ -678,5 +626,57 @@ mod tests {
                 .contains("under /tmp or $HOME")
         );
         assert!(card_field("../../etc/passwd", "number").await.is_err());
+    }
+
+    fn card_file(dir: &Path) -> String {
+        let path = dir.join("card.json");
+        let card = json!({"spend_request_id": "lsrq_1", "card": {"number": PAN, "cvc": "321", "exp_month": 3, "exp_year": 2029, "brand": "visa", "billing_address": {"postal_code": "94107"}}});
+        std::fs::write(&path, card.to_string()).unwrap();
+        path.display().to_string()
+    }
+
+    fn fake_shuttle(socket: &Path, typed: usize) -> Calls {
+        let mut listener = super::super::bind(socket, "").unwrap();
+        let calls = Calls::default();
+        let log = Arc::clone(&calls);
+        tokio::spawn(async move {
+            loop {
+                let mut conn = super::super::accept(&mut listener).await.unwrap();
+                let call: Call = read_frame(&mut conn).await.unwrap();
+                let types = log
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|(tool, args)| tool == "desk_computer_act" && args["action"] == "type")
+                    .count();
+                let out = match call.tool.as_str() {
+                    "desk_computer_act" if call.args["action"] == "type" && types >= typed => {
+                        Output::error(format!("cannot type {}", call.args["text"]))
+                    }
+                    "desk_computer_act" => Output {
+                        image_b64: Some("YWN0".into()),
+                        ..Output::text(format!("{} done", call.args["action"]))
+                    },
+                    "desk_look" => Output {
+                        image_b64: Some("bG9vaw==".into()),
+                        ..Output::text("screenshot")
+                    },
+                    "desk_computer_scale" => Output::text(r#"{"scale": 2.0}"#),
+                    _ => Output::text("{}"),
+                };
+                log.lock().unwrap().push((call.tool, call.args));
+                write_frame(&mut conn, &out).await.unwrap();
+            }
+        });
+        calls
+    }
+
+    fn tools(calls: &Calls) -> Vec<String> {
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect()
     }
 }
