@@ -90,7 +90,6 @@ func main() {
 	ctx, cancel := drainAfter(signals, time.Duration(cfg.Cluster.Drain), &draining)
 	defer cancel()
 
-	flavors := configFlavors(cfg)
 	pool := dialer.NewPool()
 	defer pool.Close()
 	var loops leaderLoops
@@ -99,7 +98,7 @@ func main() {
 		logger.Fatalf(ctx, err, "open the cluster store")
 	}
 	defer db.Close()
-	backend, err := newBackend(ctx, cfg, flavors, db)
+	backend, err := newBackend(ctx, cfg, db)
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
@@ -522,15 +521,15 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 	})
 }
 
-func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor, db *cluster.Store) (*sandboxd.Backend, error) {
-	opts, err := backendOptions(cfg, flavors, db)
+func newBackend(ctx context.Context, cfg *config.Config, db *cluster.Store) (*sandboxd.Backend, error) {
+	opts, err := backendOptions(cfg, db)
 	if err != nil {
 		return nil, err
 	}
 	return sandboxd.New(ctx, opts)
 }
 
-func backendOptions(cfg *config.Config, flavors []machines.Flavor, db *cluster.Store) (sandboxd.Options, error) {
+func backendOptions(cfg *config.Config, db *cluster.Store) (sandboxd.Options, error) {
 	token, err := cfg.SandboxdToken()
 	if err != nil {
 		return sandboxd.Options{}, err
@@ -539,7 +538,7 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, db *cluster.S
 		URL:               cfg.Sandboxd.URL,
 		Token:             token,
 		Image:             cfg.Image,
-		Flavors:           append(flavors, machineFlavor(cfg.Flavor)),
+		Flavor:            machineFlavor(cfg.Flavor),
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
@@ -589,14 +588,6 @@ func verifyLedger(ctx context.Context, svc *boxes.Service) {
 		}
 		logger.Debug(ctx, "ledger verified: no drift")
 	}
-}
-
-func configFlavors(cfg *config.Config) []machines.Flavor {
-	flavors := make([]machines.Flavor, 0, len(cfg.Flavors))
-	for _, f := range cfg.Flavors {
-		flavors = append(flavors, machineFlavor(f))
-	}
-	return flavors
 }
 
 func machineFlavor(f config.Flavor) machines.Flavor {

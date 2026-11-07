@@ -200,7 +200,7 @@ func deleteUser(ctx context.Context, st store.Store, revoker connections, accoun
 }
 
 func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
-	opts, err := backendOptions(cfg, configFlavors(cfg), nil)
+	opts, err := backendOptions(cfg, nil)
 	if err == nil {
 		err = opts.Check()
 	}

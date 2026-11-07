@@ -25,7 +25,7 @@ const (
 
 func TestRebaseAfterCapacityRefusalsEndsRunningOnTheNewMachine(t *testing.T) {
 	node := newFakeNode(t)
-	backend, err := sandboxd.New(t.Context(), sandboxd.Options{URL: node.srv.URL, Token: nodeToken, Image: "desktop:v1", Flavors: []machines.Flavor{defaultFlavor}, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)})
+	backend, err := sandboxd.New(t.Context(), sandboxd.Options{URL: node.srv.URL, Token: nodeToken, Image: "desktop:v1", Flavor: defaultFlavor, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)})
 	if err != nil {
 		t.Fatalf("sandboxd.New: %v", err)
 	}

@@ -13,7 +13,7 @@ flavor:
   vcpus: 4
   memory_mib: 8192
   disk_gib: 40
-flavors: []                  # flavors Ensure accepts besides the default one; anything else is refused
+flavors: []                  # unused; every box takes flavor
 max_running_boxes: 1         # boxes of one user that run at once; a user's own limit overrides it
 state:
   endpoint: s3.example.com:443

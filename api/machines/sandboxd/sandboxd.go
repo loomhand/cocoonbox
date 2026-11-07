@@ -58,8 +58,8 @@ type Options struct {
 	Token string
 	// Image is the default template.
 	Image string
-	// Flavors lists every flavor Ensure may request; each must be a sandboxd tier.
-	Flavors []machines.Flavor
+	// Flavor is the flavor every box takes; it must be a sandboxd tier.
+	Flavor machines.Flavor
 	// DiskGiB is the disk the node gives each claim.
 	DiskGiB           uint32
 	AgentPort         int
@@ -77,10 +77,8 @@ func (o Options) Check() error {
 }
 
 func (o Options) client() (*client, error) {
-	for _, f := range o.Flavors {
-		if _, ok := sizeOf(f); !ok {
-			return nil, fmt.Errorf("flavor vcpus:%d memory_mib:%d is not a sandboxd tier", f.VCPUs, f.MemoryMiB)
-		}
+	if _, ok := sizeOf(o.Flavor); !ok {
+		return nil, fmt.Errorf("flavor vcpus:%d memory_mib:%d is not a sandboxd tier", o.Flavor.VCPUs, o.Flavor.MemoryMiB)
 	}
 	return newClient(o.URL, o.Token)
 }
