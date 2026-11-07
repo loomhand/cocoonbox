@@ -38,7 +38,7 @@ import Testing
         #expect(AgentLinkClient(path: path, agent: "agent-1") == nil)
     }
 
-    @Test func reportsAfterTheAppQuitAreDropped() async throws {
+    @Test func reportsAfterTheAppQuitAreDropped() throws {
         let path = try socketPath()
         let server = try AgentLinkServer(path: path, queue: DispatchQueue(label: "test"), defaultBox: { _ in nil }) { _, _, _ in }
         let client = try #require(AgentLinkClient(path: path, agent: "agent-1"))

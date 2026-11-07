@@ -103,21 +103,6 @@ final class Script: Sendable {
         #expect(started.withLock { $0 } >= 2)
     }
 
-    func follower(_ script: Script) -> EventFollower<Tick> {
-        EventFollower<Tick>(
-            backoff: Backoff(initial: .milliseconds(100), max: .milliseconds(400), multiplier: 2),
-            stableAfter: .seconds(60),
-            offsetOf: { $0.offset },
-            isResync: { ($0 as? RPCError)?.code == .outOfRange },
-            sleep: { duration in
-                script.sleeps.withLock { $0.append(duration) }
-                if script.calls.withLock({ $0.count }) >= script.plan.count {
-                    throw CancellationError()
-                }
-            }
-        )
-    }
-
     @Test func resumesAfterLastDeliveredOffset() async {
         let script = Script([
             { _, deliver in
@@ -195,5 +180,20 @@ final class Script: Sendable {
         #expect(seen.withLock { $0 } == [1])
         let resynced = await until { resyncs.withLock { $0 } >= 1 }
         #expect(resynced)
+    }
+
+    func follower(_ script: Script) -> EventFollower<Tick> {
+        EventFollower<Tick>(
+            backoff: Backoff(initial: .milliseconds(100), max: .milliseconds(400), multiplier: 2),
+            stableAfter: .seconds(60),
+            offsetOf: { $0.offset },
+            isResync: { ($0 as? RPCError)?.code == .outOfRange },
+            sleep: { duration in
+                script.sleeps.withLock { $0.append(duration) }
+                if script.calls.withLock({ $0.count }) >= script.plan.count {
+                    throw CancellationError()
+                }
+            }
+        )
     }
 }

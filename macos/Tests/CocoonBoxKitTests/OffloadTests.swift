@@ -287,18 +287,6 @@ import Testing
         }
     }
 
-    static func rsyncFailure(_ box: Harness, cli: String, repo name: String) async throws -> String {
-        let repo = try box.repo(name)
-        do {
-            _ = try await box.offloader(cli: cli).offload(OffloadRequest(directory: repo, kind: .claude, handover: handover, yes: true))
-        } catch let error as OffloadError {
-            #expect(try box.sh("git for-each-ref refs/cocoonbox", in: repo).isEmpty)
-            return error.description
-        }
-        Issue.record("offloaded over \(cli)")
-        return ""
-    }
-
     @Test func theSendStreamIsATarWithLongNames() async throws {
         let long = "secrets/file/" + String(repeating: "deep/", count: 30) + ".env"
         let frames = try ExecFrames.tar([("handover.md", .bytes(Data("h".utf8))), (long, .bytes(Data(count: 70_000)))])
@@ -311,6 +299,18 @@ import Testing
         try bytes.write(to: file)
         let listed = try Harness.run(["/usr/bin/tar", "-tvf", file.path], in: root)
         #expect(listed.contains("handover.md") && listed.contains(long) && listed.contains("70000"))
+    }
+
+    static func rsyncFailure(_ box: Harness, cli: String, repo name: String) async throws -> String {
+        let repo = try box.repo(name)
+        do {
+            _ = try await box.offloader(cli: cli).offload(OffloadRequest(directory: repo, kind: .claude, handover: handover, yes: true))
+        } catch let error as OffloadError {
+            #expect(try box.sh("git for-each-ref refs/cocoonbox", in: repo).isEmpty)
+            return error.description
+        }
+        Issue.record("offloaded over \(cli)")
+        return ""
     }
 
     static let handover = Handover.template.replacingOccurrences(of: "From: <Mac | box>", with: "From: Mac")
