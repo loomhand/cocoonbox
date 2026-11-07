@@ -98,20 +98,7 @@ pub async fn plan_report(
     timeout: Duration,
 ) -> Result<Value, String> {
     params["timeout_s"] = timeout.as_secs().into();
-    let out = relay(shuttle, "gui_plan", params, timeout).await?;
-    let len = out.text.len() as u64;
-    let mut report = if out.is_error {
-        failed(out.text)?
-    } else {
-        let mut report = json!({});
-        report["result"] =
-            serde_json::from_str(&out.text).map_err(|e| format!("decode the plan result: {e}"))?;
-        report
-    };
-    if len > MAX_RESULT_BYTES {
-        cap(&mut report["result"]);
-    }
-    Ok(report)
+    report(relay(shuttle, "gui_plan", params, timeout).await?, true)
 }
 
 /// A run's report as compact JSON, with a kept screenshot unless turned off; an error in the report is an error result.
@@ -189,17 +176,7 @@ async fn run_report(
         }
     }
     args["params"] = params;
-    let out = relay(shuttle, tool, args, timeout).await?;
-    let len = out.text.len() as u64;
-    let mut report: Value = if out.is_error {
-        failed(out.text)?
-    } else {
-        serde_json::from_str(&out.text).map_err(|e| format!("decode the run report: {e}"))?
-    };
-    if len > MAX_RESULT_BYTES {
-        cap(&mut report["result"]);
-    }
-    Ok(report)
+    report(relay(shuttle, tool, args, timeout).await?, false)
 }
 
 async fn relay(
@@ -214,6 +191,25 @@ async fn relay(
         args,
     };
     shuttle.desk(&call, timeout + RUN_MARGIN).await
+}
+
+fn report(out: Output, plan: bool) -> Result<Value, String> {
+    let len = out.text.len() as u64;
+    let mut report = if out.is_error {
+        failed(out.text)?
+    } else {
+        let decoded: Value =
+            serde_json::from_str(&out.text).map_err(|e| format!("decode the report: {e}"))?;
+        if plan {
+            Value::Object(Map::from_iter([("result".to_owned(), decoded)]))
+        } else {
+            decoded
+        }
+    };
+    if len > MAX_RESULT_BYTES {
+        cap(&mut report["result"]);
+    }
+    Ok(report)
 }
 
 /// The report of a failed run that shuttle answers as an error; an error answer that is no such report is an error.

@@ -205,12 +205,6 @@ impl StateEngine {
                 )));
             }
             let path = snap.spool.join(&put.chunk_id);
-            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-                return Err(StateError::Invalid(format!(
-                    "chunk {} was not spooled because the last upload held it; plan again without a parent",
-                    put.chunk_id
-                )));
-            }
             jobs.push((put, path));
         }
         let has_manifest = req.manifest.is_some();
@@ -218,11 +212,17 @@ impl StateEngine {
             jobs.push((manifest, snap.spool.join(MANIFEST_FILE)));
         }
         let mut total = 0;
-        for (_, path) in &jobs {
-            total += tokio::fs::metadata(path)
-                .await
-                .map_err(|e| format!("stat {}: {e}", path.display()))?
-                .len();
+        for (put, path) in &jobs {
+            total += match tokio::fs::metadata(path).await {
+                Ok(m) => m.len(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(StateError::Invalid(format!(
+                        "chunk {} was not spooled because the last upload held it; plan again without a parent",
+                        put.chunk_id
+                    )));
+                }
+                Err(e) => return Err(format!("stat {}: {e}", path.display()).into()),
+            };
         }
         let mut meter = Meter::new(total, jobs.len(), progress);
         let manifest_job = if has_manifest { jobs.pop() } else { None };
@@ -742,10 +742,8 @@ impl StateEngine {
         let mut prepare = |mut entry: Entry| {
             let key = format!("{}/{}", entry.root, entry.path);
             let ctime_ns = entry.ctime_ns.take();
-            let step = if entry.kind != Kind::File {
-                Step::Keep
-            } else if let Some(root) = roots.get(entry.root.as_str()) {
-                match last.files.remove(&key) {
+            let step = match roots.get(entry.root.as_str()) {
+                Some(root) if entry.kind == Kind::File => match last.files.remove(&key) {
                     Some(r) if r.matches(&entry, ctime_ns) => Step::Reuse(r),
                     prev => {
                         if let Some(r) = prev {
@@ -756,9 +754,8 @@ impl StateEngine {
                         }
                         Step::Read(root.join(&entry.path))
                     }
-                }
-            } else {
-                Step::Drop
+                },
+                _ => Step::Keep,
             };
             (entry, key, ctime_ns, step)
         };
@@ -816,7 +813,7 @@ impl StateEngine {
                         files.push(FileRecord { entry, chunks });
                     }
                     Step::Chunked(None) => skipped.push(key),
-                    Step::Read(_) | Step::Drop => {}
+                    Step::Read(_) => {}
                 }
             }
         }
@@ -1172,7 +1169,6 @@ impl Sink {
 /// What the plan does with one walked entry.
 enum Step {
     Keep,
-    Drop,
     Reuse(Reuse),
     Read(PathBuf),
     Chunked(Option<(Vec<String>, bool)>),
@@ -1208,7 +1204,6 @@ impl Chunker<'_> {
         Ok(None)
     }
 
-    /// Chunks a local file; returns its size and chunks.
     async fn local(&self, path: &Path) -> Result<(u64, Vec<String>), String> {
         let mut file = tokio::fs::File::open(path)
             .await
@@ -1311,7 +1306,6 @@ impl Source<'_> {
     }
 }
 
-/// Reports transfer progress to the caller.
 struct Meter {
     msg: pb::TransferProgress,
     tx: mpsc::Sender<pb::TransferProgress>,
