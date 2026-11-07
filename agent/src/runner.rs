@@ -446,19 +446,6 @@ impl Runtime {
         }
     }
 
-    /// Persists an entry of the current turn and publishes it.
-    async fn record(
-        &self,
-        ctx: &TurnCtx,
-        role: Role,
-        body: Body,
-        subagent: bool,
-    ) -> Result<(), String> {
-        self.journal
-            .record(&ctx.agent_id, &ctx.turn_id, role, body, subagent)
-            .await
-    }
-
     /// Returns the checkpoint line the first time a loop of the turn asks once it is due, recorded under `subagent`.
     pub(crate) async fn checkpoint(
         &self,
@@ -490,6 +477,19 @@ impl Runtime {
         if let Err(e) = self.record(ctx, Role::System, body, false).await {
             eprintln!("record usage of turn {}: {e}", ctx.turn_id);
         }
+    }
+
+    /// Persists an entry of the current turn and publishes it.
+    async fn record(
+        &self,
+        ctx: &TurnCtx,
+        role: Role,
+        body: Body,
+        subagent: bool,
+    ) -> Result<(), String> {
+        self.journal
+            .record(&ctx.agent_id, &ctx.turn_id, role, body, subagent)
+            .await
     }
 
     fn slot(self: &Arc<Self>, agent_id: &str) -> Arc<Slot> {
