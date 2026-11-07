@@ -518,6 +518,7 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 		Tenants:       tenants,
 		TenantClaims:  cfg.Sandboxd.TenantEgressClass != "",
 		FirstBoxID:    boxes.BoxID,
+		EnsureLimit:   cfg.Accounts.EnsureLimit,
 	})
 }
 

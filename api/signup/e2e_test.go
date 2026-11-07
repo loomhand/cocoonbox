@@ -767,7 +767,7 @@ func (e *env) openUsers(t *testing.T) *users.Service {
 	t.Helper()
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: e.dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: userstest.NewTenants(),
-		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
+		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] }, EnsureLimit: 4,
 	})
 	if err != nil {
 		t.Fatalf("open users: %v", err)

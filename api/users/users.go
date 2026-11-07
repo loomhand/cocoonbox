@@ -47,8 +47,6 @@ const (
 	passwordIDP = "password"
 	// githubIDP is signup's provider; an outside provider of that name would reach the users signup made.
 	githubIDP = "github"
-	// ensureLimit bounds the creates Ensure runs at once and sizes the user lock pool each holds a connection of.
-	ensureLimit = 4
 )
 
 var (
@@ -147,6 +145,8 @@ type Options struct {
 	TenantClaims bool
 	// FirstBoxID names the box Create gives each new user.
 	FirstBoxID func(user string) string
+	// EnsureLimit bounds the creates Ensure runs at once and sizes the user lock pool each holds a connection of.
+	EnsureLimit int32
 }
 
 // record is a user row with the values the console never sees.
@@ -223,7 +223,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := openStore(ctx, opts.DSN, ensureLimit)
+	st, err := openStore(ctx, opts.DSN, opts.EnsureLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
-		creds: map[string]*credLife{}, tombs: map[string]time.Time{}, ensuring: make(chan struct{}, ensureLimit),
+		creds: map[string]*credLife{}, tombs: map[string]time.Time{}, ensuring: make(chan struct{}, opts.EnsureLimit),
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()

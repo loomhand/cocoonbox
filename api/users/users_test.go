@@ -159,21 +159,28 @@ func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 }
 
 func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
-	dsn := clustertest.EmptyDSN(t)
+	const limit = 2
 	gate := &gatedTenants{Tenants: userstest.NewTenants(), open: make(chan struct{})}
-	svc := openTestService(t, dsn, userstest.NewGW(), gate)
+	svc, err := Open(t.Context(), Options{
+		DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: gate,
+		FirstBoxID: firstBoxID, EnsureLimit: limit,
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(svc.Close)
 	var wg sync.WaitGroup
-	for i := range 16 {
+	for i := range limit + 1 {
 		wg.Go(func() {
 			if _, err := svc.Ensure(t.Context(), "firebase", fmt.Sprintf("uid%02d", i)); err != nil {
 				t.Errorf("Ensure: %v", err)
 			}
 		})
 	}
-	clustertest.WaitFor(t, "the first creates start", func() bool { return gate.active.Load() >= ensureLimit })
+	clustertest.WaitFor(t, "the first creates start", func() bool { return gate.active.Load() >= limit })
 	time.Sleep(200 * time.Millisecond)
-	if most := gate.most.Load(); most != ensureLimit {
-		t.Errorf("%d creates ran at once, want %d", most, ensureLimit)
+	if most := gate.most.Load(); most != limit {
+		t.Errorf("%d creates ran at once, want %d", most, limit)
 	}
 	close(gate.open)
 	wg.Wait()
@@ -699,7 +706,7 @@ func newTestService(t *testing.T) (*Service, *userstest.GW, *userstest.Tenants, 
 
 func openTestService(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenants) *Service {
 	t.Helper()
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

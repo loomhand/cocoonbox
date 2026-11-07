@@ -97,7 +97,7 @@ type disableEnv struct {
 func newDisableEnv(t *testing.T) *disableEnv {
 	t.Helper()
 	gw := userstest.NewGW()
-	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: userstest.NewTenants(), FirstBoxID: BoxID})
+	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: userstest.NewTenants(), FirstBoxID: BoxID, EnsureLimit: 4})
 	if err != nil {
 		t.Fatalf("open users: %v", err)
 	}

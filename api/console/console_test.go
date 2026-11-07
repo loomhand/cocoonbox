@@ -370,7 +370,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := clustertest.EmptyDSN(t)
 	e := &env{boxes: &fakeBoxes{}, gw: userstest.NewGW(), tenants: userstest.NewTenants()}
-	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
+	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID, EnsureLimit: 4})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

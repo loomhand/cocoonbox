@@ -29,8 +29,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.State.GC.Interval != 0 || cfg.State.GC.DeleteBatch != 1000 || cfg.State.GC.DeletedRetention != Duration(7*24*time.Hour) {
 		t.Errorf("gc = %+v, want off with batches of 1000 and deleted boxes kept 7 days", cfg.State.GC)
 	}
-	if cfg.MaxRunningBoxes != 1 {
-		t.Errorf("max running boxes = %d, want 1", cfg.MaxRunningBoxes)
+	if cfg.MaxRunningBoxes != 1 || cfg.Accounts.EnsureLimit != 4 {
+		t.Errorf("max running boxes = %d, ensure limit = %d, want 1 and 4", cfg.MaxRunningBoxes, cfg.Accounts.EnsureLimit)
 	}
 	if cfg.Wake != (Wake{MaxSchedules: 3, Floor: Duration(time.Hour), MaxAwakeFor: Duration(time.Hour)}) {
 		t.Errorf("wake = %+v, want 3 schedules, a 1h floor and 1h awake at most", cfg.Wake)
@@ -78,6 +78,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "no gw admin", body: signingKey, want: "provision.gw_admin.url and provision.gw_admin.token_file"},
 		{name: "gc without a bucket", body: required + "state:\n  gc:\n    interval: 24h\n", want: "state.gc.interval"},
 		{name: "negative running limit", body: required + "max_running_boxes: -1\n", want: "max_running_boxes must be at least 1"},
+		{name: "negative ensure limit", body: strings.Replace(required, accounts, accounts+"  ensure_limit: -1\n", 1), want: "accounts.ensure_limit must be at least 1"},
 		{name: "negative deleted retention", body: required + "state:\n  gc:\n    deleted_retention: -1h\n", want: "state.gc.deleted_retention must not be negative"},
 		{name: "gc batch over the S3 limit", body: required + "state:\n  gc:\n    delete_batch: 1001\n", want: "state.gc.delete_batch must be in 1..1000"},
 		{name: "connect over http", body: required + "connect:\n  public_url: http://cb.example\n", want: "connect.public_url must be an https origin"},

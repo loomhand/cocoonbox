@@ -27,6 +27,7 @@ const (
 	defaultRegion           = "us-east-1"
 	maxDeleteBatch          = 1000
 	defaultMaxRunning       = 1
+	defaultEnsureLimit      = 4
 
 	defaultWakeSchedules = 3
 	defaultWakeFloor     = time.Hour
@@ -158,13 +159,14 @@ type Sandboxd struct {
 	Nodes []string `json:"nodes"`
 }
 
-// Accounts names the users database and the master key that seals each user's tenant token and state key.
+// Accounts names the users database, the master key that seals each user's tenant token and state key, and how many outside users an api creates at once.
 type Accounts struct {
 	// DSNFile holds the PostgreSQL connection string.
 	DSNFile       string `json:"dsn_file"`
 	MasterKeyFile string `json:"master_key_file"`
 	// DefaultDailyCapMicros mirrors gw's user_daily_cost_quota_micros for the console; gw enforces it.
 	DefaultDailyCapMicros int64 `json:"default_daily_cap_micros"`
+	EnsureLimit           int32 `json:"ensure_limit"`
 }
 
 // Connect configures the Connect broker (design §16); its OAuth clients come from GITHUB_APP_*, GOOGLE_*, HUBSPOT_*, SLACK_* and LINK_* env vars.
@@ -324,6 +326,7 @@ func (c *Config) applyDefaults() {
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
 	c.State.GC.DeletedRetention = cmp.Or(c.State.GC.DeletedRetention, Duration(defaultDeletedRetention))
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
+	c.Accounts.EnsureLimit = cmp.Or(c.Accounts.EnsureLimit, defaultEnsureLimit)
 	c.Wake.MaxSchedules = cmp.Or(c.Wake.MaxSchedules, defaultWakeSchedules)
 	c.Wake.Floor = cmp.Or(c.Wake.Floor, Duration(defaultWakeFloor))
 	c.Wake.MaxAwakeFor = cmp.Or(c.Wake.MaxAwakeFor, Duration(defaultMaxAwakeFor))
@@ -369,6 +372,9 @@ func (c *Config) validate() error {
 	}
 	if c.MaxRunningBoxes < 1 {
 		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
+	}
+	if c.Accounts.EnsureLimit < 1 {
+		errs = append(errs, fmt.Errorf("accounts.ensure_limit must be at least 1, got %d", c.Accounts.EnsureLimit))
 	}
 	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != schemeHTTPS || u.Host == "" || strings.Trim(u.Path, "/") != "") {
 		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
