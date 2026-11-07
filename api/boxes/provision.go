@@ -202,10 +202,11 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	wake := wakeOf(m)
 	box := boxOfMachine(m.ID)
 	owned := !s.agentBox(m.Owner, box)
+	var pushErr error
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
 		if err != nil {
-			logger.Warnf(ctx, "issue the box door key: %v", err)
+			pushErr = fmt.Errorf("issue the box door key: %w", err)
 		}
 		if key != "" {
 			keys[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
@@ -230,9 +231,8 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	} else if err := s.machines.SetCredentials(ctx, m.ID, machines.Credentials{Secrets: keys}); err != nil {
 		return "", err
 	}
-	var pushErr error
 	if s.connect != nil && owned {
-		pushErr = s.pushCredentials(ctx, m)
+		pushErr = errors.Join(pushErr, s.pushCredentials(ctx, m))
 	}
 	if s.vault != nil && owned {
 		pushErr = errors.Join(pushErr, s.pushVault(ctx, m))
