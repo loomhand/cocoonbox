@@ -20,8 +20,6 @@ public final class LiveScreen {
         public var eagerHandshake = false
         public var collectsStatistics = false
         public var tracedChunks = 8
-        // deletedAfter is how long a deleted box stays unanswered by a box under its name before onBoxChange(nil).
-        public var deletedAfter = Duration.seconds(30)
 
         public init() {}
     }
@@ -35,8 +33,6 @@ public final class LiveScreen {
 
     public var onStatus: ((Status) -> Void)?
     public var onClipboard: ((String) -> Void)?
-    // onBoxChange reports the connection's new box id after a retarget, or nil once the box stays deleted for deletedAfter.
-    public var onBoxChange: ((String?) -> Void)?
 
     private let rfbView: RFBView
     private let options: Options
@@ -46,7 +42,6 @@ public final class LiveScreen {
     private var reconnectTask: Task<Void, Never>?
     private var connection: BoxConnection?
     private var attempt = 0
-    private var deleted: (since: ContinuousClock.Instant, reported: Bool)?
     private var visibility = ScreenPause()
 
     public init?(options: Options) {
@@ -90,7 +85,6 @@ public final class LiveScreen {
 
     public func start(_ connection: BoxConnection) {
         self.connection = connection
-        deleted = nil
         reconnectTask?.cancel()
         guard !visibility.paused else { return }
         reconnectTask = Task { self.open() }
@@ -130,7 +124,6 @@ public final class LiveScreen {
         client.pointer(x: x, y: y, buttons: [])
     }
 
-    // control sends Control+<character>.
     public func control(_ character: String) {
         guard let client = session?.client else { return }
         latency.input()
@@ -217,7 +210,6 @@ public final class LiveScreen {
         sessionTask = Task { [weak self] in
             let first = Atomic(true)
             let outcome: String
-            var failure: (any Error)?
             do {
                 try await session.run { event in
                     draw(event)
@@ -241,11 +233,10 @@ public final class LiveScreen {
                 outcome = "ended"
             } catch {
                 outcome = "\(error)"
-                failure = error
             }
             guard !Task.isCancelled else { return }
             Perf.mark("rfb_status", "disconnected \(outcome)")
-            self?.disconnected(outcome, failure: failure, session: session)
+            self?.disconnected(outcome, session: session)
         }
     }
 
@@ -254,50 +245,13 @@ public final class LiveScreen {
         onStatus?(.connected(width: Int(info.width), height: Int(info.height)))
     }
 
-    private func disconnected(_ reason: String, failure: (any Error)?, session: ScreenSession) {
+    private func disconnected(_ reason: String, session: ScreenSession) {
         guard self.session === session else { return }
         if options.collectsStatistics {
             Perf.mark("rfb_encodings", encodingSummary)
         }
         onStatus?(.failed(reason))
-        guard let failure, BoxConnection.isStale(failure) else { return scheduleReconnect() }
-        follow(after: .zero)
-    }
-
-    // follow moves the connection to the box created again under its deleted box's name, retrying at the backoff while no box has it.
-    private func follow(after delay: Duration) {
-        guard let connection else { return }
-        reconnectTask?.cancel()
-        reconnectTask = Task {
-            try? await pause(delay)
-            guard !Task.isCancelled else { return }
-            let held = connection.boxID
-            do {
-                let box = try await connection.retarget()
-                guard !Task.isCancelled else { return }
-                deleted = nil
-                guard box != held else { return scheduleReconnect() }
-                Perf.mark("rfb_status", "retarget \(held ?? "-") -> \(box)")
-                attempt = 0
-                onBoxChange?(box)
-                open()
-            } catch let gone as BoxGone {
-                guard !Task.isCancelled else { return }
-                let now = ContinuousClock.now
-                if deleted == nil {
-                    Perf.mark("rfb_status", "box gone \(held ?? "-")")
-                    deleted = (now, false)
-                    onStatus?(.failed(gone.description))
-                } else if let since = deleted?.since, deleted?.reported == false, now - since >= options.deletedAfter {
-                    deleted?.reported = true
-                    onBoxChange?(nil)
-                }
-                follow(after: nextDelay())
-            } catch {
-                guard !Task.isCancelled else { return }
-                scheduleReconnect()
-            }
-        }
+        scheduleReconnect()
     }
 
     private func scheduleReconnect() {

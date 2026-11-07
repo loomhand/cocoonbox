@@ -27,8 +27,6 @@ public final class BoxConnection: Sendable {
 
     private let client: GRPCClient<BoxTransport>
     private let auth: AuthInterceptor
-    // names is the name of every box id this connection has seen, so retarget can follow a deleted box's name.
-    private let names = Mutex<[String: String]>([:])
 
     public init(endpoint: Endpoint, token: String) throws {
         guard endpoint.usesTLS || endpoint.isLoopback else {
@@ -59,34 +57,10 @@ public final class BoxConnection: Sendable {
         Task { try? await client.runConnections() }
     }
 
-    // boxID is the box of every agent call; setting an id whose name is unknown lists the boxes once to learn it.
+    // boxID is the box of every agent call.
     public var boxID: String? {
         get { auth.boxID.withLock { $0 } }
-        set {
-            auth.boxID.withLock { $0 = newValue }
-            if let newValue, names.withLock({ $0[newValue] }) == nil {
-                Task { _ = try? await self.listBoxes() }
-            }
-        }
-    }
-
-    // retarget keeps a box id the user still has, else follows its name to the box created again, else throws BoxGone.
-    @discardableResult
-    public func retarget() async throws -> String {
-        guard let held = boxID else { throw BoxGone(name: "") }
-        let name = names.withLock { $0[held] }
-        let list = try await listBoxes()
-        if list.contains(where: { $0.id == held }) { return held }
-        guard let name, let renewed = list.first(where: { $0.name == name }) else { throw BoxGone(name: name ?? held) }
-        return auth.boxID.withLock { box in
-            if box == held { box = renewed.id }
-            return box ?? renewed.id
-        }
-    }
-
-    // isStale says whether error may mean the held box id names no box of the user's: NotFound.
-    public static func isStale(_ error: any Error) -> Bool {
-        (error as? RPCError)?.code == .notFound
+        set { auth.boxID.withLock { $0 = newValue } }
     }
 
     public func close() {
@@ -99,11 +73,7 @@ public final class BoxConnection: Sendable {
 
     // listBoxes returns the user's boxes, oldest first.
     public func listBoxes() async throws -> [Cocoonbox_Control_V1_Box] {
-        let list = try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes
-        names.withLock { names in
-            for box in list { names[box.id] = box.name }
-        }
-        return list
+        try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes
     }
 
     // watchBoxes runs Boxes.Watch until cancelled, handing onBoxes the boxes, oldest first, and the offered images on each change and reconnect.
@@ -121,12 +91,7 @@ public final class BoxConnection: Sendable {
                     }
                 }
             },
-            onEvent: { list in
-                self.names.withLock { names in
-                    for box in list.boxes { names[box.id] = box.name }
-                }
-                await onBoxes(list.boxes, list.offeredImages)
-            },
+            onEvent: { list in await onBoxes(list.boxes, list.offeredImages) },
             onResync: {},
             onDisconnect: onDisconnect
         )
@@ -134,24 +99,22 @@ public final class BoxConnection: Sendable {
 
     // ensure wakes or creates boxID, or the user's first box when it is empty.
     public func ensure(boxID: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try seen(await boxes.ensure(.with { $0.boxID = boxID }))
+        try await boxes.ensure(.with { $0.boxID = boxID })
     }
 
     // createBox runs image, an offered image or the family of one, else the default image.
     public func createBox(name: String, image: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try seen(await boxes.create(.with {
+        try await boxes.create(.with {
             $0.name = name
             $0.image = image
-        }))
+        })
     }
 
     public func renameBox(boxID: String, name: String) async throws -> Cocoonbox_Control_V1_Box {
-        let box = try await boxes.rename(.with {
+        try await boxes.rename(.with {
             $0.boxID = boxID
             $0.name = name
         })
-        names.withLock { $0[box.id] = box.name }
-        return box
     }
 
     public func deleteBox(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {
@@ -479,24 +442,14 @@ public final class BoxConnection: Sendable {
             return describe(error)
         }
     }
-
-    private func seen(_ response: Cocoonbox_Control_V1_EnsureResponse) -> Cocoonbox_Control_V1_EnsureResponse {
-        names.withLock { $0[response.box.id] = response.box.name }
-        return response
-    }
 }
 
-// BoxGone is a held box that was deleted, with no box under its name to follow; name is the id when its name is unknown.
-public struct BoxGone: Error, CustomStringConvertible {
+// BoxGone is a held box that was deleted, with no box under its name to follow.
+public struct BoxGone: Error {
     public let name: String
 
     public init(name: String) {
         self.name = name
-    }
-
-    public var description: String {
-        if name.isEmpty { return "no box is selected" }
-        return name.hasPrefix("cb-") ? "you have no box \(name)" : "the box \(name) was deleted"
     }
 }
 
