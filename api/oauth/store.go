@@ -280,10 +280,13 @@ func (s *store) revokeByToken(ctx context.Context, sum, clientID string) (string
 		}
 		return endedIn(ctx, tx, []string{id})
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
 		return "", nil
+	case err != nil:
+		return "", err
 	}
-	return id, err
+	return id, nil
 }
 
 func (s *store) markSeen(ctx context.Context, user string) error {

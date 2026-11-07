@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
@@ -104,6 +105,38 @@ func TestEndingAGrantEndsItsCallsInAnotherApiWhenNoNotifyCanFollowTheWrite(t *te
 	}
 }
 
+func TestARevokeByTokenThatRollsBackNamesNoGrant(t *testing.T) {
+	dsn := clustertest.EmptyDSN(t)
+	writer := openUsers(t, dsn)
+	alice, err := writer.Create(t.Context(), users.NewUser{Name: "alice"})
+	if err != nil {
+		t.Fatalf("create alice: %v", err)
+	}
+	s, err := Open(t.Context(), Options{DSN: dsn, Issuer: "https://cb.example", Resource: "https://cb.example/mcp", Accounts: writer})
+	if err != nil {
+		t.Fatalf("open oauth: %v", err)
+	}
+	t.Cleanup(s.Close)
+	g := issueGrant(t, s, alice.ID)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	cfg.ConnConfig.Tracer = notifyFails{}
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("open traced pool: %v", err)
+	}
+	s.store.pool.Close()
+	s.store.pool = pool
+	if id, err := s.store.revokeByToken(t.Context(), utils.HashHex(g.access), agentClient); id != "" || err == nil {
+		t.Fatalf("revokeByToken = %q, %v; want no grant and the rollback's error", id, err)
+	}
+	if grants, err := s.store.grants(t.Context(), alice.ID); err != nil || len(grants) != 1 {
+		t.Errorf("grants after the rolled-back revoke = %d, %v; want the grant kept", len(grants), err)
+	}
+}
+
 type grantTokens struct {
 	id, access, refresh string
 }
@@ -113,6 +146,19 @@ type lostEnd struct {
 }
 
 func (lostEnd) EndCredential(context.Context, string) {}
+
+type notifyFails struct{}
+
+func (notifyFails) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if !strings.Contains(data.SQL, "pg_notify") {
+		return ctx
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	return canceled
+}
+
+func (notifyFails) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 func openUsers(t *testing.T, dsn string) *users.Service {
 	t.Helper()
