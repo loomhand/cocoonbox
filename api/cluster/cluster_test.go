@@ -3,6 +3,7 @@ package cluster_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"slices"
@@ -285,30 +286,11 @@ func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 
 func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 	st, dsn := clustertest.OpenDSN(t)
-	other, err := cluster.Open(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(other.Close)
-	var mu sync.Mutex
-	leading := map[string]bool{}
-	run := func(name string, s *cluster.Store) {
-		s.Lead(t.Context(), func(ctx context.Context) {
-			mu.Lock()
-			if len(leading) > 0 {
-				t.Errorf("%s leads while %v does", name, leading)
-			}
-			leading[name] = true
-			mu.Unlock()
-			<-ctx.Done()
-			mu.Lock()
-			delete(leading, name)
-			mu.Unlock()
-		})
-	}
-	go run("a", st)
-	go run("b", other)
-	first := waitLeader(t, &mu, leading, "")
+	other := clustertest.OpenReplica(t, dsn)
+	l := &leaders{t: t, leading: map[string]bool{}}
+	go st.Lead(t.Context(), l.lead("a"))
+	go other.Lead(t.Context(), l.lead("b"))
+	first := l.wait("")
 	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -318,7 +300,7 @@ func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 		AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND classid = $1 AND objid = $2`, 0x6362, 0x6c656164); err != nil {
 		t.Fatalf("end the leader's connection: %v", err)
 	}
-	if next := waitLeader(t, &mu, leading, first); next == first {
+	if next := l.wait(first); next == first {
 		t.Errorf("leader stayed %s after its connection died", first)
 	}
 }
@@ -331,38 +313,23 @@ func TestALeaderWhoseLinkGoesSilentStopsAndAnotherTakesOver(t *testing.T) {
 		t.Fatalf("Open through the link: %v", err)
 	}
 	t.Cleanup(silent.Close)
-	var mu sync.Mutex
-	leading := map[string]bool{}
+	l := &leaders{t: t, leading: map[string]bool{}}
 	stopped := make(chan time.Time, 1)
-	lead := func(name string) cluster.Work {
-		return func(ctx context.Context) {
-			mu.Lock()
-			if len(leading) > 0 {
-				t.Errorf("%s leads while %v does", name, leading)
-			}
-			leading[name] = true
-			mu.Unlock()
-			<-ctx.Done()
-			mu.Lock()
-			delete(leading, name)
-			mu.Unlock()
-			if name == "silent" {
-				stopped <- time.Now()
-			}
-		}
-	}
-	go silent.Lead(t.Context(), lead("silent"))
-	if first := waitLeader(t, &mu, leading, ""); first != "silent" {
+	go silent.Lead(t.Context(), func(ctx context.Context) {
+		l.lead("silent")(ctx)
+		stopped <- time.Now()
+	})
+	if first := l.wait(""); first != "silent" {
 		t.Fatalf("leader = %s, want the one behind the link", first)
 	}
-	go st.Lead(t.Context(), lead("direct"))
+	go st.Lead(t.Context(), l.lead("direct"))
 	link.freeze()
 	select {
 	case <-stopped:
 	case <-time.After(30 * time.Second):
 		t.Fatal("the leader behind a silent link kept leading")
 	}
-	if next := waitLeader(t, &mu, leading, "silent"); next != "direct" {
+	if next := l.wait("silent"); next != "direct" {
 		t.Errorf("leader after the silent link = %s, want direct", next)
 	}
 }
@@ -427,11 +394,7 @@ func TestLongLocksLeaveTheShortLocksTheirConnections(t *testing.T) {
 
 func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
-	b, err := cluster.Open(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(b.Close)
+	b := clustertest.OpenReplica(t, dsn)
 	unlock, err := a.Lock(t.Context(), "u-1")
 	if err != nil {
 		t.Fatalf("Lock: %v", err)
@@ -508,24 +471,6 @@ func TestMirrorAppliesTheNewestWritePerKeyInOrder(t *testing.T) {
 	}
 }
 
-func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not string) string {
-	t.Helper()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		for name := range leading {
-			if name != not {
-				mu.Unlock()
-				return name
-			}
-		}
-		mu.Unlock()
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("no leader other than %q within 20 s", not)
-	return ""
-}
-
 func putMachine(t *testing.T, st *cluster.Store, m cluster.Machine) {
 	t.Helper()
 	if _, err := st.UpdateMachine(t.Context(), m.ID, func(row *cluster.Machine, _ bool) (bool, error) {
@@ -534,6 +479,44 @@ func putMachine(t *testing.T, st *cluster.Store, m cluster.Machine) {
 	}); err != nil {
 		t.Fatalf("UpdateMachine %s: %v", m.ID, err)
 	}
+}
+
+type leaders struct {
+	t       *testing.T
+	mu      sync.Mutex
+	leading map[string]bool
+}
+
+func (l *leaders) lead(name string) cluster.Work {
+	return func(ctx context.Context) {
+		l.mu.Lock()
+		if len(l.leading) > 0 {
+			l.t.Errorf("%s leads while %v does", name, l.leading)
+		}
+		l.leading[name] = true
+		l.mu.Unlock()
+		<-ctx.Done()
+		l.mu.Lock()
+		delete(l.leading, name)
+		l.mu.Unlock()
+	}
+}
+
+func (l *leaders) wait(not string) string {
+	l.t.Helper()
+	var leader string
+	clustertest.WaitWithin(l.t, fmt.Sprintf("a leader other than %q", not), 20*time.Second, func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		for name := range l.leading {
+			if name != not {
+				leader = name
+				return true
+			}
+		}
+		return false
+	})
+	return leader
 }
 
 type freezer struct {

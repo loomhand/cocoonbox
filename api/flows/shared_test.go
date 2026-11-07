@@ -6,14 +6,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
 
 func TestSharedLibrariesKeepBothConcurrentReplacements(t *testing.T) {
-	shared, other, dsn := openReplicas(t)
+	shared, dsn := clustertest.OpenDSN(t)
+	other := clustertest.OpenReplica(t, dsn)
 	st, seed := newLibrary()
 	for _, name := range []string{"a.json", "b.json"} {
 		if _, err := seed.Put(t.Context(), "alice", name, []byte("old"), Origin{}); err != nil {
@@ -30,7 +28,7 @@ func TestSharedLibrariesKeepBothConcurrentReplacements(t *testing.T) {
 	go func() { _, err := first.Put(t.Context(), "alice", "a.json", []byte("new a"), Origin{}); done <- err }()
 	<-gate.entered
 	go func() { _, err := second.Put(t.Context(), "alice", "b.json", []byte("new b"), Origin{}); done <- err }()
-	clustertest.WaitFor(t, "the second replica waits for the library lock", advisoryWaiting(t, dsn))
+	clustertest.WaitFor(t, "the second replica waits for the library lock", clustertest.AdvisoryWaiting(t, dsn))
 	resume()
 	for range 2 {
 		if err := <-done; err != nil {
@@ -50,7 +48,8 @@ func TestSharedLibrariesKeepBothConcurrentReplacements(t *testing.T) {
 func TestSharedGetKeepsItsObjectUntilTheReadFinishes(t *testing.T) {
 	for _, remove := range []bool{false, true} {
 		t.Run(map[bool]string{false: "replace", true: "delete"}[remove], func(t *testing.T) {
-			shared, other, dsn := openReplicas(t)
+			shared, dsn := clustertest.OpenDSN(t)
+			other := clustertest.OpenReplica(t, dsn)
 			st, seed := newLibrary()
 			if _, err := seed.Put(t.Context(), "alice", "a.json", []byte("old"), Origin{}); err != nil {
 				t.Fatal(err)
@@ -81,7 +80,7 @@ func TestSharedGetKeepsItsObjectUntilTheReadFinishes(t *testing.T) {
 				written <- err
 				finished.Store(true)
 			}()
-			waiting := advisoryWaiting(t, dsn)
+			waiting := clustertest.AdvisoryWaiting(t, dsn)
 			clustertest.WaitFor(t, "the writer waits for the reader", func() bool { return finished.Load() || waiting() })
 			if finished.Load() {
 				t.Error("the writer removed the object before its reader finished")
@@ -93,31 +92,6 @@ func TestSharedGetKeepsItsObjectUntilTheReadFinishes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func openReplicas(t *testing.T) (*cluster.Store, *cluster.Store, string) {
-	t.Helper()
-	shared, dsn := clustertest.OpenDSN(t)
-	other, err := cluster.Open(t.Context(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(other.Close)
-	return shared, other, dsn
-}
-
-func advisoryWaiting(t *testing.T, dsn string) func() bool {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
-	return func() bool {
-		var waiting bool
-		err := conn.QueryRow(t.Context(), "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database()))").Scan(&waiting)
-		return err == nil && waiting
 	}
 }
 
