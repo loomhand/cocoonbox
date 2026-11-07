@@ -672,7 +672,7 @@ impl Browser {
 
     /// Lists the tabs open outside the agent windows, with their ids for `tab`.
     async fn tabs(&self) -> Result<String, String> {
-        let tabs = self.user_tabs().await?;
+        let tabs = self.user_tabs(None).await?;
         if tabs.is_empty() {
             return Ok("no tab is open outside the agent windows".to_owned());
         }
@@ -687,7 +687,7 @@ impl Browser {
 
     /// The user's tab `tab`: a `browser_tabs` id, or "active" for the one in front, ties broken by the X active window's title.
     async fn tab(&self, tab: &str) -> Result<Cdp, String> {
-        let tabs = self.user_tabs().await?;
+        let tabs = self.user_tabs((tab != "active").then_some(tab)).await?;
         if tab != "active" {
             return tabs
                 .into_iter()
@@ -715,14 +715,17 @@ impl Browser {
         }
     }
 
-    /// The page tabs outside the agent windows, which are known by their first history entry.
-    async fn user_tabs(&self) -> Result<Vec<Tab>, String> {
+    /// The page tabs outside the agent windows, which are known by their first history entry; `only` keeps one id.
+    async fn user_tabs(&self, only: Option<&str>) -> Result<Vec<Tab>, String> {
         let targets = self
             .targets()
             .await
             .map_err(|_| "Chrome is not running in the box".to_owned())?;
         let mut tabs = Vec::new();
-        for t in targets.into_iter().filter(Target::is_tab) {
+        for t in targets
+            .into_iter()
+            .filter(|t| t.is_tab() && only.is_none_or(|id| t.id == id))
+        {
             let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
                 continue;
             };
@@ -2599,6 +2602,23 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn a_tab_id_connects_to_that_tab_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = tabs_chrome(&[
+            ("hang", "visible", "Stuck"),
+            ("https://docs.test/", "hidden", "Doc"),
+        ])
+        .await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let got = tokio::time::timeout(
+            TAB_WAIT,
+            b.run("a", "browser_snapshot", json!({"tab": "T1"})),
+        )
+        .await;
+        assert_eq!(got, Ok(Ok("Page: tab 1".to_owned())));
+    }
+
+    #[tokio::test]
     async fn without_plans_the_tab_argument_and_the_tab_list_do_not_exist() {
         let dir = tempfile::tempdir().unwrap();
         let port = slow_chrome(Duration::ZERO).await;
@@ -3395,6 +3415,9 @@ pub(super) mod tests {
                 while let Ok((stream, _)) = ws.accept().await {
                     let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                     while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        if history["entries"][0]["url"] == "hang" {
+                            continue;
+                        }
                         let v: Value = serde_json::from_str(&text).unwrap();
                         let result = match v["method"].as_str().unwrap() {
                             "Page.getNavigationHistory" => history.clone(),
