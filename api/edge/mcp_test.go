@@ -39,7 +39,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	want := map[string]string{
-		"path": "/mcp/extra", "query": "x=1", "session": "s0", "authorization": "",
+		"path": "/mcp", "query": "x=1", "session": "s0", "authorization": "",
 		"credential": "cred:" + boxes.BoxID("alice") + ":w1",
 		"body":       toolsListRPC,
 	}

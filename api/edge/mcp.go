@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	// MCPPrefix starts every remote-tools path: MCPPrefix + <box id> [+ subpath].
+	// MCPPrefix starts every remote-tools path: MCPPrefix + <box id>.
 	MCPPrefix = "/cocoonbox.mcp/"
 
 	agentMCPPath     = "/mcp"
@@ -241,13 +241,9 @@ func (m *MCP) transportFor(boxID string, ep machines.Endpoint) *http.Transport {
 }
 
 func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {
-	_, rest, _ := strings.Cut(strings.TrimPrefix(pr.In.URL.Path, MCPPrefix), "/")
 	pr.Out.URL.Scheme = "http"
 	pr.Out.URL.Host = rt.ep.Key
 	pr.Out.URL.Path = agentMCPPath
-	if rest != "" {
-		pr.Out.URL.Path += "/" + rest
-	}
 	pr.Out.URL.RawPath = ""
 	pr.Out.Host = pr.Out.URL.Host
 	pr.Out.Header.Del("Authorization")
