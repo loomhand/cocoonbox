@@ -23,25 +23,20 @@ const (
 
 type connectTool struct {
 	Name        string `json:"name"`
-	Title       string `json:"title"`
 	Description string `json:"description"`
 	ReadOnly    bool   `json:"read_only"`
 	Destructive bool   `json:"destructive"`
 	Policy      string `json:"policy"`
-	Effective   string `json:"effective"`
 }
 
 type connector struct {
-	ID          string        `json:"id"`
-	Kind        string        `json:"kind"`
-	Name        string        `json:"name"`
-	Account     string        `json:"account"`
-	Status      string        `json:"status"`
-	Scopes      []string      `json:"scopes"`
-	MCPURL      string        `json:"mcp_url"`
-	ConnectedAt int64         `json:"connected_at_ms"`
-	Tools       []connectTool `json:"tools"`
-	ToolsError  string        `json:"tools_error,omitempty"`
+	ID         string        `json:"id"`
+	Kind       string        `json:"kind"`
+	Account    string        `json:"account"`
+	Status     string        `json:"status"`
+	MCPURL     string        `json:"mcp_url"`
+	Tools      []connectTool `json:"tools"`
+	ToolsError string        `json:"tools_error,omitempty"`
 }
 
 type catalogEntry struct {
@@ -257,14 +252,10 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 }
 
 func toConnector(c *controlv1.Connector) connector {
-	out := connector{
-		ID: c.GetId(), Kind: c.GetKind(), Name: c.GetName(), Account: c.GetAccount(), Status: c.GetStatus(), Scopes: c.GetScopes(),
-		MCPURL: c.GetMcpUrl(), ConnectedAt: c.GetConnectedAtMs(), ToolsError: c.GetToolsError(),
-	}
+	out := connector{ID: c.GetId(), Kind: c.GetKind(), Account: c.GetAccount(), Status: c.GetStatus(), MCPURL: c.GetMcpUrl(), ToolsError: c.GetToolsError()}
 	for _, t := range c.GetTools() {
 		out.Tools = append(out.Tools, connectTool{
-			Name: t.GetName(), Title: t.GetTitle(), Description: t.GetDescription(), ReadOnly: t.GetReadOnly(), Destructive: t.GetDestructive(),
-			Policy: policyName(t.GetPolicy()), Effective: policyName(t.GetEffective()),
+			Name: t.GetName(), Description: t.GetDescription(), ReadOnly: t.GetReadOnly(), Destructive: t.GetDestructive(), Policy: policyName(t.GetPolicy()),
 		})
 	}
 	return out

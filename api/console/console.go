@@ -1,5 +1,4 @@
-// Package console serves the cocoonbox web console under /cb/: password sign-in, the user's own page, the admin page
-// and the view-only page of a share at /cb/s/.
+// Package console serves the cocoonbox web console under /cb/.
 package console
 
 import (
@@ -687,28 +686,22 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errTooMany):
 		writeError(w, http.StatusTooManyRequests, err.Error())
-	case errors.Is(err, users.ErrInvalid):
+	case errors.Is(err, users.ErrInvalid), errors.Is(err, signup.ErrInvalid), errors.Is(err, oauth.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, users.ErrExists):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, users.ErrNotFound), errors.Is(err, oauth.ErrNotFound):
+	case errors.Is(err, users.ErrNotFound), errors.Is(err, oauth.ErrNotFound), errors.Is(err, signup.ErrNotFound), errors.Is(err, signup.ErrOff):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, users.ErrBadPassword):
 		writeError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, signup.ErrInvalid), errors.Is(err, oauth.ErrInvalid):
-		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, signup.ErrNotFound), errors.Is(err, signup.ErrOff):
-		writeError(w, http.StatusNotFound, err.Error())
 	case status.Code(err) == codes.InvalidArgument:
 		writeError(w, http.StatusBadRequest, status.Convert(err).Message())
-	case status.Code(err) == codes.AlreadyExists:
+	case status.Code(err) == codes.AlreadyExists, status.Code(err) == codes.FailedPrecondition, status.Code(err) == codes.ResourceExhausted:
 		writeError(w, http.StatusConflict, status.Convert(err).Message())
 	case status.Code(err) == codes.NotFound:
 		writeError(w, http.StatusNotFound, status.Convert(err).Message())
 	case status.Code(err) == codes.PermissionDenied:
 		writeError(w, http.StatusForbidden, status.Convert(err).Message())
-	case status.Code(err) == codes.FailedPrecondition, status.Code(err) == codes.ResourceExhausted:
-		writeError(w, http.StatusConflict, status.Convert(err).Message())
 	case status.Code(err) == codes.Unavailable:
 		writeError(w, http.StatusBadGateway, status.Convert(err).Message())
 	default:

@@ -11,15 +11,13 @@ import (
 const keysPage = Prefix + "keys"
 
 type key struct {
-	Name        string   `json:"name"`
-	Hosts       []string `json:"hosts"`
-	Header      string   `json:"header"`
-	Template    string   `json:"template"`
-	Query       string   `json:"query"`
-	Placeholder string   `json:"placeholder"`
-	Hint        string   `json:"hint"`
-	CreatedAt   int64    `json:"created_at_ms"`
-	UpdatedAt   int64    `json:"updated_at_ms"`
+	Name      string   `json:"name"`
+	Hosts     []string `json:"hosts"`
+	Header    string   `json:"header"`
+	Template  string   `json:"template"`
+	Query     string   `json:"query"`
+	Hint      string   `json:"hint"`
+	CreatedAt int64    `json:"created_at_ms"`
 }
 
 // EnableKeys serves the Keys page and its calls over keys.
@@ -96,7 +94,6 @@ func (s *Server) keysCtx(r *http.Request) context.Context {
 
 func toKey(k *controlv1.Key) key {
 	return key{
-		Name: k.GetName(), Hosts: k.GetHosts(), Header: k.GetHeader(), Template: k.GetTemplate(), Query: k.GetQuery(),
-		Placeholder: k.GetPlaceholder(), Hint: k.GetHint(), CreatedAt: k.GetCreatedAtMs(), UpdatedAt: k.GetUpdatedAtMs(),
+		Name: k.GetName(), Hosts: k.GetHosts(), Header: k.GetHeader(), Template: k.GetTemplate(), Query: k.GetQuery(), Hint: k.GetHint(), CreatedAt: k.GetCreatedAtMs(),
 	}
 }
