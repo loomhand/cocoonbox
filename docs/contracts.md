@@ -50,6 +50,7 @@ The agent's toolhost (through shuttle's `/run/cocoonbox/desk.sock`, which splice
   - `state_read`: after the request, a JSON stamp frame `{size, mtime_ms, backup, error?}`, then raw data frames (a big-endian u32 length and the bytes), an empty data frame at the end, then a second stamp taken after the read.
   - `state_walk`: after the request, the JSON array of entries in raw data frames of at most 1 MiB, then an empty data frame. The list has no frame limit, so a box with more entries than one 64 MiB frame holds still saves. An error closes the connection.
   - `state_write`: after the request the client sends raw data frames and an empty one, and reads one response frame once the file has its mode and mtime.
+  - `state_apply`, `state_swap`: the request carries no `args`; the args JSON follows as raw data frames of at most 1 MiB and an empty one (512 MiB at most in all), then the client reads one response frame.
   - `exec`: one response frame (an error ends the call), then tagged frames both ways: one tag byte, a big-endian u32 length, the bytes. From the toolhost: 1 stdout, 2 stderr, 3 exit code (a big-endian i32, the last frame). To the toolhost: 4 stdin, 5 end of stdin, 6 signal (a big-endian i32), 7 terminal size (big-endian u16 rows and cols).
 
 ## Edge (api) ↔ agent

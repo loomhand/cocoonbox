@@ -4,7 +4,10 @@ Native client for cocoonbox: sign in, start or wake the box, talk to its agents,
 
 | Target | What |
 |---|---|
-| `CocoonBoxKit` | the app's interface below the UI, next to `CocoonBoxTerminal`: `BoxConnection` (one HTTP/2 connection; Boxes, Agents and Session calls and the resumable event follower, with the gRPC clients kept internal) and `LiveScreen` (the swift-rfb client and view over `Session.Screen`) |
+| `CocoonBoxKit` | the app's interface below the UI, next to `CocoonBoxTerminal`: `BoxConnection` (one HTTP/2 connection; Boxes, Shares, Flows, Connectors, Keys, Account, Agents and Session calls and the resumable event follower, with the gRPC clients kept internal) and `LiveScreen` (the swift-rfb client and view over `Session.Screen`) |
+| `CocoonBoxTerminal` | Ghostty terminal panes: local agent CLIs on a pseudo-terminal the app owns, and programs that run in the box |
+| `CocoonBoxBridge` | the stdio MCP server a local agent runs as `cocoonbox mcp` |
+| `CocoonBoxCLI` | the `cocoonbox` CLI (product `cocoonbox-cli`) |
 | `CocoonBox` | the SwiftUI + AppKit app |
 | `MockBox` | a local server for Boxes, Agents and Session with canned turns and a synthetic RFB desktop |
 | `RFBTestServer` | the synthetic RFB 3.8 server used by MockBox and the tests |
