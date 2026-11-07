@@ -10,7 +10,7 @@ public enum LoginShell {
         let inherited = ProcessInfo.processInfo.environment
         let shell = inherited["SHELL"] ?? "/bin/zsh"
         let marker = "__cocoonbox_env__"
-        let output = (try? Command.run([shell, "-l", "-i", "-c", "printf '\(marker)'; /usr/bin/env -0"], environment: inherited.filter { seed.contains($0.key) }, timeout: 5))?.out ?? Data()
+        let output = (try? Command.run([shell, "-l", "-i", "-c", "printf '\(marker)'; /usr/bin/env -0"], environment: inherited.filter { seed.contains($0.key) }, timeout: 5, discardingErrors: true))?.out ?? Data()
         guard let start = output.range(of: Data(marker.utf8)) else {
             return inherited.filter { seed.contains($0.key) }.merging(["PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"]) { $1 }
         }

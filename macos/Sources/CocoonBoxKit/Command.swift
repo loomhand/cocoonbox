@@ -11,7 +11,7 @@ public enum Command {
         public var error: String { String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    public static func run(_ argv: [String], environment: [String: String], input: Data? = nil, timeout: Double? = nil) throws -> Run {
+    public static func run(_ argv: [String], environment: [String: String], input: Data? = nil, timeout: Double? = nil, discardingErrors: Bool = false) throws -> Run {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
@@ -19,7 +19,7 @@ public enum Command {
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = input == nil ? FileHandle.nullDevice : stdin
         process.standardOutput = stdout
-        process.standardError = stderr
+        process.standardError = discardingErrors ? FileHandle.nullDevice : stderr
         try process.run()
         if let timeout {
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
@@ -27,7 +27,9 @@ public enum Command {
         let out = Sink(), err = Sink()
         let group = DispatchGroup()
         DispatchQueue.global().async(group: group) { out.data = stdout.fileHandleForReading.readDataToEndOfFile() }
-        DispatchQueue.global().async(group: group) { err.data = stderr.fileHandleForReading.readDataToEndOfFile() }
+        if !discardingErrors {
+            DispatchQueue.global().async(group: group) { err.data = stderr.fileHandleForReading.readDataToEndOfFile() }
+        }
         if let input {
             DispatchQueue.global().async(group: group) {
                 try? stdin.fileHandleForWriting.write(contentsOf: input)
