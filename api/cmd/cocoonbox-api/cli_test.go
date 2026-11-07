@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -163,7 +164,7 @@ func TestCutoffRotatesWhatTheNodeGotAndForgetsItsPushes(t *testing.T) {
 	if got := strings.Join(calls, ";"); got != want {
 		t.Errorf("calls = %s, want %s", got, want)
 	}
-	for _, line := range []string{"machine m1 of user u1 got model, door, connect", "user u1: Connect grants revoked", "user u2: tell the user to rotate vault keys OPENAI, SERPAPI"} {
+	for _, line := range []string{"machine m1 of user u1 got model, door, connect", "user u1: Connect grants revoked", "user u1: no vendor revoked hubspot", "user u2: tell the user to rotate vault keys OPENAI, SERPAPI"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("output %q lacks %q", out.String(), line)
 		}
@@ -244,7 +245,7 @@ func (f *fakeLedger) PushesOn(_ context.Context, node string) ([]users.Push, err
 	return f.pushes, nil
 }
 
-func (f *fakeLedger) DropPushesOn(_ context.Context, node string) error {
+func (f *fakeLedger) DropPushesOn(_ context.Context, node string, _ time.Time) error {
 	*f.calls = append(*f.calls, "drop-pushes "+node)
 	return nil
 }
@@ -274,9 +275,9 @@ func (f *fakeGrants) DropDoorKey(_ context.Context, machine string) error {
 	return nil
 }
 
-func (f *fakeGrants) RevokeAll(_ context.Context, user string) error {
+func (f *fakeGrants) CutOff(_ context.Context, user string) ([]string, error) {
 	*f.calls = append(*f.calls, "revoke-grants "+user)
-	return nil
+	return []string{"hubspot"}, nil
 }
 
 type fakeNames map[string][]string

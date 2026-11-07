@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/loomhand/cocoonbox/api/config"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -16,14 +17,14 @@ import (
 
 type pushLedger interface {
 	PushesOn(ctx context.Context, node string) ([]users.Push, error)
-	DropPushesOn(ctx context.Context, node string) error
+	DropPushesOn(ctx context.Context, node string, through time.Time) error
 	MachineKeys(ctx context.Context, machine string) ([]users.MachineKey, error)
 	RevokeMachineKey(ctx context.Context, id string) error
 }
 
 type grantRevoker interface {
 	DropDoorKey(ctx context.Context, machine string) error
-	RevokeAll(ctx context.Context, user string) error
+	CutOff(ctx context.Context, user string) ([]string, error)
 }
 
 type keyNames interface {
@@ -58,7 +59,7 @@ func cutoffNode(ctx context.Context, cfg *config.Config, node string, stdout io.
 	return cutoff(ctx, accounts, revoker, keys, node, stdout)
 }
 
-// cutoff rotates the gw and door keys of every machine that had secrets pushed to node, revokes the Connect grants of their owners at the vendors, lists the vault keys to rotate, and forgets node's pushes once all of it succeeded.
+// cutoff revokes what went to node and forgets the pushes it read once all of it succeeded.
 func cutoff(ctx context.Context, ledger pushLedger, revoker grantRevoker, keys keyNames, node string, stdout io.Writer) error {
 	pushes, err := ledger.PushesOn(ctx, node)
 	if err != nil {
@@ -66,8 +67,13 @@ func cutoff(ctx context.Context, ledger pushLedger, revoker grantRevoker, keys k
 	}
 	kinds, owners := map[string][]string{}, map[string]string{}
 	connectOwners, vaultOwners := map[string]bool{}, map[string]bool{}
+	var through time.Time
 	for _, p := range pushes {
-		kinds[p.Machine], owners[p.Machine] = append(kinds[p.Machine], p.Kind), p.Owner
+		kinds[p.Machine] = append(kinds[p.Machine], p.Kind)
+		owners[p.Machine] = p.Owner
+		if p.At.After(through) {
+			through = p.At
+		}
 		switch p.Kind {
 		case users.PushConnect:
 			connectOwners[p.Owner] = true
@@ -81,6 +87,10 @@ func cutoff(ctx context.Context, ledger pushLedger, revoker grantRevoker, keys k
 	}
 	if revoker == nil && slices.ContainsFunc(pushes, func(p users.Push) bool { return p.Kind == users.PushDoor || p.Kind == users.PushConnect }) {
 		return errors.New("the node got Connect credentials: run the cutoff with connect.public_url set")
+	}
+	revoked := "gw keys"
+	if revoker != nil {
+		revoked = "gw and door keys"
 	}
 	for _, machine := range slices.Sorted(maps.Keys(kinds)) {
 		issued, err := ledger.MachineKeys(ctx, machine)
@@ -97,16 +107,23 @@ func cutoff(ctx context.Context, ledger pushLedger, revoker grantRevoker, keys k
 				return fmt.Errorf("drop the door key of %s: %w", machine, err)
 			}
 		}
-		if _, err := fmt.Fprintf(stdout, "machine %s of user %s got %s: its gw and door keys are revoked; the provisioner gives it new ones while it runs\n",
-			machine, owners[machine], strings.Join(kinds[machine], ", ")); err != nil {
+		if _, err := fmt.Fprintf(stdout, "machine %s of user %s got %s: its %s are revoked; the provisioner gives it new ones while it runs\n",
+			machine, owners[machine], strings.Join(kinds[machine], ", "), revoked); err != nil {
 			return err
 		}
 	}
 	for _, owner := range slices.Sorted(maps.Keys(connectOwners)) {
-		if err := revoker.RevokeAll(ctx, owner); err != nil {
-			return fmt.Errorf("revoke the grants of %s: %w", owner, err)
+		unrevoked, err := revoker.CutOff(ctx, owner)
+		if err != nil {
+			return fmt.Errorf("cut off the grants of %s: %w", owner, err)
 		}
-		if _, err := fmt.Fprintf(stdout, "user %s: Connect grants revoked at the vendors that support it; the user must reconnect\n", owner); err != nil {
+		if _, err := fmt.Fprintf(stdout, "user %s: Connect grants revoked at the vendors and marked for a reconnect; the user must reconnect\n", owner); err != nil {
+			return err
+		}
+		if len(unrevoked) == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintf(stdout, "user %s: no vendor revoked %s; rotate those credentials at the vendor\n", owner, strings.Join(unrevoked, ", ")); err != nil {
 			return err
 		}
 	}
@@ -122,5 +139,5 @@ func cutoff(ctx context.Context, ledger pushLedger, revoker grantRevoker, keys k
 			return err
 		}
 	}
-	return ledger.DropPushesOn(ctx, node)
+	return ledger.DropPushesOn(ctx, node, through)
 }

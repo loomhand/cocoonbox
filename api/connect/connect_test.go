@@ -720,6 +720,27 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 	}
 }
 
+func TestCutOffRevokesMarksForAReconnectAndNamesWhatNoVendorRevoked(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	sec := env.secrets(t)
+	keyed := StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "keyed", URL: env.vendor.KeyedURL(), Header: "X-Api-Key", Key: connecttest.Key}
+	if _, err := env.svc.Start(t.Context(), keyed); err != nil {
+		t.Fatalf("Start keyed: %v", err)
+	}
+
+	unrevoked, err := env.svc.CutOff(t.Context(), alice)
+	if err != nil || !slices.Equal(unrevoked, []string{"keyed"}) {
+		t.Fatalf("CutOff = %v, %v; want only the keyed connector unrevoked", unrevoked, err)
+	}
+	if _, revoked, _ := env.vendor.Snapshot(); len(revoked) != 1 || revoked[0] != sec.RefreshToken {
+		t.Errorf("revoked %v", revoked)
+	}
+	if g := env.grant(t); g.status != statusReconnect {
+		t.Errorf("grant status = %q, want %q", g.status, statusReconnect)
+	}
+}
+
 func TestAKeyConnectorSendsItsHeader(t *testing.T) {
 	env := newEnv(t)
 	req := StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "keyed", URL: env.vendor.KeyedURL(), Header: "X-Api-Key", Key: "wrong"}

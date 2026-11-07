@@ -37,14 +37,10 @@ func (s *Service) PushesOn(ctx context.Context, node string) ([]Push, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list pushes: %w", err)
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Push, error) {
-		var p Push
-		err := row.Scan(&p.Machine, &p.Owner, &p.Kind, &p.Node, &p.At)
-		return p, err
-	})
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[Push])
 }
 
-// DropPushesOn forgets the pushes recorded for node.
-func (s *Service) DropPushesOn(ctx context.Context, node string) error {
-	return s.store.exec(ctx, "DELETE FROM credential_pushes WHERE node = $1", node)
+// DropPushesOn forgets the pushes recorded for node no later than through.
+func (s *Service) DropPushesOn(ctx context.Context, node string, through time.Time) error {
+	return s.store.exec(ctx, "DELETE FROM credential_pushes WHERE node = $1 AND pushed_at <= $2", node, through)
 }
