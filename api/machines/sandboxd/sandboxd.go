@@ -244,11 +244,11 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	}
 	started, missing, starting, sandbox, addr := false, false, false, "", ""
 	e, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-		started, missing, starting = false, e == nil || e.row == nil, false
+		now := time.Now()
+		started, missing, starting = false, e == nil || e.row == nil && !e.busy(now), false
 		if missing {
 			return e, false
 		}
-		now := time.Now()
 		state, _ := e.state()
 		if state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
 			sandbox, addr, started = e.row.ID, e.ownerAddr, true
