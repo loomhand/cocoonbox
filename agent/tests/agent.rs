@@ -298,6 +298,156 @@ impl Harness {
     }
 }
 
+struct HttpRequest {
+    line: String,
+    session: String,
+    body: Vec<u8>,
+}
+
+struct Edge {
+    key: SigningKey,
+    key_id: String,
+}
+
+impl Edge {
+    fn provision(h: &Harness) -> Self {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let key_id = write_identity(&h.identity, &key, "w1");
+        Self { key, key_id }
+    }
+
+    fn owner(&self) -> String {
+        credential(&self.key, &self.key_id, "cb-box", "w1")
+    }
+
+    fn share(&self, principal: &str) -> String {
+        let exp = cocoonbox_agent::now_ms() / 1000 + 600;
+        let fields = format!("{}|cb-box|w1|{exp}|{principal}", self.key_id);
+        sign_credential(&self.key, "v2", &fields)
+    }
+}
+
+struct McpClient {
+    http: reqwest::Client,
+    url: String,
+    session: String,
+    next_id: u64,
+    credential: Option<String>,
+    instructions: String,
+}
+
+impl McpClient {
+    async fn connect(h: &Harness) -> Self {
+        Self::connect_as(h, None).await
+    }
+
+    async fn connect_as(h: &Harness, credential: Option<String>) -> Self {
+        let mut c = Self::detached(format!("{}/mcp", h.endpoint), String::new(), credential);
+        let resp = c.post(Self::initialize()).await;
+        assert_eq!(resp.status(), 200);
+        c.session = resp.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let init: Value = resp.json().await.unwrap();
+        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(init["result"]["serverInfo"]["name"], "cocoonbox-agent");
+        assert!(init["result"]["capabilities"]["tools"].is_object());
+        c.instructions = init["result"]["instructions"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let note = c
+            .post(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await;
+        assert_eq!(note.status(), 202);
+        c
+    }
+
+    fn detached(url: String, session: String, credential: Option<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            url,
+            session,
+            next_id: 0,
+            credential,
+            instructions: String::new(),
+        }
+    }
+
+    fn initialize() -> Value {
+        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test-client", "version": "1.0"}
+        }})
+    }
+
+    async fn close(&self) -> reqwest::Response {
+        self.authorize(self.http.delete(&self.url))
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn post(&self, body: Value) -> reqwest::Response {
+        let req = self
+            .http
+            .post(&self.url)
+            .header("accept", "application/json, text/event-stream")
+            .json(&body);
+        self.authorize(req).send().await.unwrap()
+    }
+
+    fn authorize(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        req = req.header(
+            "x-cocoonbox-credential",
+            self.credential.as_deref().unwrap_or(owner()),
+        );
+        if !self.session.is_empty() {
+            req = req.header("mcp-session-id", &self.session);
+        }
+        req
+    }
+
+    fn tool_names(listed: &Value) -> Vec<String> {
+        let mut names: Vec<String> = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    async fn rpc(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        let resp = self
+            .post(json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}))
+            .await;
+        assert_eq!(resp.status(), 200);
+        let reply: Value = resp.json().await.unwrap();
+        assert_eq!(reply["id"], self.next_id);
+        reply
+    }
+
+    async fn call(&mut self, name: &str, arguments: Value) -> Value {
+        let reply = self
+            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
+            .await;
+        reply["result"].clone()
+    }
+}
+
+type Objects = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+
+#[derive(Default)]
+struct Gets {
+    live: AtomicUsize,
+    peak: AtomicUsize,
+}
+
 fn in_box(routing: &str) -> String {
     routing.replace(
         "`computer_state`, `computer_act`.",
@@ -469,12 +619,6 @@ fn messages_text(text: &str) -> String {
 
 fn sse(events: &[Value]) -> String {
     events.iter().map(|e| format!("data: {e}\n\n")).collect()
-}
-
-struct HttpRequest {
-    line: String,
-    session: String,
-    body: Vec<u8>,
 }
 
 async fn read_http(reader: &mut BufReader<TcpStream>) -> Option<HttpRequest> {
@@ -886,29 +1030,6 @@ fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> St
     sign_credential(key, "v1", &format!("{key_id}|{box_id}|{wake_id}|{exp}"))
 }
 
-struct Edge {
-    key: SigningKey,
-    key_id: String,
-}
-
-impl Edge {
-    fn provision(h: &Harness) -> Self {
-        let key = SigningKey::from_bytes(&[5; 32]);
-        let key_id = write_identity(&h.identity, &key, "w1");
-        Self { key, key_id }
-    }
-
-    fn owner(&self) -> String {
-        credential(&self.key, &self.key_id, "cb-box", "w1")
-    }
-
-    fn share(&self, principal: &str) -> String {
-        let exp = cocoonbox_agent::now_ms() / 1000 + 600;
-        let fields = format!("{}|cb-box|w1|{exp}|{principal}", self.key_id);
-        sign_credential(&self.key, "v2", &fields)
-    }
-}
-
 fn signed<T>(msg: T, credential: &str) -> Request<T> {
     with_credential(msg, Some(credential))
 }
@@ -948,6 +1069,733 @@ async fn surface_codes(h: &Harness, credential: Option<&str>) -> Vec<String> {
     }
     let mcp = mcp.send().await.unwrap().status().as_u16();
     vec![code(agents), code(hello), code(plan), mcp.to_string()]
+}
+
+async fn run_delegate(messages_wire: bool) {
+    let state_args = json!({});
+    let act_args = json!({"action": "type", "element": 0, "text": "hello"});
+    let key_args = json!({"action": "key", "key": "return"});
+    let sub = if messages_wire {
+        vec![
+            (
+                "messages",
+                messages_tool_use("toolu_1", "computer_state", &state_args),
+            ),
+            (
+                "messages",
+                messages_tool_use("toolu_2", "computer_act", &act_args),
+            ),
+            (
+                "messages",
+                messages_tool_use("toolu_3", "computer_act", &key_args),
+            ),
+            ("messages", messages_text("Typed hello into Mousepad.")),
+        ]
+    } else {
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("toolu_1", "computer_state", &state_args),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_2", "computer_act", &act_args),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_3", "computer_act", &key_args),
+            ),
+            ("chat/completions", chat_text("Typed hello into Mousepad.")),
+        ]
+    };
+    let mut script = vec![(
+        "chat/completions",
+        chat_tool_call(
+            "call_d",
+            "delegate_computer",
+            &json!({"task": "type hello into the editor"}),
+        ),
+    )];
+    script.extend(sub);
+    script.push(("chat/completions", chat_text("Done.")));
+    let h = Harness::boot(Boot {
+        script,
+        anthropic_messages: messages_wire,
+        automation: Automation::Desk,
+        ..Boot::default()
+    })
+    .await;
+    let mut agents = h.agents().await;
+    let mut session = h.session().await;
+    let agent_id = create_agent(&mut agents).await;
+    let mut events = session
+        .events(authed(pb::EventsRequest { from_offset: 0 }))
+        .await
+        .unwrap()
+        .into_inner();
+    send(&mut agents, &agent_id, "type hello", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+
+    let end = turn_end(&entries);
+    assert!(end.ok, "{}", end.error);
+    let sub_calls: Vec<&pb::ToolCall> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::ToolCall(c)) if c.subagent == "computer" => Some(c),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sub_calls.len(), 3);
+    let sub_texts: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) if t.subagent == "computer" => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sub_texts.contains(&"Typed hello into Mousepad."),
+        "{sub_texts:?}"
+    );
+    let state = tool_result(&entries, "toolu_1");
+    assert!(
+        state.text.starts_with("Windows (frontmost first):"),
+        "{}",
+        state.text
+    );
+    assert!(state.image.starts_with(b"\x89PNG"));
+    let delegate = tool_result(&entries, "call_d");
+    assert!(
+        delegate.text.starts_with("Typed hello into Mousepad."),
+        "{}",
+        delegate.text
+    );
+    assert!(delegate.image.starts_with(b"\x89PNG"));
+
+    let calls: Vec<(String, Value)> = h
+        .desk_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(n, _)| n.starts_with("desk_computer_"))
+        .cloned()
+        .collect();
+    let names: Vec<&str> = calls.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "desk_computer_state",
+            "desk_computer_act",
+            "desk_computer_act",
+            "desk_computer_end"
+        ]
+    );
+    let session = calls[0].1["session"].as_str().unwrap().to_owned();
+    assert!(session.starts_with("cu-"), "{session}");
+    assert!(
+        calls.iter().all(|(_, a)| a["session"] == session.as_str()),
+        "{calls:?}"
+    );
+    assert_eq!(
+        (
+            &calls[1].1["action"],
+            &calls[1].1["element"],
+            &calls[1].1["text"]
+        ),
+        (&json!("type"), &json!(0), &json!("hello"))
+    );
+    assert_eq!(calls[2].1["key"], "return");
+
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    let main_after = if messages_wire {
+        let vision = gw_bodies(&h.gw_log, "/v1/messages");
+        assert_eq!(vision.len(), 4);
+        assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
+        let last_user = vision[3]["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last_user["content"][0]["type"], "tool_result");
+        assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
+        assert_eq!(chats.len(), 2);
+        &chats[1]
+    } else {
+        assert_eq!(chats.len(), 6);
+        assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
+        let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
+        assert_eq!(models[1..5], ["anthropic/claude-sonnet-5"; 4]);
+        let msgs = chats[4]["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
+        let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
+        assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
+        &chats[5]
+    };
+    let main_tool = main_after["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["role"] == "tool")
+        .unwrap();
+    assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
+    assert!(!main_after.to_string().contains(PNG));
+
+    let mut actions = Vec::new();
+    while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(500), events.message())
+        .await
+        .map(Result::transpose)
+    {
+        if let Some(event::Body::ComputerAction(a)) = ev.body {
+            assert_eq!(a.agent_id, agent_id);
+            actions.push((a.action, a.text));
+        }
+    }
+    assert_eq!(
+        actions,
+        [
+            ("type".to_owned(), "hello".to_owned()),
+            ("key".to_owned(), "return".to_owned())
+        ]
+    );
+}
+
+async fn delegate_once(
+    checkpoint_nudge: Option<Duration>,
+    reasoning_effort: Option<&'static str>,
+) -> Harness {
+    Harness::boot(Boot {
+        script: vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_d",
+                    "delegate_computer",
+                    &json!({"task": "look at the screen"}),
+                ),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_1", "computer_state", &json!({})),
+            ),
+            ("chat/completions", chat_text("Looked.")),
+            ("chat/completions", chat_text("Done.")),
+        ],
+        automation: Automation::Desk,
+        checkpoint_nudge,
+        reasoning_effort,
+        ..Boot::default()
+    })
+    .await
+}
+
+async fn respond(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    approval_id: &str,
+    approve: bool,
+    text: &str,
+) -> Result<(), tonic::Status> {
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.into(),
+            approval_id: approval_id.into(),
+            approve,
+            text: text.into(),
+        }))
+        .await
+        .map(drop)
+}
+
+async fn asked_approval(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    kind: &str,
+    after_seq: u64,
+) -> pb::ApprovalRequest {
+    wait_transcript(agents, agent_id, after_seq, |entries| {
+        entries.iter().find_map(|e| match &e.body {
+            Some(Body::Approval(a)) if a.kind == kind => Some(a.clone()),
+            _ => None,
+        })
+    })
+    .await
+}
+
+async fn turn_ends(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    n: usize,
+) -> Vec<pb::TranscriptEntry> {
+    wait_transcript(agents, agent_id, 0, |entries| {
+        let ends = entries
+            .iter()
+            .filter(|e| matches!(e.body, Some(Body::TurnEnd(_))))
+            .count();
+        (ends >= n).then(|| entries.to_vec())
+    })
+    .await
+}
+
+async fn wait_transcript<T>(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    after_seq: u64,
+    mut found: impl FnMut(&[pb::TranscriptEntry]) -> Option<T>,
+) -> T {
+    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
+    for _ in 0..500 {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: agent_id.into(),
+                after_seq: entries.last().map_or(after_seq, |e| e.seq),
+                limit: 1000,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        entries.extend(page.entries);
+        if page.has_more {
+            continue;
+        }
+        if let Some(t) = found(&entries) {
+            return t;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("agent {agent_id}'s transcript never showed what the test waits for");
+}
+
+fn exec_start(command: &str) -> pb::ExecClientFrame {
+    pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
+            command: command.into(),
+            tty: None,
+        })),
+    }
+}
+
+fn exec_frame(body: exec_client_frame::Body) -> pb::ExecClientFrame {
+    pb::ExecClientFrame { body: Some(body) }
+}
+
+fn exec_stdin(data: &[u8]) -> pb::ExecClientFrame {
+    pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Stdin(
+            bytes::Bytes::copy_from_slice(data),
+        )),
+    }
+}
+
+async fn exec_output(
+    mut frames: tonic::Streaming<pb::ExecServerFrame>,
+) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let (mut out, mut err, mut code) = (Vec::new(), Vec::new(), None);
+    while let Some(frame) = frames.message().await.unwrap() {
+        assert!(code.is_none(), "a frame after the exit code");
+        match frame.body.unwrap() {
+            exec_server_frame::Body::Stdout(d) => out.extend_from_slice(&d),
+            exec_server_frame::Body::Stderr(d) => err.extend_from_slice(&d),
+            exec_server_frame::Body::ExitCode(c) => code = Some(c),
+        }
+    }
+    (out, err, code)
+}
+
+async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let (tx, rx) = mpsc::channel(4);
+    tx.send(exec_start(command)).await.unwrap();
+    tokio::spawn(async move {
+        for chunk in stdin.chunks(64 << 10) {
+            if tx.send(exec_stdin(chunk)).await.is_err() {
+                return;
+            }
+        }
+    });
+    let frames = h
+        .session()
+        .await
+        .exec(authed(ReceiverStream::new(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    exec_output(frames).await
+}
+
+async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (String, String) {
+    let (tx, rx) = mpsc::channel(2);
+    tx.send(exec_frame(exec_client_frame::Body::Start(pb::ExecStart {
+        command: command.into(),
+        tty: Some(pb::ExecTty {
+            term: term.into(),
+            window: Some(pb::ExecWindow { rows: 24, cols: 80 }),
+            terminfo: terminfo.into(),
+        }),
+    })))
+    .await
+    .unwrap();
+    drop(tx);
+    let frames = h
+        .session()
+        .await
+        .exec(authed(ReceiverStream::new(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    let (out, err, code) = exec_output(frames).await;
+    assert_eq!(code, Some(0));
+    (
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let target = endpoint.trim_start_matches("http://").to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let mut conns = tokio::task::JoinSet::new();
+        loop {
+            let (mut down, _) = listener.accept().await.unwrap();
+            let target = target.clone();
+            conns.spawn(async move {
+                let mut up = TcpStream::connect(target).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
+            });
+        }
+    });
+    (addr, task)
+}
+
+fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
+    h.desk_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(n, _)| n == name)
+        .map(|(_, a)| a.clone())
+        .collect()
+}
+
+async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
+    let mut mcp = McpClient::connect(h).await;
+
+    let ok = mcp
+        .call(
+            tool,
+            json!({"code": "export function main(p) { return p }", "params": {"text": "hi"}}),
+        )
+        .await;
+    assert_eq!(ok["isError"], false, "{ok}");
+    let report: Value = serde_json::from_str(mcp_text(&ok)).unwrap();
+    assert_eq!(report["result"], json!({"params": {"text": "hi"}}));
+    assert_eq!(report["exit_code"], 0);
+    assert_eq!(report["snapshot"], "outline");
+    assert!(
+        report["logs"].as_str().unwrap().starts_with("ran "),
+        "{report}"
+    );
+    assert!(report.get("error").is_none(), "{report}");
+    let shot = PathBuf::from(report["screenshot_path"].as_str().unwrap());
+    assert!(shot.exists(), "{}", shot.display());
+    assert_eq!(ok["content"][1]["type"], "image");
+
+    std::fs::write(h.workspace.join("flow.mjs"), "boom").unwrap();
+    let failed = mcp
+        .call(tool, json!({"script": "flow.mjs", "screenshot": false}))
+        .await;
+    assert_eq!(failed["isError"], true, "{failed}");
+    let report: Value = serde_json::from_str(mcp_text(&failed)).unwrap();
+    assert_eq!(
+        report["error"],
+        json!({"kind": "exception", "message": "Error: boom"})
+    );
+    assert_eq!(report["exit_code"], 1);
+    assert!(report.get("screenshot_path").is_none(), "{report}");
+    assert_eq!(failed["content"].as_array().unwrap().len(), 1);
+
+    let refused = mcp
+        .call(tool, json!({"code": "1", "script": "flow.mjs"}))
+        .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let missing = mcp.call(tool, json!({"script": "nope.mjs"})).await;
+    assert!(mcp_text(&missing).contains("does not exist"), "{missing}");
+}
+
+async fn fake_store() -> (String, Objects) {
+    let (base, objects, _) = slow_store(Duration::ZERO).await;
+    (base, objects)
+}
+
+async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
+    let gets = Arc::new(Gets::default());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/bucket", listener.local_addr().unwrap());
+    let objects = Objects::default();
+    let shared = Arc::clone(&objects);
+    let counted = Arc::clone(&gets);
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let objects = Arc::clone(&shared);
+            let gets = Arc::clone(&counted);
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                loop {
+                    let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
+                        return;
+                    };
+                    let mut parts = line.split_whitespace();
+                    let method = parts.next().unwrap_or_default().to_owned();
+                    let name = parts
+                        .next()
+                        .unwrap_or_default()
+                        .rsplit('/')
+                        .next()
+                        .unwrap()
+                        .to_owned();
+                    let (status, reply) = if method == "PUT" {
+                        objects.lock().unwrap().insert(name, body);
+                        ("200 OK", Vec::new())
+                    } else {
+                        let live = gets.live.fetch_add(1, Ordering::SeqCst) + 1;
+                        gets.peak.fetch_max(live, Ordering::SeqCst);
+                        tokio::time::sleep(get_delay).await;
+                        gets.live.fetch_sub(1, Ordering::SeqCst);
+                        match objects.lock().unwrap().get(&name) {
+                            Some(b) => ("200 OK", b.clone()),
+                            None => ("404 Not Found", Vec::new()),
+                        }
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n",
+                        reply.len()
+                    );
+                    let stream = reader.get_mut();
+                    stream.write_all(head.as_bytes()).await.unwrap();
+                    stream.write_all(&reply).await.unwrap();
+                }
+            });
+        }
+    });
+    (base, objects, gets)
+}
+
+fn state_key() -> pb::StateKey {
+    pb::StateKey {
+        key: vec![42u8; 32].into(),
+        key_id: "k1".into(),
+    }
+}
+
+async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateClient<Channel> {
+    cocoonbox_agent::pb::state_client::StateClient::new(h.channel().await)
+}
+
+async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
+    try_plan(h, consistency, parent).await.unwrap()
+}
+
+async fn try_plan(
+    h: &Harness,
+    consistency: pb::Consistency,
+    parent: &str,
+) -> Result<pb::PlanResponse, tonic::Status> {
+    state_client(h)
+        .await
+        .plan(authed(pb::PlanRequest {
+            key: Some(state_key()),
+            consistency: consistency.into(),
+            parent: parent.into(),
+        }))
+        .await
+        .map(tonic::Response::into_inner)
+}
+
+async fn upload_missing(
+    h: &Harness,
+    base: &str,
+    objects: &Objects,
+    planned: &pb::PlanResponse,
+) -> usize {
+    let missing: Vec<String> = {
+        let have = objects.lock().unwrap();
+        planned
+            .chunks
+            .iter()
+            .filter(|c| !have.contains_key(&c.id))
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    let put = |id: &str| pb::PresignedPut {
+        chunk_id: id.into(),
+        url: format!("{base}/{id}"),
+        headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
+    };
+    let stream = state_client(h)
+        .await
+        .upload(authed(pb::UploadRequest {
+            snapshot_id: planned.snapshot_id.clone(),
+            key: Some(state_key()),
+            puts: missing.iter().map(|id| put(id)).collect(),
+            manifest: Some(put(&planned.snapshot_id)),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let last = last_message(stream).await.unwrap();
+    assert!(last.finished);
+    assert_eq!(last.manifest_id, planned.snapshot_id);
+    assert_eq!(last.done_chunks as usize, missing.len() + 1);
+    missing.len()
+}
+
+async fn restore(
+    h: &Harness,
+    base: &str,
+    objects: &Objects,
+    manifest_id: &str,
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let gets = objects
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|k| *k != manifest_id)
+        .map(|k| pb::PresignedGet {
+            chunk_id: k.clone(),
+            url: format!("{base}/{k}"),
+        })
+        .collect();
+    restore_pages(h, base, manifest_id, gets, None).await
+}
+
+async fn restore_pages(
+    h: &Harness,
+    base: &str,
+    manifest_id: &str,
+    gets: Vec<pb::PresignedGet>,
+    scope: Option<pb::RestoreScope>,
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let scoped = scope.is_some();
+    let mut reqs = vec![pb::RestoreRequest {
+        key: Some(state_key()),
+        manifest: Some(pb::PresignedGet {
+            chunk_id: manifest_id.into(),
+            url: format!("{base}/{manifest_id}"),
+        }),
+        gets: Vec::new(),
+        scope,
+    }];
+    reqs.extend(gets.chunks(2).map(|page| pb::RestoreRequest {
+        gets: page.to_vec(),
+        ..Default::default()
+    }));
+    let mut state = state_client(h).await;
+    let reqs = authed(tokio_stream::iter(reqs));
+    let stream = if scoped {
+        state.restore_paths(reqs).await
+    } else {
+        state.restore(reqs).await
+    }?
+    .into_inner();
+    last_message(stream).await
+}
+
+async fn last_message<T>(mut stream: tonic::Streaming<T>) -> Result<T, tonic::Status> {
+    let mut last = None;
+    while let Some(m) = stream.message().await? {
+        last = Some(m);
+    }
+    Ok(last.unwrap())
+}
+
+fn manifest_of(objects: &Objects, id: &str) -> Value {
+    let keys = cocoonbox_agent::state::crypto::Keys::derive(&state_key().key).unwrap();
+    let sealed = objects.lock().unwrap()[id].clone();
+    serde_json::from_slice(&keys.open(id, &sealed, 1 << 30).unwrap()).unwrap()
+}
+
+fn known_files(h: &Harness) -> Value {
+    serde_json::from_slice::<Value>(&std::fs::read(known_chunks(h)).unwrap()).unwrap()["files"]
+        .take()
+}
+
+fn known_chunks(h: &Harness) -> PathBuf {
+    h.dir.path().join("state/state/known-chunks.json")
+}
+
+fn chunks_of(m: &Value, path: &str) -> Value {
+    m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == path)
+        .unwrap()["chunks"]
+        .clone()
+}
+
+fn write_script(path: &Path, body: &str) {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
+}
+
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect()
+}
+
+async fn restore_paths(
+    h: &Harness,
+    base: &str,
+    manifest_id: &str,
+    paths: &[String],
+    target: &str,
+    chunks: &[String],
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let gets = chunks
+        .iter()
+        .map(|id| pb::PresignedGet {
+            chunk_id: id.clone(),
+            url: format!("{base}/{id}"),
+        })
+        .collect();
+    let scope = pb::RestoreScope {
+        paths: paths.to_vec(),
+        target: target.into(),
+    };
+    restore_pages(h, base, manifest_id, gets, Some(scope)).await
+}
+
+fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = roots.iter().map(|r| r.to_path_buf()).collect();
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let path = e.unwrap().path();
+            let meta = std::fs::symlink_metadata(&path).unwrap();
+            let mode = meta.permissions().mode();
+            let what = if meta.is_dir() {
+                stack.push(path.clone());
+                format!("dir {mode:o}")
+            } else if meta.is_symlink() {
+                format!("link {:?}", std::fs::read_link(&path).unwrap())
+            } else {
+                format!(
+                    "file {mode:o} {}",
+                    hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
+                )
+            };
+            out.push((path, what));
+        }
+    }
+    out.sort();
+    out
 }
 
 #[tokio::test]
@@ -1136,191 +1984,6 @@ async fn delegate_over_chat_wire() {
 #[tokio::test]
 async fn delegate_over_messages_wire() {
     run_delegate(true).await;
-}
-
-async fn run_delegate(messages_wire: bool) {
-    let state_args = json!({});
-    let act_args = json!({"action": "type", "element": 0, "text": "hello"});
-    let key_args = json!({"action": "key", "key": "return"});
-    let sub = if messages_wire {
-        vec![
-            (
-                "messages",
-                messages_tool_use("toolu_1", "computer_state", &state_args),
-            ),
-            (
-                "messages",
-                messages_tool_use("toolu_2", "computer_act", &act_args),
-            ),
-            (
-                "messages",
-                messages_tool_use("toolu_3", "computer_act", &key_args),
-            ),
-            ("messages", messages_text("Typed hello into Mousepad.")),
-        ]
-    } else {
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("toolu_1", "computer_state", &state_args),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("toolu_2", "computer_act", &act_args),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("toolu_3", "computer_act", &key_args),
-            ),
-            ("chat/completions", chat_text("Typed hello into Mousepad.")),
-        ]
-    };
-    let mut script = vec![(
-        "chat/completions",
-        chat_tool_call(
-            "call_d",
-            "delegate_computer",
-            &json!({"task": "type hello into the editor"}),
-        ),
-    )];
-    script.extend(sub);
-    script.push(("chat/completions", chat_text("Done.")));
-    let h = Harness::boot(Boot {
-        script,
-        anthropic_messages: messages_wire,
-        automation: Automation::Desk,
-        ..Boot::default()
-    })
-    .await;
-    let mut agents = h.agents().await;
-    let mut session = h.session().await;
-    let agent_id = create_agent(&mut agents).await;
-    let mut events = session
-        .events(authed(pb::EventsRequest { from_offset: 0 }))
-        .await
-        .unwrap()
-        .into_inner();
-    send(&mut agents, &agent_id, "type hello", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
-
-    let end = turn_end(&entries);
-    assert!(end.ok, "{}", end.error);
-    let sub_calls: Vec<&pb::ToolCall> = entries
-        .iter()
-        .filter_map(|e| match &e.body {
-            Some(Body::ToolCall(c)) if c.subagent == "computer" => Some(c),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(sub_calls.len(), 3);
-    let sub_texts: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| match &e.body {
-            Some(Body::Text(t)) if t.subagent == "computer" => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        sub_texts.contains(&"Typed hello into Mousepad."),
-        "{sub_texts:?}"
-    );
-    let state = tool_result(&entries, "toolu_1");
-    assert!(
-        state.text.starts_with("Windows (frontmost first):"),
-        "{}",
-        state.text
-    );
-    assert!(state.image.starts_with(b"\x89PNG"));
-    let delegate = tool_result(&entries, "call_d");
-    assert!(
-        delegate.text.starts_with("Typed hello into Mousepad."),
-        "{}",
-        delegate.text
-    );
-    assert!(delegate.image.starts_with(b"\x89PNG"));
-
-    let calls: Vec<(String, Value)> = h
-        .desk_log
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(n, _)| n.starts_with("desk_computer_"))
-        .cloned()
-        .collect();
-    let names: Vec<&str> = calls.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "desk_computer_state",
-            "desk_computer_act",
-            "desk_computer_act",
-            "desk_computer_end"
-        ]
-    );
-    let session = calls[0].1["session"].as_str().unwrap().to_owned();
-    assert!(session.starts_with("cu-"), "{session}");
-    assert!(
-        calls.iter().all(|(_, a)| a["session"] == session.as_str()),
-        "{calls:?}"
-    );
-    assert_eq!(
-        (
-            &calls[1].1["action"],
-            &calls[1].1["element"],
-            &calls[1].1["text"]
-        ),
-        (&json!("type"), &json!(0), &json!("hello"))
-    );
-    assert_eq!(calls[2].1["key"], "return");
-
-    let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let main_after = if messages_wire {
-        let vision = gw_bodies(&h.gw_log, "/v1/messages");
-        assert_eq!(vision.len(), 4);
-        assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-        let last_user = vision[3]["messages"].as_array().unwrap().last().unwrap();
-        assert_eq!(last_user["content"][0]["type"], "tool_result");
-        assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
-        assert_eq!(chats.len(), 2);
-        &chats[1]
-    } else {
-        assert_eq!(chats.len(), 6);
-        assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
-        let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
-        assert_eq!(models[1..5], ["anthropic/claude-sonnet-5"; 4]);
-        let msgs = chats[4]["messages"].as_array().unwrap();
-        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
-        assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
-        let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
-        assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
-        &chats[5]
-    };
-    let main_tool = main_after["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["role"] == "tool")
-        .unwrap();
-    assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
-    assert!(!main_after.to_string().contains(PNG));
-
-    let mut actions = Vec::new();
-    while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(500), events.message())
-        .await
-        .map(Result::transpose)
-    {
-        if let Some(event::Body::ComputerAction(a)) = ev.body {
-            assert_eq!(a.agent_id, agent_id);
-            actions.push((a.action, a.text));
-        }
-    }
-    assert_eq!(
-        actions,
-        [
-            ("type".to_owned(), "hello".to_owned()),
-            ("key".to_owned(), "return".to_owned())
-        ]
-    );
 }
 
 #[tokio::test]
@@ -1533,35 +2196,6 @@ async fn the_reasoning_effort_rides_on_every_model_request_and_is_off_by_default
             );
         }
     }
-}
-
-async fn delegate_once(
-    checkpoint_nudge: Option<Duration>,
-    reasoning_effort: Option<&'static str>,
-) -> Harness {
-    Harness::boot(Boot {
-        script: vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_d",
-                    "delegate_computer",
-                    &json!({"task": "look at the screen"}),
-                ),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("toolu_1", "computer_state", &json!({})),
-            ),
-            ("chat/completions", chat_text("Looked.")),
-            ("chat/completions", chat_text("Done.")),
-        ],
-        automation: Automation::Desk,
-        checkpoint_nudge,
-        reasoning_effort,
-        ..Boot::default()
-    })
-    .await
 }
 
 #[tokio::test]
@@ -2186,83 +2820,6 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     assert!(ran.iter().any(|t| t == "demo_run"), "{ran:?}");
 }
 
-async fn respond(
-    agents: &mut AgentsClient<Channel>,
-    agent_id: &str,
-    approval_id: &str,
-    approve: bool,
-    text: &str,
-) -> Result<(), tonic::Status> {
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.into(),
-            approval_id: approval_id.into(),
-            approve,
-            text: text.into(),
-        }))
-        .await
-        .map(drop)
-}
-
-async fn asked_approval(
-    agents: &mut AgentsClient<Channel>,
-    agent_id: &str,
-    kind: &str,
-    after_seq: u64,
-) -> pb::ApprovalRequest {
-    wait_transcript(agents, agent_id, after_seq, |entries| {
-        entries.iter().find_map(|e| match &e.body {
-            Some(Body::Approval(a)) if a.kind == kind => Some(a.clone()),
-            _ => None,
-        })
-    })
-    .await
-}
-
-async fn turn_ends(
-    agents: &mut AgentsClient<Channel>,
-    agent_id: &str,
-    n: usize,
-) -> Vec<pb::TranscriptEntry> {
-    wait_transcript(agents, agent_id, 0, |entries| {
-        let ends = entries
-            .iter()
-            .filter(|e| matches!(e.body, Some(Body::TurnEnd(_))))
-            .count();
-        (ends >= n).then(|| entries.to_vec())
-    })
-    .await
-}
-
-async fn wait_transcript<T>(
-    agents: &mut AgentsClient<Channel>,
-    agent_id: &str,
-    after_seq: u64,
-    mut found: impl FnMut(&[pb::TranscriptEntry]) -> Option<T>,
-) -> T {
-    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
-    for _ in 0..500 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.into(),
-                after_seq: entries.last().map_or(after_seq, |e| e.seq),
-                limit: 1000,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        entries.extend(page.entries);
-        if page.has_more {
-            continue;
-        }
-        if let Some(t) = found(&entries) {
-            return t;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("agent {agent_id}'s transcript never showed what the test waits for");
-}
-
 #[tokio::test]
 async fn delete_cancels_a_running_turn_and_removes_the_agent() {
     let h = Harness::start(vec![
@@ -2554,62 +3111,6 @@ async fn screen_is_unimplemented_on_the_agent() {
     assert_eq!(err.code(), Code::Unimplemented);
 }
 
-fn exec_start(command: &str) -> pb::ExecClientFrame {
-    pb::ExecClientFrame {
-        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
-            command: command.into(),
-            tty: None,
-        })),
-    }
-}
-
-fn exec_frame(body: exec_client_frame::Body) -> pb::ExecClientFrame {
-    pb::ExecClientFrame { body: Some(body) }
-}
-
-fn exec_stdin(data: &[u8]) -> pb::ExecClientFrame {
-    pb::ExecClientFrame {
-        body: Some(exec_client_frame::Body::Stdin(
-            bytes::Bytes::copy_from_slice(data),
-        )),
-    }
-}
-
-async fn exec_output(
-    mut frames: tonic::Streaming<pb::ExecServerFrame>,
-) -> (Vec<u8>, Vec<u8>, Option<i32>) {
-    let (mut out, mut err, mut code) = (Vec::new(), Vec::new(), None);
-    while let Some(frame) = frames.message().await.unwrap() {
-        assert!(code.is_none(), "a frame after the exit code");
-        match frame.body.unwrap() {
-            exec_server_frame::Body::Stdout(d) => out.extend_from_slice(&d),
-            exec_server_frame::Body::Stderr(d) => err.extend_from_slice(&d),
-            exec_server_frame::Body::ExitCode(c) => code = Some(c),
-        }
-    }
-    (out, err, code)
-}
-
-async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, Option<i32>) {
-    let (tx, rx) = mpsc::channel(4);
-    tx.send(exec_start(command)).await.unwrap();
-    tokio::spawn(async move {
-        for chunk in stdin.chunks(64 << 10) {
-            if tx.send(exec_stdin(chunk)).await.is_err() {
-                return;
-            }
-        }
-    });
-    let frames = h
-        .session()
-        .await
-        .exec(authed(ReceiverStream::new(rx)))
-        .await
-        .unwrap()
-        .into_inner();
-    exec_output(frames).await
-}
-
 #[tokio::test]
 async fn exec_carries_binary_stdio_until_stdin_ends_and_returns_the_exit_code() {
     let h = Harness::start(Vec::new()).await;
@@ -2737,34 +3238,6 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
     assert!(text.contains("go\r\n40 120\r\n"), "{text}");
     assert!(err.is_empty());
     assert_eq!(code, Some(4));
-}
-
-async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (String, String) {
-    let (tx, rx) = mpsc::channel(2);
-    tx.send(exec_frame(exec_client_frame::Body::Start(pb::ExecStart {
-        command: command.into(),
-        tty: Some(pb::ExecTty {
-            term: term.into(),
-            window: Some(pb::ExecWindow { rows: 24, cols: 80 }),
-            terminfo: terminfo.into(),
-        }),
-    })))
-    .await
-    .unwrap();
-    drop(tx);
-    let frames = h
-        .session()
-        .await
-        .exec(authed(ReceiverStream::new(rx)))
-        .await
-        .unwrap()
-        .into_inner();
-    let (out, err, code) = exec_output(frames).await;
-    assert_eq!(code, Some(0));
-    (
-        String::from_utf8(out).unwrap(),
-        String::from_utf8(err).unwrap(),
-    )
 }
 
 #[tokio::test]
@@ -2951,24 +3424,6 @@ async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
     assert_eq!((out.len(), code), (chunk.len(), Some(0)));
 }
 
-async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
-    let target = endpoint.trim_start_matches("http://").to_owned();
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
-        let mut conns = tokio::task::JoinSet::new();
-        loop {
-            let (mut down, _) = listener.accept().await.unwrap();
-            let target = target.clone();
-            conns.spawn(async move {
-                let mut up = TcpStream::connect(target).await.unwrap();
-                let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
-            });
-        }
-    });
-    (addr, task)
-}
-
 #[tokio::test]
 async fn exec_needs_start_first() {
     let h = Harness::start(Vec::new()).await;
@@ -3063,129 +3518,6 @@ async fn vision_main_model_gets_a_screenshot_tool() {
     let looks = driver_calls(&h, "desk_look");
     assert_eq!(looks.len(), 1, "{looks:?}");
     assert!(looks[0].get("session").is_none(), "{looks:?}");
-}
-
-struct McpClient {
-    http: reqwest::Client,
-    url: String,
-    session: String,
-    next_id: u64,
-    credential: Option<String>,
-    instructions: String,
-}
-
-impl McpClient {
-    async fn connect(h: &Harness) -> Self {
-        Self::connect_as(h, None).await
-    }
-
-    async fn connect_as(h: &Harness, credential: Option<String>) -> Self {
-        let mut c = Self::detached(format!("{}/mcp", h.endpoint), String::new(), credential);
-        let resp = c.post(Self::initialize()).await;
-        assert_eq!(resp.status(), 200);
-        c.session = resp.headers()["mcp-session-id"]
-            .to_str()
-            .unwrap()
-            .to_owned();
-        let init: Value = resp.json().await.unwrap();
-        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(init["result"]["serverInfo"]["name"], "cocoonbox-agent");
-        assert!(init["result"]["capabilities"]["tools"].is_object());
-        c.instructions = init["result"]["instructions"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
-        let note = c
-            .post(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-            .await;
-        assert_eq!(note.status(), 202);
-        c
-    }
-
-    fn detached(url: String, session: String, credential: Option<String>) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            url,
-            session,
-            next_id: 0,
-            credential,
-            instructions: String::new(),
-        }
-    }
-
-    fn initialize() -> Value {
-        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
-            "protocolVersion": "2025-06-18",
-            "capabilities": {},
-            "clientInfo": {"name": "test-client", "version": "1.0"}
-        }})
-    }
-
-    async fn close(&self) -> reqwest::Response {
-        self.authorize(self.http.delete(&self.url))
-            .send()
-            .await
-            .unwrap()
-    }
-
-    async fn post(&self, body: Value) -> reqwest::Response {
-        let req = self
-            .http
-            .post(&self.url)
-            .header("accept", "application/json, text/event-stream")
-            .json(&body);
-        self.authorize(req).send().await.unwrap()
-    }
-
-    fn authorize(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req = req.header(
-            "x-cocoonbox-credential",
-            self.credential.as_deref().unwrap_or(owner()),
-        );
-        if !self.session.is_empty() {
-            req = req.header("mcp-session-id", &self.session);
-        }
-        req
-    }
-
-    fn tool_names(listed: &Value) -> Vec<String> {
-        let mut names: Vec<String> = listed["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap().to_owned())
-            .collect();
-        names.sort_unstable();
-        names
-    }
-
-    async fn rpc(&mut self, method: &str, params: Value) -> Value {
-        self.next_id += 1;
-        let resp = self
-            .post(json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}))
-            .await;
-        assert_eq!(resp.status(), 200);
-        let reply: Value = resp.json().await.unwrap();
-        assert_eq!(reply["id"], self.next_id);
-        reply
-    }
-
-    async fn call(&mut self, name: &str, arguments: Value) -> Value {
-        let reply = self
-            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
-            .await;
-        reply["result"].clone()
-    }
-}
-
-fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
-    h.desk_log
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(n, _)| n == name)
-        .map(|(_, a)| a.clone())
-        .collect()
 }
 
 #[tokio::test]
@@ -3322,51 +3654,6 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
 #[tokio::test]
 async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     reports_result_logs_and_a_screenshot(&Harness::with_desk(Vec::new()).await, "script_run").await;
-}
-
-async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
-    let mut mcp = McpClient::connect(h).await;
-
-    let ok = mcp
-        .call(
-            tool,
-            json!({"code": "export function main(p) { return p }", "params": {"text": "hi"}}),
-        )
-        .await;
-    assert_eq!(ok["isError"], false, "{ok}");
-    let report: Value = serde_json::from_str(mcp_text(&ok)).unwrap();
-    assert_eq!(report["result"], json!({"params": {"text": "hi"}}));
-    assert_eq!(report["exit_code"], 0);
-    assert_eq!(report["snapshot"], "outline");
-    assert!(
-        report["logs"].as_str().unwrap().starts_with("ran "),
-        "{report}"
-    );
-    assert!(report.get("error").is_none(), "{report}");
-    let shot = PathBuf::from(report["screenshot_path"].as_str().unwrap());
-    assert!(shot.exists(), "{}", shot.display());
-    assert_eq!(ok["content"][1]["type"], "image");
-
-    std::fs::write(h.workspace.join("flow.mjs"), "boom").unwrap();
-    let failed = mcp
-        .call(tool, json!({"script": "flow.mjs", "screenshot": false}))
-        .await;
-    assert_eq!(failed["isError"], true, "{failed}");
-    let report: Value = serde_json::from_str(mcp_text(&failed)).unwrap();
-    assert_eq!(
-        report["error"],
-        json!({"kind": "exception", "message": "Error: boom"})
-    );
-    assert_eq!(report["exit_code"], 1);
-    assert!(report.get("screenshot_path").is_none(), "{report}");
-    assert_eq!(failed["content"].as_array().unwrap().len(), 1);
-
-    let refused = mcp
-        .call(tool, json!({"code": "1", "script": "flow.mjs"}))
-        .await;
-    assert_eq!(refused["isError"], true, "{refused}");
-    let missing = mcp.call(tool, json!({"script": "nope.mjs"})).await;
-    assert!(mcp_text(&missing).contains("does not exist"), "{missing}");
 }
 
 #[tokio::test]
@@ -4832,245 +5119,6 @@ async fn delete_closes_the_agents_chrome_window() {
     );
 }
 
-type Objects = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
-#[derive(Default)]
-struct Gets {
-    live: AtomicUsize,
-    peak: AtomicUsize,
-}
-
-async fn fake_store() -> (String, Objects) {
-    let (base, objects, _) = slow_store(Duration::ZERO).await;
-    (base, objects)
-}
-
-async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
-    let gets = Arc::new(Gets::default());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}/bucket", listener.local_addr().unwrap());
-    let objects = Objects::default();
-    let shared = Arc::clone(&objects);
-    let counted = Arc::clone(&gets);
-    tokio::spawn(async move {
-        loop {
-            let (stream, _) = listener.accept().await.unwrap();
-            let objects = Arc::clone(&shared);
-            let gets = Arc::clone(&counted);
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
-                loop {
-                    let Some(HttpRequest { line, body, .. }) = read_http(&mut reader).await else {
-                        return;
-                    };
-                    let mut parts = line.split_whitespace();
-                    let method = parts.next().unwrap_or_default().to_owned();
-                    let name = parts
-                        .next()
-                        .unwrap_or_default()
-                        .rsplit('/')
-                        .next()
-                        .unwrap()
-                        .to_owned();
-                    let (status, reply) = if method == "PUT" {
-                        objects.lock().unwrap().insert(name, body);
-                        ("200 OK", Vec::new())
-                    } else {
-                        let live = gets.live.fetch_add(1, Ordering::SeqCst) + 1;
-                        gets.peak.fetch_max(live, Ordering::SeqCst);
-                        tokio::time::sleep(get_delay).await;
-                        gets.live.fetch_sub(1, Ordering::SeqCst);
-                        match objects.lock().unwrap().get(&name) {
-                            Some(b) => ("200 OK", b.clone()),
-                            None => ("404 Not Found", Vec::new()),
-                        }
-                    };
-                    let head = format!(
-                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n",
-                        reply.len()
-                    );
-                    let stream = reader.get_mut();
-                    stream.write_all(head.as_bytes()).await.unwrap();
-                    stream.write_all(&reply).await.unwrap();
-                }
-            });
-        }
-    });
-    (base, objects, gets)
-}
-
-fn state_key() -> pb::StateKey {
-    pb::StateKey {
-        key: vec![42u8; 32].into(),
-        key_id: "k1".into(),
-    }
-}
-
-async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateClient<Channel> {
-    cocoonbox_agent::pb::state_client::StateClient::new(h.channel().await)
-}
-
-async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
-    try_plan(h, consistency, parent).await.unwrap()
-}
-
-async fn try_plan(
-    h: &Harness,
-    consistency: pb::Consistency,
-    parent: &str,
-) -> Result<pb::PlanResponse, tonic::Status> {
-    state_client(h)
-        .await
-        .plan(authed(pb::PlanRequest {
-            key: Some(state_key()),
-            consistency: consistency.into(),
-            parent: parent.into(),
-        }))
-        .await
-        .map(tonic::Response::into_inner)
-}
-
-async fn upload_missing(
-    h: &Harness,
-    base: &str,
-    objects: &Objects,
-    planned: &pb::PlanResponse,
-) -> usize {
-    let missing: Vec<String> = {
-        let have = objects.lock().unwrap();
-        planned
-            .chunks
-            .iter()
-            .filter(|c| !have.contains_key(&c.id))
-            .map(|c| c.id.clone())
-            .collect()
-    };
-    let put = |id: &str| pb::PresignedPut {
-        chunk_id: id.into(),
-        url: format!("{base}/{id}"),
-        headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
-    };
-    let stream = state_client(h)
-        .await
-        .upload(authed(pb::UploadRequest {
-            snapshot_id: planned.snapshot_id.clone(),
-            key: Some(state_key()),
-            puts: missing.iter().map(|id| put(id)).collect(),
-            manifest: Some(put(&planned.snapshot_id)),
-        }))
-        .await
-        .unwrap()
-        .into_inner();
-    let last = last_message(stream).await.unwrap();
-    assert!(last.finished);
-    assert_eq!(last.manifest_id, planned.snapshot_id);
-    assert_eq!(last.done_chunks as usize, missing.len() + 1);
-    missing.len()
-}
-
-async fn restore(
-    h: &Harness,
-    base: &str,
-    objects: &Objects,
-    manifest_id: &str,
-) -> Result<pb::TransferProgress, tonic::Status> {
-    let gets = objects
-        .lock()
-        .unwrap()
-        .keys()
-        .filter(|k| *k != manifest_id)
-        .map(|k| pb::PresignedGet {
-            chunk_id: k.clone(),
-            url: format!("{base}/{k}"),
-        })
-        .collect();
-    restore_pages(h, base, manifest_id, gets, None).await
-}
-
-async fn restore_pages(
-    h: &Harness,
-    base: &str,
-    manifest_id: &str,
-    gets: Vec<pb::PresignedGet>,
-    scope: Option<pb::RestoreScope>,
-) -> Result<pb::TransferProgress, tonic::Status> {
-    let scoped = scope.is_some();
-    let mut reqs = vec![pb::RestoreRequest {
-        key: Some(state_key()),
-        manifest: Some(pb::PresignedGet {
-            chunk_id: manifest_id.into(),
-            url: format!("{base}/{manifest_id}"),
-        }),
-        gets: Vec::new(),
-        scope,
-    }];
-    reqs.extend(gets.chunks(2).map(|page| pb::RestoreRequest {
-        gets: page.to_vec(),
-        ..Default::default()
-    }));
-    let mut state = state_client(h).await;
-    let reqs = authed(tokio_stream::iter(reqs));
-    let stream = if scoped {
-        state.restore_paths(reqs).await
-    } else {
-        state.restore(reqs).await
-    }?
-    .into_inner();
-    last_message(stream).await
-}
-
-async fn last_message<T>(mut stream: tonic::Streaming<T>) -> Result<T, tonic::Status> {
-    let mut last = None;
-    while let Some(m) = stream.message().await? {
-        last = Some(m);
-    }
-    Ok(last.unwrap())
-}
-
-fn manifest_of(objects: &Objects, id: &str) -> Value {
-    let keys = cocoonbox_agent::state::crypto::Keys::derive(&state_key().key).unwrap();
-    let sealed = objects.lock().unwrap()[id].clone();
-    serde_json::from_slice(&keys.open(id, &sealed, 1 << 30).unwrap()).unwrap()
-}
-
-fn known_files(h: &Harness) -> Value {
-    serde_json::from_slice::<Value>(&std::fs::read(known_chunks(h)).unwrap()).unwrap()["files"]
-        .take()
-}
-
-fn known_chunks(h: &Harness) -> PathBuf {
-    h.dir.path().join("state/state/known-chunks.json")
-}
-
-fn chunks_of(m: &Value, path: &str) -> Value {
-    m["files"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["path"] == path)
-        .unwrap()["chunks"]
-        .clone()
-}
-
-fn write_script(path: &Path, body: &str) {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::fs::rename(&tmp, path).unwrap();
-}
-
-fn noise(n: usize, seed: u64) -> Vec<u8> {
-    let mut x = seed;
-    (0..n)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            x as u8
-        })
-        .collect()
-}
-
 #[tokio::test]
 async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
     let h = Harness::start(Vec::new()).await;
@@ -6228,52 +6276,4 @@ async fn restore_paths_refuses_bad_scopes_before_writing() {
         );
     }
     assert!(!h.home.join("Restored").exists());
-}
-
-async fn restore_paths(
-    h: &Harness,
-    base: &str,
-    manifest_id: &str,
-    paths: &[String],
-    target: &str,
-    chunks: &[String],
-) -> Result<pb::TransferProgress, tonic::Status> {
-    let gets = chunks
-        .iter()
-        .map(|id| pb::PresignedGet {
-            chunk_id: id.clone(),
-            url: format!("{base}/{id}"),
-        })
-        .collect();
-    let scope = pb::RestoreScope {
-        paths: paths.to_vec(),
-        target: target.into(),
-    };
-    restore_pages(h, base, manifest_id, gets, Some(scope)).await
-}
-
-fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
-    let mut out = Vec::new();
-    let mut stack: Vec<PathBuf> = roots.iter().map(|r| r.to_path_buf()).collect();
-    while let Some(dir) = stack.pop() {
-        for e in std::fs::read_dir(&dir).unwrap() {
-            let path = e.unwrap().path();
-            let meta = std::fs::symlink_metadata(&path).unwrap();
-            let mode = meta.permissions().mode();
-            let what = if meta.is_dir() {
-                stack.push(path.clone());
-                format!("dir {mode:o}")
-            } else if meta.is_symlink() {
-                format!("link {:?}", std::fs::read_link(&path).unwrap())
-            } else {
-                format!(
-                    "file {mode:o} {}",
-                    hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
-                )
-            };
-            out.push((path, what));
-        }
-    }
-    out.sort();
-    out
 }
