@@ -220,6 +220,13 @@ elif verb == "status":
                 for k, p in paths.items() if os.path.exists(p) for info in [load(p, {})]]
     reply({"ok": True, "sessions": sessions})
 
+elif verb == "restart":
+    if not session or entry.get("copy") != "busy":
+        fail("refused", "no box CLI session for this repo", 3)
+    session["status"] = "working"
+    save(session_path, session)
+    reply({"ok": True, "delivery": "started", "tmux": f"cb-off-{key}-{session['cli']}"})
+
 elif verb == "end":
     session["status"] = "stopped"
     save(session_path, session)

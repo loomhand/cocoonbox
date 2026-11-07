@@ -305,7 +305,13 @@ public struct Offloader: Sendable {
         var back = entries.last { $0.kind == "back" && $0.offloadID == record.id }
         var since = entries.map(\.seq).max() ?? 0
         if back == nil {
-            _ = try await verb(["send", "--repo", key, "--back"] + (interrupt ? ["--interrupt"] : []), input: ExecFrames([.bytes(Data())]))
+            let ask = ["send", "--repo", key, "--back"] + (interrupt ? ["--interrupt"] : [])
+            do {
+                _ = try await verb(ask, input: ExecFrames([.bytes(Data())]))
+            } catch OffloadError.box(let code, _, _) where code == "refused" {
+                _ = try await verb(["restart", "--repo", key])
+                _ = try await verb(ask, input: ExecFrames([.bytes(Data())]))
+            }
             progress("asked the box agent for its hand-over; waiting")
         }
         let deadline = Date().addingTimeInterval(Self.backWait)

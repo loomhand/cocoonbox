@@ -64,6 +64,17 @@ import Testing
         #expect(back.handover.contains("From: box"))
     }
 
+    @Test func backRestartsABoxCLIThatEndedWithoutHandingBack() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("ended")
+        let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
+        let session = box.boxHome.appendingPathComponent(".local/share/cocoonbox/offload/\(outcome.record.repo)/session.json")
+        try Data(try String(contentsOf: session, encoding: .utf8).replacingOccurrences(of: "\"working\"", with: "\"stopped\"").utf8).write(to: session)
+        try box.autoBack(true)
+        defer { try? box.autoBack(false) }
+        #expect(try await box.offloader().back(outcome.record.repo, interrupt: false).landing == .unchanged)
+    }
+
     @Test func aLocalEditDuringTheOffloadMergesCleanly() async throws {
         let box = try await Harness.shared()
         let repo = try box.repo("merge")
