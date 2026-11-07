@@ -205,6 +205,7 @@ fn png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, String> {
     let mut enc = png::Encoder::new(&mut out, width, height);
     enc.set_color(png::ColorType::Rgb);
     enc.set_depth(png::BitDepth::Eight);
+    enc.set_compression(png::Compression::Fastest);
     enc.write_header()
         .and_then(|mut w| w.write_image_data(rgb))
         .map_err(|e| format!("encode PNG: {e}"))?;
