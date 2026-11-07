@@ -42,7 +42,6 @@ const (
 
 	columnTenant   = "tenant_token"
 	columnStateKey = "state_key"
-	createdPayload = "user:"
 
 	passwordIDP = "password"
 	// githubIDP is signup's provider; an outside provider of that name would reach the users signup made.
@@ -293,7 +292,7 @@ read:
 				s.mu.Unlock()
 				continue read
 			}
-			check := unread(s.spliced[spliced:], byID, gone)
+			check := slices.DeleteFunc(slices.Clone(s.spliced[spliced:]), func(id string) bool { _, ok := byID[id]; return ok || gone[id] })
 			if len(check) == 0 {
 				break
 			}
@@ -1019,14 +1018,14 @@ func (s *Service) loadUser(ctx context.Context, id string) error {
 		s.spliced = append(s.spliced, id)
 		s.byID[id] = r
 		addTokens(s.byToken, r)
-		var hooks []func(string)
-		if !slices.Equal(s.boxes[id], boxes) {
-			hooks = slices.Clone(s.onBoxes)
-		}
+		changed := !slices.Equal(s.boxes[id], boxes)
 		s.boxes[id] = boxes
+		hooks := slices.Clone(s.onBoxes)
 		s.mu.Unlock()
-		for _, fn := range hooks {
-			fn(id)
+		if changed {
+			for _, fn := range hooks {
+				fn(id)
+			}
 		}
 		return nil
 	}
@@ -1157,16 +1156,6 @@ func dropTokens(byToken map[string]tokenOwner, r record) {
 	for _, d := range r.devices {
 		delete(byToken, d.sha256)
 	}
-}
-
-func unread(ids []string, byID map[string]record, gone map[string]bool) []string {
-	var out []string
-	for _, id := range ids {
-		if _, ok := byID[id]; !ok && !gone[id] {
-			out = append(out, id)
-		}
-	}
-	return out
 }
 
 // liveIn returns key's context in lives, made under parent when it has none or its last one ended with the parent.

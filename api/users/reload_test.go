@@ -237,21 +237,23 @@ func TestAFullLoadDoesNotBringBackAUserDeletedWhileItRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
 	}
-	gate := trace(t, svc, dsn, &deleteRaceGate{oneEntered: make(chan struct{}), oneResume: make(chan struct{}), allEntered: make(chan struct{}), allResume: make(chan struct{})})
+	one := &reloadGate{sql: "FROM boxes WHERE owner", entered: make(chan struct{}), resume: make(chan struct{})}
+	all := &reloadGate{sql: "FROM boxes ORDER BY", entered: make(chan struct{}), resume: make(chan struct{})}
+	trace(t, svc, dsn, multitracer.New(one, all))
 	oneDone := make(chan error, 1)
 	go func() { _, err := svc.Ensure(t.Context(), "firebase", outsideID); oneDone <- err }()
-	<-gate.oneEntered
+	<-one.entered
 	if err := other.Delete(t.Context(), owner.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 	allDone := make(chan error, 1)
 	go func() { allDone <- svc.Load(t.Context()) }()
-	<-gate.allEntered
-	close(gate.oneResume)
+	<-all.entered
+	close(one.resume)
 	if err := <-oneDone; err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	close(gate.allResume)
+	close(all.resume)
 	if err := <-allDone; err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -495,26 +497,6 @@ func (g *creationNotifyGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d
 }
 
 func (*creationNotifyGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
-
-type deleteRaceGate struct {
-	oneEntered, oneResume  chan struct{}
-	allEntered, allResume  chan struct{}
-	oneBlocked, allBlocked atomic.Bool
-}
-
-func (g *deleteRaceGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if strings.Contains(data.SQL, "FROM boxes WHERE owner") && g.oneBlocked.CompareAndSwap(false, true) {
-		close(g.oneEntered)
-		<-g.oneResume
-	}
-	if strings.Contains(data.SQL, "FROM boxes ORDER BY") && g.allBlocked.CompareAndSwap(false, true) {
-		close(g.allEntered)
-		<-g.allResume
-	}
-	return ctx
-}
-
-func (*deleteRaceGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 type signIns struct {
 	token, device, deviceID string

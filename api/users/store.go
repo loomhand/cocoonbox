@@ -17,11 +17,12 @@ import (
 )
 
 const (
-	migrationLock = 0x63627573 // "cbus"
-	notifyChannel = "cocoonbox_users"
-	endedChannel  = "cocoonbox_ended"
-	notifyTimeout = 5 * time.Second
-	unlockTimeout = 5 * time.Second
+	migrationLock  = 0x63627573 // "cbus"
+	notifyChannel  = "cocoonbox_users"
+	endedChannel   = "cocoonbox_ended"
+	createdPayload = "user:"
+	notifyTimeout  = 5 * time.Second
+	unlockTimeout  = 5 * time.Second
 
 	uniqueViolation = "23505"
 
