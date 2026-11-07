@@ -124,7 +124,7 @@ public enum Plugin {
 
         ## BACK (on the Mac)
 
-        Run `cocoonbox back` in the repo with a 10-minute command timeout. It waits up to that long
+        Run `cocoonbox back` in the repo with a 10-minute command timeout. It waits up to 9 minutes
         for the box agent's hand-over, then lands the box's work against the snapshot taken at the
         offload. Report how the code landed:
         fast-forward, merged (applied uncommitted), unchanged, or a branch with conflicts, where

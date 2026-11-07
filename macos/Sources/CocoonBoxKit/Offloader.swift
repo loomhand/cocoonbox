@@ -103,7 +103,7 @@ public struct BackOutcome: Sendable {
 // Offloader is the Mac packer: preflight, snapshot, transfer and back, over Session.Exec, rsync and git.
 public struct Offloader: Sendable {
     // backWait is how long back waits for the hand-over: one read's longest wait.
-    static let backWait: TimeInterval = 600
+    static let backWait: TimeInterval = 540
 
     public let connection: BoxConnection
     public let box: Cocoonbox_Control_V1_Box
