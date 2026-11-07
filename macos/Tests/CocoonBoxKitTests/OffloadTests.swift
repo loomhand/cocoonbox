@@ -368,7 +368,7 @@ import Testing
         #expect(findings.contains { $0.check == "vpn-hosts" && $0.detail.contains("10.9.8.7") })
     }
 
-    @Test func secretsLFSAndSubmodulesWarn() throws {
+    @Test func secretsAndSubmodulesWarnAndLFSBlocks() throws {
         let repo = try Harness.repo(Harness.temporary("secrets"))
         try Data(".env.local\n".utf8).write(to: repo.appendingPathComponent(".gitignore"))
         try Data("A=1\n".utf8).write(to: repo.appendingPathComponent(".env.local"))
@@ -382,7 +382,7 @@ import Testing
         #expect(Preflight.secrets(git, ignored: try git.ignored(), handover: Handover.template, optedIn: ["file:.env.local"], environment: Harness.environment).isEmpty)
         try Data("*.bin filter=lfs diff=lfs merge=lfs -text\n".utf8).write(to: repo.appendingPathComponent(".gitattributes"))
         try Data("[submodule \"x\"]\n".utf8).write(to: repo.appendingPathComponent(".gitmodules"))
-        #expect(Preflight.carried(repo).map(\.check) == ["lfs", "submodules"])
+        #expect(Preflight.carried(repo).map { "\($0.check) \($0.outcome)" } == ["lfs block", "submodules warn"])
         #expect(Preflight.size(600_000_000)?.outcome == .confirm && Preflight.size(1_000) == nil)
     }
 

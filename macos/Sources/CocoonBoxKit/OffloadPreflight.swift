@@ -216,7 +216,7 @@ enum Preflight {
     static func carried(_ top: URL) -> [Finding] {
         var findings: [Finding] = []
         if let attributes = try? String(contentsOf: top.appendingPathComponent(".gitattributes"), encoding: .utf8), attributes.contains("filter=lfs") {
-            findings.append(Finding(check: "lfs", outcome: .warn, detail: "Git LFS files are not carried; the box copy holds their pointers"))
+            findings.append(Finding(check: "lfs", outcome: .block, detail: "the repo uses Git LFS, which the box lacks, so the box copy cannot match this repo"))
         }
         if FileManager.default.fileExists(atPath: top.appendingPathComponent(".gitmodules").path) {
             findings.append(Finding(check: "submodules", outcome: .warn, detail: "submodule contents are not carried; the box copy holds only their commits"))
