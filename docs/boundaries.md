@@ -30,7 +30,7 @@ Each component is a stack; a layer calls only the interface of the layer directl
 ```
 gRPC services (Boxes) · edge (gRPC + MCP proxy)
         │ machines.Machines: lifecycle (Ensure / Get / List / Hibernate / Delete / Watch / Changes),
-        │   Address, SetMeta, Deliver, SetCredentials, SetEgress
+        │   Address, SetMeta, Deliver, SetCredentials, DropMissing, SetEgress
         │ machines.Tenants: PutTenant / DeleteTenant
         ▼
 backend: sandboxd (claims and tenants on the cbsbx instance, one client)

@@ -114,7 +114,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
   - `State.PlanPages` is `State.Plan` streamed: the first message carries the snapshot fields and every message a page of up to 2048 chunks. The api takes each page as it arrives and keeps only its compact chunk list. It falls back to the unary `Plan` when an agent answers `UNIMPLEMENTED`, which works up to the dialer's 64 MiB, about 930k chunks. The agent keeps serving `Plan` for an api from before `PlanPages`.
 - **Save and restore speed (v15, measured 2026-10-02 on the bench host's dev box):**
   - Plan reuses a file's chunks when its size, mtime and ctime all match the stamp recorded at the last upload, without reading it. ctime is set by the kernel on every write, truncate, rename and chmod, so a write that restores size and mtime (npm extracts with a fixed 1985 mtime) is still reread. Quiesced plans reuse too.
-  - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk, and an SQLite file read through the online backup, is recorded for comparison only and never reused (WAL commits leave the main file's stamp unchanged).
+  - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a restore seeds them from the restored manifest, and a machine with neither has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk, and an SQLite file read through the online backup, is recorded for comparison only and never reused (WAL commits leave the main file's stamp unchanged).
   - Plan reads up to 4 files at a time. `-wal` and `-journal` sidecars go in a second pass, after their database.
   - Plan lists chunks in manifest order, so Restore pages arrive in the order files are written.
   - A plan whose manifest exceeds 256 MiB, the most a restore opens, fails with that reason instead of saving a snapshot no restore can read.
@@ -157,7 +157,7 @@ The adversary is the box's own user (`user`, unprivileged), or root inside one b
 
 **Credential format.** `x-cocoonbox-credential: v1.<b64url(key_id|box_id|wake_id|exp_unix)>.<b64url(ed25519 signature over the first part)>`: base64url without padding, `|`-separated fields.
 - `key_id` is the first 16 hex of sha256(public key).
-- The edge caches one credential per (box, `wake_id`) and re-signs when less than 2 min of `exp` remain, so the hot path is a map lookup; a stream signs once at open.
+- The edge caches one credential per (box, `wake_id`) and re-signs when less than 2 min of `exp` remain, so the hot path is a map lookup; a stream signs once at open. Since shares the cache key is (box, `wake_id`, principal).
 - The edge strips any client-sent `x-cocoonbox-credential` on gRPC and MCP. During the switch it sent both headers until no image set `EDGE_TOKEN`; the agent and the edge have since dropped the token.
 
 **Where the agent learns its identity and the edge key.** On every boot and wake, the api writes `/run/cocoonbox-identity/identity`, `{"box_id":…,"wake_id":<random>,"key_id":…,"public_key":<ed25519>}`, through sandboxd exec (silkd over vsock, running as root in the guest).
@@ -227,7 +227,7 @@ The cost is one local stdio hop per message, next to a 230 ms WAN round trip; th
 
 **Direct fallback.** The Connect sheet recipes stay for users who don't install the CLI. The `claude` recipe may use `"headersHelper": "cocoonbox mcp-headers"`, which prints `{"Authorization":"Bearer …"}` to the CLI's pipe, instead of `${COCOONBOX_TOKEN}`. There is no `cocoonbox env` command: an exported token lives in every child of that shell.
 
-**One URL without the CLI (2026-10-28).** The api serves what the bridge does for the hibernated box at `https://<endpoint>/cocoonbox.mcp` (contracts "Unified MCP"), so a client on any computer adds one URL and signs in through the browser (OAuth for agents), with no token in its config. It answers `initialize` and `tools/list` without the box, from the tool list it recorded for the box's image, and a box-tool call wakes the default box with `box_ensure` and waits for it, at most 25 s, as the bridge does. The console's Connect your agent page (`/cb/setup`) gives each client's commands. The bridge keeps what this URL leaves out: the `box` argument on box tools, the box's resources and, for a user token, Connect's connector tools. An agent that signs in asks for the `connect` scope too, and its grant gets the tools of only the accounts the user ticks on the consent page, so a grant can get the computer without the user's accounts: the boundary is a per-grant permission, not a second URL.
+**One URL without the CLI (2026-10-28).** The api serves what the bridge does for the hibernated box at `https://<endpoint>/cocoonbox.mcp` (contracts "Unified MCP"), so a client on any computer adds one URL and signs in through the browser (OAuth for agents), with no token in its config. It answers `initialize` and `tools/list` without the box, from the tool list it recorded for the box's image, and a box-tool call wakes the default box with `box_ensure` and waits for it, at most 25 s, as the bridge does. The console's Connect your agent page (`/cb/setup`) gives each client's commands. The bridge keeps what this URL leaves out: the box's resources and, for a user token, Connect's connector tools. An agent that signs in asks for the `connect` scope too, and its grant gets the tools of only the accounts the user ticks on the consent page, so a grant can get the computer without the user's accounts: the boundary is a per-grant permission, not a second URL.
 
 ### 13.3 Control MCP (api)
 
@@ -414,10 +414,11 @@ The agent is reachable only through `GET /v1/sandboxes/{id}/ports/7443` with `Up
 The interface change, backend-neutral:
 
 ```go
-// Endpoint is how to reach a machine's agent; Key changes when the machine moves.
+// Endpoint reaches a machine's agent and its RFB server; Key changes when the machine moves.
 type Endpoint struct {
-	Key  string
-	Dial func(ctx context.Context) (net.Conn, error)
+	Key    string
+	Dial   DialFunc
+	Screen DialFunc
 }
 Address(ctx context.Context, id string) (Endpoint, error)
 ```
@@ -810,7 +811,7 @@ Scope:
   `Hibernate` does not check `activeFor` and would supersede a save (`operation.go`), so the alarm path waits. For the same reason a Tick is never an operation.
 - **Heartbeat:** every 5 min, Tick each ready box (`ready`, `provision.go`) of `routines.users`, in the shape of the `saveStale` loop (`save.go`).
 - **Pre-hibernate Tick** in `Hibernate` (`boxes.go`, before `s.machines.Hibernate`), with a 2 s timeout. If it fails, the box hibernates anyway and keeps its last alarm.
-- **Attachment:** today the edge records a reach through `Resolver.Reached` for every routed call except `Session.Events` and an MCP GET (15.13); nothing counts open streams.
+- **Attachment:** today the edge records a reach through `Resolver.Reached` for every routed call except `Session.Events` and an MCP GET (15.13).
   - The edge counts open `Session.Events` and `Session.Screen` streams per box in `pump` (`edge/proxy.go`), and stamps MCP requests (`edge/mcp.go`).
   - It reports through a `Presence` interface declared in `boxes` and wired in `main`, so the edge still imports no service code.
   - A box is attached while such a stream is open, or for 10 min after an MCP call.
@@ -985,8 +986,8 @@ A user asked for a routine at 09:00 while the Mac is closed. This is the alarm o
   - nothing reached the box since that wake;
   - the box is running with no operation (a save, a Rebase); otherwise the api waits.
 
-  A reach is any call the edge routes to the box once `Resolve` succeeds (agent gRPC, MCP, the screen, a share's viewer; `Resolver.Reached`), or the owner's `Ensure`. It makes the box user-driven, and the box stays up until someone hibernates it or `user_idle_hibernate` does (contracts.md "Idle user boxes"). The api's own calls are no reach: provisioning and saves skip the edge, the alarm's `Ensure` carries a context mark, and ending a share's sessions calls `Resolve` without `Reached`.
-- **Hot path:** each routed edge call and each `Ensure` takes one mutex and one map write. The claim path is untouched.
+  A reach is any call the edge routes to the box once `Resolve` succeeds (agent gRPC, MCP, the screen, a share's viewer; `Resolver.Reached`) except one that only watches it (`Session.Events`, a box MCP GET), or the owner's `Ensure`. It makes the box user-driven, and the box stays up until someone hibernates it or `user_idle_hibernate` does (contracts.md "Idle user boxes"). The api's own calls are no reach: provisioning and saves skip the edge, the alarm's `Ensure` carries a context mark, and ending a share's sessions calls `Resolve` without `Reached`.
+- **Hot path:** each routed edge call and each `Ensure` takes a few mutexes and map writes, and at most one shared-table write per box per 30 s. The claim path is untouched.
 - **Restart:** `next_at`, `last_wake_at` and `sleep_at` persist, so a restart keeps the next wake and a pending hibernate. The pass after a reach clears `sleep_at`, so a hand-over survives a restart too. Only a reach in the last 15 s before a restart is lost; the restart cuts every edge stream, and clients that reconnect count again.
 - **Cron:** robfig/cron v3, five fields, run on the wall clock of `tz`. Alone, the library skips a spring-forward time and fires a fall-back time twice (2026-03-08 02:30 and 2026-11-01 01:30 in America/New_York). On the wall clock, a skipped time fires once at the end of the gap, and a repeated time fires once at its first occurrence, as 15.10 asks. `time.Date` picks the second occurrence east of UTC (Europe/Berlin, Australia/Sydney), so the code looks for the earlier instant itself; the tests cover New York, Berlin and Sydney. `SetWakeSchedule` refuses a cron whose next 512 times come closer than the floor.
 - **Limits** (api config `wake`): `max_schedules` is 3 per user, `floor` 1 h, and `max_awake_for` 1 h. `awake_for` defaults to 15 min and is at least 1 min.
@@ -1015,7 +1016,7 @@ Constraints:
 - Credentials (boundaries.md): no OAuth token or API key is at rest in the VM. The VM's disk, its hibernate memory images and its state uploads all count as at rest.
 - Every call on an account is authorized against that account's user, whichever door it comes through.
 - The box is one trust domain. Whatever the agent can reach, the model's shell can reach too, so the boundary is the broker's policy, not the agent.
-- A grant is bound to boxes, never to agents: every agent in a box shares its files, its browser and its network. A grant serves all of the user's boxes by default, or the boxes the user picks. Separate boxes are the way to keep a work account away from a personal one.
+- A grant is bound to boxes, never to agents: every agent in a box shares its files, its browser and its network. A grant serves all of the user's boxes. Separate boxes are the way to keep a work account away from a personal one.
 - Connect covers API access only. Website sessions in the box's Chrome are separate state: connecting Gmail does not sign the box's browser in to Gmail. Anything in the box can read those sessions (Chrome on Linux encrypts cookies with a fixed key, and the agent has a shell and CDP), so product copy never says that agents cannot read the browser's logins.
 
 References:
@@ -1163,7 +1164,7 @@ Doors:
 
 | Door | Caller | Auth | Serves |
 |---|---|---|---|
-| `Connectors` gRPC (`proto/cocoonbox/control/v1/connectors.proto`) | the app | user token | catalog, connect, policy, approvals, activity, disconnect |
+| `Connectors` gRPC (`proto/cocoonbox/control/v1/connectors.proto`) | the app | user token | catalog, list, policy, approvals, activity; connect and disconnect are console pages |
 | `https://<endpoint>/cocoonbox.mcp/connect` | the bridge (mode B) | user token | the user's connector tools |
 | `https://<endpoint>/cocoonbox.mcp` (unified MCP) | an agent signed in with OAuth | the grant's access token | the tools of the accounts the user ticked for the grant, as mode B serves them |
 | `http://10.203.0.1:18091/mcp`, host-internal | the box (mode A) | a per-machine key that the box never holds | the box owner's connector tools |
@@ -1189,7 +1190,7 @@ How it works:
 - The token is the GitHub App user token (8 h), limited to the repositories the user selected.
 - The value is literal (`sandboxd/egress/proxy.go:378-389`), so the broker precomputes `Basic base64(x-access-token:<token>)`.
 - The api pushes the claim's entries with `PATCH /v1/sandboxes/{id}/env`:
-  - on connect, disconnect and a lost grant, to every machine of the user;
+  - on connect, disconnect and a lost grant, to the user's running machines; a hibernated one gets them at its wake;
   - every minute, to running machines, refreshing a token with less than 5 min left;
   - at a wake, in parallel with the wake call, without waiting for it;
   - when each incarnation is provisioned (claim, wake, Rebase target). This push is the authoritative one.
@@ -1237,7 +1238,7 @@ Accepted on cbsbx 2026-10-03: #302 (9 steps) and the placeholder gate with real 
   - The new refresh token is stored before the new access token is used.
   
   Egress-injected grants (M5.2) also refresh on a timer, but only while their box runs.
-- **A lost grant.** On `invalid_grant`, or on a vendor 401 after a refresh, the grant becomes `needs_reconnect`. Its tools then answer "Reconnect GitHub in the CocoonBox app", and the app shows a badge.
+- **A lost grant.** On `invalid_grant`, or on a vendor 401 after a refresh, the grant becomes `needs_reconnect`. Its tools then answer "Reconnect <vendor> in CocoonBox: <endpoint>/cb/connect.", and the app shows a badge.
 - **Disconnect** in the app makes the broker:
   1. revoke the grant at the vendor: Google `oauth2/revoke`, GitHub `DELETE /applications/{client_id}/grant`, Slack `auth.revoke` (Notion documents no revoke call);
   2. delete the record;
@@ -1252,7 +1253,7 @@ Accepted on cbsbx 2026-10-03: #302 (9 steps) and the placeholder gate with real 
 
 ### 16.5 Scopes, consent and approvals
 
-- **Scopes.** Connect asks for the read scopes by default, and "Read and write" asks for more. Changing it later runs consent again with only the added scopes (Google's `include_granted_scopes`).
+- **Scopes.** Connect asks for the scopes of the catalog entry, or those the vendor's discovery names; there is no read-only choice.
 - **Per-tool policy.** Each tool is `allow`, `ask` or `off`.
   - By default, tools with `readOnlyHint` are `allow` and all others are `ask`. This is Muse's default: writes need approval.
   - The user changes the policy per tool in the app.
@@ -1282,8 +1283,8 @@ Accepted on cbsbx 2026-10-03: #302 (9 steps) and the placeholder gate with real 
 
 - **Audit record.** The broker writes one per call:
   - time, user, connector and tool;
-  - door and caller (`box:<agent id>` or `mcp:<client name>`);
-  - the policy decision: `allow`, `approved`, `denied` or `off`;
+  - door and caller (`box:<machine id>`, `mcp:<client name>`, or the door for a disconnect);
+  - the decision: `allow`, `approved`, `denied`, `off`, `approval_required`, `needs_reconnect` or `disconnect`;
   - upstream status, latency and sizes;
   - a hash of the arguments. Never the arguments or the results themselves.
   
@@ -1830,7 +1831,7 @@ Hot path: none. Token checks read an in-memory index, updated by every write; th
   - a new box can start from another box's snapshot with no copy and no re-encryption (§19 create-from);
   - deleting the user drops the key, which makes every snapshot of every box unreadable at once, and removes the prefix (since 49ad10b3).
 - **What it costs:** a box that is compromised during a save or restore, when it holds the key in memory, can keep it and read the user's other boxes' state. Accepted: the boxes belong to one user and are one trust domain. The alternative (per-box keys derived from the user key) keeps boxes apart but loses cross-box dedup and cheap copies.
-- **Concurrency:** saves of two boxes of one user both update `<user>/index.json`. The state layer's lock moves from per box to per user for the index write (plan, upload and restore of different boxes still run in parallel).
+- **Concurrency:** saves of two boxes of one user both update `<user>/index.json`. The state layer's lock moves from per box to per user for the index write (plan, upload and restore of different boxes still run in parallel; with `cluster.shared` the per-user database lock serializes a user's saves).
 - **GC** (§25.3): a chunk is garbage only when no kept snapshot of any of the user's boxes references it, so the sweep walks every box's snapshot records under the user.
 - **Migration** of the users that exist (one box each): the user's state key is that box's current key, so no chunk is re-encrypted and no chunk id changes. Copy the objects from `<box>/...` to the new layout server-side (S3 CopyObject), switch the api, verify a restore of each box from the new layout, then delete the old prefix. Do not run it during an open save.
 
@@ -1838,9 +1839,9 @@ Hot path: none. Save and restore read one sealed key per request instead of one 
 
 As built (api 185e1bf, b8de45e; switched 2026-10-02):
 - **Key:** columns `users.state_key_id` (plain) and `users.state_key_sealed` (AES-256-GCM under the master key, additional data `users|<id>|state_key`), migration 0002. The key id is stored because the agent ignores its `known-chunks.json` stamps under another key id and the api ignores an index under another key id; keeping the box key's id kept both. `Create` draws a key (id `users:<id>:<unix>`); a user without a key cannot save or restore (no key is created on first use, so a user that missed the migration fails loudly instead of starting a second key). Deleting the user drops the row and with it the key; since 49ad10b3 it also removes every object under `<user id>/`.
-- **Layout and locks** as above. A save or restore holds the box's lock; the index write is a read-modify-write under a lock on `<user>/index.json`, so two boxes of one user save in parallel and neither drops the other's chunks.
+- **Layout and locks** as above. A save or restore holds the box's lock; the index write is a read-modify-write under a lock on `<user>/index.json`, so two boxes of one user save in parallel (one after the other with `cluster.shared`) and neither drops the other's chunks.
 - **Migration:** the boxes of that time moved to this layout on 2026-10-02, with their keys and chunk ids unchanged.
-- **Commit failures** (185e1bf): the commit writes the index first (its chunks are stored once Upload returns), then the record, then the head, each retried 3 times (1 s, 2 s). If a commit still fails after a successful Upload, the agent's known chunks are ahead of the index, and the next save's Upload is refused with InvalidArgument (`plan again without a parent`). The api then plans once more without a parent, which spools every chunk. The heal keeps no state, so it survives an api restart; it costs one full read of the tree, once.
+- **Commit failures** (185e1bf): the commit writes the record, then the index (its chunks are stored once Upload returns), the timeline and the head, each retried 3 times (1 s, 2 s). If a commit still fails after a successful Upload, the agent's known chunks are ahead of the index, and the next save's Upload is refused with InvalidArgument (`plan again without a parent`). The api then plans once more without a parent, which spools every chunk. The heal keeps no state, so it survives an api restart; it costs one full read of the tree, once.
 
 Acceptance on the bench host:
 1. After the migration, the two existing boxes each restore (a same-image Rebase of one, the other on its own upgrade) from `<user>/boxes/<box>/head.json`, with the same snapshot id and file count as before.
@@ -2056,7 +2057,7 @@ Prune (per box, under the box's lock):
 2. Write the timeline without the dropped snapshots.
 3. Delete their records, then their manifests, and every record or manifest the timeline does not name (a commit that failed after Upload).
 
-A crash between 2 and 3 leaves orphan records; the next prune finds them by listing `snapshots/`. Every reader (restore, browse, the mark) takes the kept set from the timeline, never from the listing.
+A crash between 2 and 3 leaves orphan records; the next prune finds them by listing `snapshots/`. Browse and the mark take the kept set from the timeline, or from the records of a box without one; the mark also marks every record still too young to settle, and a restore reads its record by id.
 
 Sweep (per user, after the prune):
 1. **Mark, without a lock.** Read every box's timeline and the chunk list of every record it names. Records are immutable and pruning only removes, so what is marked stays true; only saves that commit later add references. List `<user>/chunks/`.
@@ -2069,7 +2070,7 @@ Sweep (per user, after the prune):
 
 Why it is safe against the agent's stamp reuse: the agent's known chunks are those of its last upload, which is the box's head, and the head is always kept. If they are ever ahead of the index, the existing heal applies (Upload refused, plan again without a parent, §22.5).
 
-Cost: the mark reads every kept record, about 5 MiB each at that box's size, so it runs once a day and never under the lock. The lock covers the new records, one index write and the deletes; that user's saves wait for it. The locks are in-process; with `cluster.shared`, saves and the GC also take the per-user database lock.
+Cost: the mark reads every kept record, about 5 MiB each at that box's size, so it runs once a day and never under the in-process lock. The lock covers the new records, one index write and the deletes; that user's saves wait for it. The locks are in-process; with `cluster.shared`, every save and the whole GC pass, the mark included, also hold the per-user database lock.
 
 The store interface gains `Delete` (S3 `DeleteObjects`), and `List`, which the migration already used, moves into it and returns each object's size.
 
@@ -2104,7 +2105,7 @@ Decided and built 2026-10-03. Where it differs from the plan above:
 - **A separate RPC, `State.RestorePaths`,** carries the scope (`RestoreRequest.scope`). An agent without it answers `UNIMPLEMENTED`, so an old agent never sees a scope it would ignore and run as a full restore; the operation then fails with "this box's agent cannot restore files; upgrade the box first". The agent ships with cbdesk:v20.
 - **Lock and pin.** The operation (`PHASE_RESTORING_FILES`, so the edge still serves the box) pins the snapshot from its start to its end. The box lock is held only for the check that the timeline keeps it, which orders the check after a prune this api is already running; a prune that starts later, on any api, sees the pin. A save of the box waits for the operation, as for any other operation.
 - **Agent** (`agent/src/state/mod.rs` `restore_paths`, `select`, `scope_path`; toolhost `state_place`): the target is one folder name that does not start with `.`; each path is absolute, under a root, without `.`, `..` or empty parts, and must name something in the manifest, else `INVALID_ARGUMENT` before anything is written. Entries are staged as `user` in `~/Restored/.cb-restore-<uuid>/<box path without its leading slash>`, with modes and mtimes; directory modes are set last, deepest first. `state_place` then creates `~/Restored/<target>` (or `-2`, `-3`, … up to 100) with `mkdir`, which fails when the name exists, and renames the staging directory onto that empty directory, so it never replaces an entry. The final message carries `TransferProgress.target`. No quiesce, no desktop or Chrome restart, no agent.db write, no `recover`.
-- **Changed files** (`PlanResponse.changed_files`): files whose chunk list differs from the last upload's for the same path, plus new and removed paths. Unchanged stamps count as unchanged without a read. Files read through an SQLite backup or changed within 1 s of the walk are now recorded in `known-chunks.json` with `compare_only`, so they are compared but still never reused. Absent when the agent has no stamps for the key (the first plan on a machine, a plan without a parent); the timeline then shows only bytes added.
+- **Changed files** (`PlanResponse.changed_files`): files whose chunk list differs from the last upload's for the same path, plus new and removed paths. Unchanged stamps count as unchanged without a read. Files read through an SQLite backup or changed within 1 s of the walk are now recorded in `known-chunks.json` with `compare_only`, so they are compared but still never reused. Absent when the agent has no stamps for the key (the first plan on a machine no restore seeded, a plan without a parent); the timeline then shows only bytes added.
 - **`ListSnapshots`** reads `timeline.json` (built by the GC; a box without it is listed from its records). `changed_files` is a new optional timeline field; an older api drops it from entries it rewrites.
 
 Hot path: none on claim, screen or edge. A save pays one map entry per re-read file for `changed_files`. Browse and RestorePaths are their own calls.
