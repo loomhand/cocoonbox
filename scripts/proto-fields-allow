@@ -1,0 +1,2 @@
+Usage.cached_input_tokens       # agents in box images send it; the app shows no cache use yet
+ModelUsage.cached_input_tokens  # agents in box images send it; the app shows no cache use yet

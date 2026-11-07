@@ -1,0 +1,41 @@
+name: race
+
+on:
+  schedule:
+    - cron: "17 19 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+        env:
+          POSTGRES_PASSWORD: cbtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Repeat the concurrent suites under the race detector
+        working-directory: api
+        env:
+          GOWORK: "off"
+          COCOONBOX_TEST_DSN: postgres://postgres:cbtest@localhost:5432/postgres?sslmode=disable
+        run: go test -race -count=5 -cpu 1,4 -timeout 90m ./boxes/... ./cluster/... ./machines/... ./edge/... ./dialer/... ./connect/... ./flows/...

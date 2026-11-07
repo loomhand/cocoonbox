@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Fails when no hand-written Go, Rust or Swift code reads or writes a proto field; scripts/proto-fields-allow lists the kept ones."""
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SOURCES = ["api", "agent/src", "agent/examples", "macos/Sources"]
+GENERATED = ("api/gen/", "macos/Sources/CocoonBoxKit/Generated/")
+FIELD = re.compile(r"^\s*(?:repeated\s+|optional\s+)?(?:map<[^>]+>|[\w.]+)\s+(\w+)\s*=\s*\d+")
+MESSAGE = re.compile(r"^\s*message\s+(\w+)")
+ACRONYMS = {"id": "ID", "url": "URL", "http": "HTTP", "https": "HTTPS", "json": "JSON", "uri": "URI"}
+
+
+def camel(name: str, upper: bool) -> str:
+    parts = name.split("_")
+    head = parts[0].capitalize() if upper else parts[0]
+    tail = (p.capitalize() if upper else ACRONYMS.get(p, p.capitalize()) for p in parts[1:])
+    return head + "".join(tail)
+
+
+def fields() -> list[tuple[str, str]]:
+    out = []
+    for proto in sorted((ROOT / "proto").rglob("*.proto")):
+        stack: list[tuple[str, int]] = []
+        depth = 0
+        for line in proto.read_text().splitlines():
+            line = line.split("//")[0]
+            m = MESSAGE.match(line)
+            if m:
+                stack.append((m.group(1), depth))
+            elif stack and not line.lstrip().startswith(("reserved", "enum", "oneof", "rpc", "option")):
+                f = FIELD.match(line)
+                if f and stack:
+                    out.append((stack[-1][0], f.group(1)))
+            depth += line.count("{") - line.count("}")
+            while stack and depth <= stack[-1][1]:
+                stack.pop()
+    return out
+
+
+def corpus() -> str:
+    files = subprocess.run(["git", "ls-files", "-z", *SOURCES], cwd=ROOT, capture_output=True, check=True).stdout
+    texts = []
+    for name in files.decode().split("\0"):
+        if name.endswith((".go", ".rs", ".swift")) and not name.startswith(GENERATED) and not name.endswith("_test.go") and "/tests/" not in name and "/Tests/" not in name:
+            texts.append((ROOT / name).read_text())
+    return "\n".join(texts)
+
+
+def read(text: str, name: str) -> bool:
+    go, swift = camel(name, True), camel(name, False)
+    patterns = [
+        rf"\.Get{go}\(",
+        rf"\.{go}\b(?!\s*=[^=])",
+        rf"_{go}\b",
+        rf"\.{name}\b(?!\s*=[^=])",
+        rf"::{go}\(",
+        rf"\.{swift}\b(?!\s*=[^=])",
+    ]
+    return any(re.search(p, text) for p in patterns)
+
+
+def written(text: str, name: str) -> bool:
+    go, swift = camel(name, True), camel(name, False)
+    patterns = [
+        rf"(?<![.\w]){go}:",
+        rf"\.{go}\s*=[^=]",
+        rf"(?<![.\w]){name}(?:,|:|\s*}})",
+        rf"\.{name}\s*=[^=]",
+        rf"\.{swift}\s*=[^=]",
+        rf"::{go}\(",
+        rf"\.{swift}\(",
+    ]
+    return any(re.search(p, text) for p in patterns)
+
+
+def main() -> int:
+    allow = {line.split("#")[0].strip() for line in (ROOT / "scripts/proto-fields-allow").read_text().splitlines()} - {""}
+    text = corpus()
+    unread = [f"{m}.{f}" for m, f in fields() if f"{m}.{f}" not in allow and not read(text, f)]
+    unwritten = [f"{m}.{f}" for m, f in fields() if f"{m}.{f}" not in allow and not written(text, f)]
+    stale = sorted(a for a in allow if a not in {f"{m}.{f}" for m, f in fields()})
+    for f in unread:
+        print(f"proto-fields: {f} is read by no Go, Rust or Swift code; cut it (reserve its number) or allow it")
+    for f in unwritten:
+        print(f"proto-fields: {f} is written by no Go, Rust or Swift code; cut it (reserve its number) or allow it")
+    for a in stale:
+        print(f"proto-fields: {a} in proto-fields-allow names no field")
+    return 1 if unread or unwritten or stale else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
