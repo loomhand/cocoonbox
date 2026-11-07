@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,10 +37,9 @@ var (
 	errUnreachable = status.Error(codes.Unavailable, "box agent unreachable")
 )
 
-// Grants checks the OAuth access tokens of agents and lists the boxes each grant created.
+// Grants checks the OAuth access tokens of agents.
 type Grants interface {
 	Authenticate(ctx context.Context, header string) (oauth.Grant, error)
-	Boxes(ctx context.Context, grant string) ([]string, error)
 	Challenge(invalid bool) string
 }
 
@@ -209,15 +207,8 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	if !slices.Contains(g.Chosen, boxID) {
-		ids, listErr := m.grants.Boxes(rt.ctx, g.ID)
-		switch {
-		case listErr != nil:
-			log.WithFunc("edge.MCP.grantRoute").Errorf(r.Context(), listErr, "list the boxes of grant %s", g.ID)
-			return rt, status.Error(codes.Unavailable, "reading the client's boxes failed")
-		case !slices.Contains(ids, boxID):
-			return rt, errNoBox
-		}
+	if !g.Reaches(boxID) {
+		return rt, errNoBox
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, g.User, boxID); err == nil {
 		rt.left = m.reached(r, boxID)
