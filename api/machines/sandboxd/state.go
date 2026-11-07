@@ -16,9 +16,7 @@ const (
 	metaOwner       = "cb_owner"
 	metaClaimPrefix = "cb_meta_"
 
-	envMetaPrefix = "CB_META_"
-	envWakes      = "CB_WAKES"
-	envUpstream   = "EGRESS_UPSTREAM"
+	envUpstream = "EGRESS_UPSTREAM"
 
 	opClaim     = "claim"
 	opWake      = "wake"

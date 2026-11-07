@@ -161,6 +161,8 @@ type Machines interface {
 	Deliver(ctx context.Context, id string, identity Identity, keys map[string]*Secret) error
 	// SetCredentials applies c to the machine; flags change only while it runs.
 	SetCredentials(ctx context.Context, id string, c Credentials) error
+	// DropMissing removes the host-only entries the backend lost the values of and returns their names.
+	DropMissing(ctx context.Context, id string) ([]string, error)
 	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.
 	SetEgress(ctx context.Context, id, upstream string) error
 }

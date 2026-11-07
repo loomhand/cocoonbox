@@ -508,7 +508,7 @@ The service layer computes each incarnation's identity and hands it to the backe
 |---|---|
 | `Deliver`: gw key | a `guest: false` env entry `GW_KEY` (below) |
 | `Deliver`: identity | written by the backend to the §12 path, either through `POST /v1/sandboxes/{id}/exec` (runs as root in the guest through silkd; exec takes only the claim's own token, which the backend reads with the root by-id `GET /v1/sandboxes/{id}` at each call and never stores; the buffered exec has no stdin, so the file travels in the request `env` as `CB_STDIN`) or as guest env. How it is written is the backend's choice |
-| `Meta` / `SetMeta` | `guest: true` env entries `CB_META_<key>` (#268): readable with `GET …/env` and durable in `claims.json`. Claim metadata is immutable, and the values (wake id, flags) are not secret |
+| `Meta` / `SetMeta` | the api's machine record (the `cluster` machines table) since loomhand/cocoonbox#222; before, `guest: true` env entries `CB_META_<key>` (#268). Claim metadata is immutable, and the values (wake id, flags) are not secret |
 | `Incarnation` | a backend concern. It changes on claim, wake, unarchive and cold restart, and needs a per-claim boot counter in the sandbox row (upstream, 14.7). Until then, the backend derives it from `claimed_at`, `restarts` and its own wake count, kept in meta |
 
 - **H3 closes** inside the sandboxd `Deliver`.

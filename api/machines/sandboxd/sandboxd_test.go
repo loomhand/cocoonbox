@@ -105,18 +105,21 @@ func TestAClaimShowsAndClearsItsMissingEnv(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
-	secret := machines.Credentials{Secrets: map[string]*machines.Secret{"GW_KEY": {Value: "Bearer k"}}}
+	secret := machines.Credentials{Secrets: map[string]*machines.Secret{"GH_GIT": {Value: "Basic x", Hosts: []string{"github.com"}, Header: "Authorization"}}}
 	if err := b.SetCredentials(t.Context(), boxID, secret); err != nil {
 		t.Fatalf("SetCredentials: %v", err)
 	}
-	fake.lose("sb_1", "GW_KEY")
+	fake.lose("sb_1", "GH_GIT")
 
 	m, err := b.Get(t.Context(), boxID)
 	if err != nil || !m.EnvMissing {
 		t.Fatalf("Get after the node lost a value = %+v, %v; want EnvMissing", m, err)
 	}
-	if err := b.SetCredentials(t.Context(), boxID, secret); err != nil || fake.envOf("GW_KEY") != "Bearer k" {
+	if err := b.SetCredentials(t.Context(), boxID, secret); err != nil || fake.envOf("GH_GIT") != "Basic x" {
 		t.Fatalf("push of the unchanged value = %v, env %+v; want it written again", err, fake.env())
+	}
+	if in := fake.env()["GH_GIT"].Inject; in == nil || !slices.Equal(in.Hosts, []string{"github.com"}) || in.Header != "Authorization" {
+		t.Errorf("inject after the push = %+v, want the whole entry", in)
 	}
 	if m, err := b.Get(t.Context(), boxID); err != nil || m.EnvMissing {
 		t.Errorf("Get after the push = %+v, %v; want EnvMissing cleared", m, err)
@@ -159,6 +162,109 @@ func TestAnAPIWithNodesCallsNoOtherNode(t *testing.T) {
 	}
 	if n := peer.count("list"); n != 0 {
 		t.Errorf("lists on the peer = %d, want none", n)
+	}
+}
+
+func TestDropMissingRemovesWhatTheNodeLostAndNothingRefills(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"GH_GIT": {Value: "Basic x", Hosts: []string{"github.com"}}, "CBV_1": {Value: "v"}}}); err != nil {
+		t.Fatalf("SetCredentials: %v", err)
+	}
+	if err := b.SetEgress(t.Context(), boxID, "http://proxy:3128"); err != nil {
+		t.Fatalf("SetEgress: %v", err)
+	}
+	fake.lose("sb_1", "GH_GIT")
+	fake.lose("sb_1", "EGRESS_UPSTREAM")
+
+	dropped, err := b.DropMissing(t.Context(), boxID)
+	if err != nil || !slices.Equal(dropped, []string{"EGRESS_UPSTREAM", "GH_GIT"}) {
+		t.Fatalf("DropMissing = %v, %v", dropped, err)
+	}
+	if env := fake.env(); len(env) != 1 || env["CBV_1"].Value != "v" {
+		t.Errorf("env = %+v, want only the entry the node kept", env)
+	}
+	if m, err := b.Get(t.Context(), boxID); err != nil || m.EnvMissing || m.Routed {
+		t.Errorf("Get = %+v, %v; want nothing missing and no upstream", m, err)
+	}
+}
+
+func TestAListedRowWithoutAnIDChangesNothing(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.add(&fakeSandbox{row: row{Key: poolKey{Template: template}}})
+	b := newTestBackend(t, fake)
+	m := claimRunning(t, b)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if got, err := b.Get(t.Context(), boxID); err != nil || got.Node != m.Node {
+		t.Errorf("Get = %+v, %v", got, err)
+	}
+}
+
+func TestOwnerAnswersThatDisagreeOrABlipMoveNothing(t *testing.T) {
+	entry, peer, evil := newFakeSandboxd(t), newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer, evil}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	peer.mu.Lock()
+	sb := peer.sandboxes["sb_1"]
+	peer.mu.Unlock()
+	evil.add(&fakeSandbox{row: sb.row, token: sb.token})
+	peer.handOver(entry)
+
+	if _, err := b.Get(t.Context(), boxID); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != peer.addr() {
+		t.Errorf("owner = %+v, %v; want the machine kept on %s while nodes disagree", e, err, peer.addr())
+	}
+	evil.remove("sb_1")
+	peer.srv.Close()
+	asked := entry.count("owner")
+	if _, err := b.Get(t.Context(), boxID); err == nil {
+		t.Error("Get through a node that does not answer succeeded")
+	}
+	if entry.count("owner") != asked {
+		t.Error("a node that does not answer but stays in the mesh made the backend follow")
+	}
+}
+
+func TestNodesRefuseAnEntryPosingAsANodeAndAMachineOnANodeLeftOut(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	db := clustertest.Open(t)
+	opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: db, Nodes: []string{entry.addr()}}
+	if _, err := New(t.Context(), opts); err == nil {
+		t.Error("New accepted an entry node that advertises an address nodes lists")
+	}
+	claimRunning(t, newSharedBackend(t, entry, db))
+	opts.Nodes = []string{"10.0.0.9:7777"}
+	if _, err := New(t.Context(), opts); err == nil {
+		t.Error("New accepted a machine on a node nodes leaves out")
+	}
+}
+
+func TestARereadRefusesAnotherMachinesSandbox(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	fake.add(&fakeSandbox{row: row{ID: "sb_bob", Metadata: map[string]string{"cb_machine": "cb-bob", "cb_owner": "bob"}}})
+	if err := b.reread(t.Context(), boxID, fake.addr(), "sb_bob"); err == nil {
+		t.Error("reread bound a machine to another machine's sandbox")
+	}
+}
+
+func TestAFreshAPIFollowsAMachineWhoseClaimMovedToANodeThatListsIt(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	db := clustertest.Open(t)
+	claimRunning(t, newSharedBackend(t, entry, db))
+	peer.moveTo(entry)
+
+	fresh := openSharedBackend(t, entry, db)
+	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
+		t.Errorf("owner after a fresh api's first refresh = %+v, %v; want %s", e, err, entry.addr())
 	}
 }
 
@@ -278,8 +384,8 @@ func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 		t.Fatalf("Ensure of a hibernated box = %+v, %v, %v", w, action, err)
 	}
 	woken := waitState(t, b, boxID, w.Revision, machines.StateRunning)
-	if woken.Incarnation == m.Incarnation || fake.envOf("CB_WAKES") != "1" {
-		t.Errorf("incarnation %q -> %q, CB_WAKES %q", m.Incarnation, woken.Incarnation, fake.envOf("CB_WAKES"))
+	if woken.Incarnation == m.Incarnation {
+		t.Errorf("incarnation %q stayed after a wake", woken.Incarnation)
 	}
 }
 
@@ -419,14 +525,11 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
 		t.Fatalf("SetMeta: %v", err)
 	}
-	if v := fake.env()["CB_META_wake"]; v.Value != "inc|w1" || v.Guest != nil || fake.env()["GW_KEY"].Value != "Bearer sk-box" {
-		t.Errorf("env after SetMeta = %+v", fake.env())
+	if _, ok := fake.env()["CB_META_wake"]; ok || fake.count("patch") != 1 {
+		t.Errorf("env after SetMeta = %+v, want the meta kept off the claim", fake.env())
 	}
 	if m, _ := b.Get(t.Context(), boxID); m.Meta["wake"] != "inc|w1" {
 		t.Errorf("Meta = %v", m.Meta)
-	}
-	if err := b.SetMeta(t.Context(), boxID, "bad key", "x"); err == nil {
-		t.Error("SetMeta accepted a key that is no env name")
 	}
 }
 
@@ -1115,6 +1218,12 @@ func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
 	peer.handOver(entry)
 	peer.srv.Close()
+	entry.mu.Lock()
+	entry.peers = nil
+	entry.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
 	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
 	if err != nil || action != machines.ActionWoken {
 		t.Fatalf("Ensure after the node went = %+v, %v, %v, want the machine woken where it was adopted", w, action, err)
@@ -1199,8 +1308,8 @@ func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) 
 		t.Fatalf("the other api reads %+v, %v, want the running claim", m, err)
 	}
 	peer.handOver(entry)
-	if _, err := other.Get(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
-		t.Fatalf("Get on an api without the token = %v, want ErrNotFound", err)
+	if _, err := other.Get(t.Context(), boxID); err != nil {
+		t.Fatalf("Get on an api without the token = %v, want the recorded machine", err)
 	}
 	if _, err := rowOf(t, other, boxID); err != nil {
 		t.Fatalf("the api without the token dropped the machine: %v", err)
@@ -1485,6 +1594,17 @@ func (f *fakeSandboxd) handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/env", f.sandbox(func(w http.ResponseWriter, _ *http.Request, sb *fakeSandbox) {
+		out := map[string]envVar{}
+		for k, v := range sb.env {
+			if v.Guest != nil && !*v.Guest {
+				v.Value = ""
+			}
+			v.Missing = sb.missing[k]
+			out[k] = v
+		}
+		writeJSON(w, map[string]any{"env": out})
+	}))
 	mux.HandleFunc("PATCH /v1/sandboxes/{id}/env", f.sandbox(func(w http.ResponseWriter, r *http.Request, sb *fakeSandbox) {
 		var req struct {
 			Env map[string]*envVar `json:"env"`
@@ -1623,6 +1743,17 @@ func (f *fakeSandboxd) handOver(peer *fakeSandboxd) {
 	maps.Copy(peer.adoptable, claims)
 }
 
+// moveTo hands f's claims to peer live, as a node evacuation does.
+func (f *fakeSandboxd) moveTo(peer *fakeSandboxd) {
+	f.mu.Lock()
+	claims := f.sandboxes
+	f.sandboxes = map[string]*fakeSandbox{}
+	f.mu.Unlock()
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	maps.Copy(peer.sandboxes, claims)
+}
+
 func (f *fakeSandboxd) add(sb *fakeSandbox) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1640,7 +1771,10 @@ func (f *fakeSandboxd) lose(id, name string) {
 	v := sb.env[name]
 	v.Value = ""
 	sb.env[name] = v
-	sb.missing = map[string]bool{name: true}
+	if sb.missing == nil {
+		sb.missing = map[string]bool{}
+	}
+	sb.missing[name] = true
 	sb.row.EnvMissing = true
 }
 
