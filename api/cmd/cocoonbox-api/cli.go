@@ -147,11 +147,9 @@ func setPolicy(ctx context.Context, cfg *config.Config, name string, args []stri
 		return err
 	}
 	defer accounts.Close()
-	u, err := accounts.ByName(name)
+	u, err := userByNameOrID(accounts, name)
 	if err != nil {
-		if u, err = accounts.Get(name); err != nil {
-			return err
-		}
+		return err
 	}
 	if u, err = accounts.Update(ctx, u.ID, set); err != nil {
 		return err
@@ -259,4 +257,11 @@ func backfillHeads(ctx context.Context, cfg *config.Config, stdout io.Writer) er
 		}
 	}
 	return nil
+}
+
+func userByNameOrID(accounts *users.Service, ref string) (users.User, error) {
+	if u, err := accounts.ByName(ref); err == nil {
+		return u, nil
+	}
+	return accounts.Get(ref)
 }

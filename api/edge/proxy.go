@@ -25,8 +25,6 @@ import (
 const (
 	// HeaderBox names the target box of an agent call.
 	HeaderBox = "x-cocoonbox-box"
-	// MaxMessageSize bounds one proxied frame in either direction.
-	MaxMessageSize = dialer.MaxMessageSize
 
 	agentServicePrefix = "/cocoonbox.agent.v1."
 	stateServicePrefix = "/cocoonbox.agent.v1.State/"

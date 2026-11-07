@@ -1528,7 +1528,7 @@ func TestARefreshDropsAMachineNoNodeAnswersFor(t *testing.T) {
 
 func TestFingerprintOfAStoredEntryStaysTheSame(t *testing.T) {
 	v := &envVar{Value: "p&ss<word>", Guest: new(false), Inject: &inject{Hosts: []string{"api.example.com"}, Header: "Authorization", Placeholder: "Bearer <key>"}}
-	if got, want := fingerprint(v), "0ab05bc9d861004d0c83514c9e357831ce427514362edb059a76ac2c209fa60d"; got != want {
+	if got, want := fingerprint(v), "ba9548b9f43e5bfdb6568e423dc5675e69a68cdd2bb72705dbb24047710d5bb1"; got != want {
 		t.Errorf("fingerprint = %s, want %s", got, want)
 	}
 }

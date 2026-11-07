@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"iter"
 	"net"
 	"strings"
 	"testing"
@@ -208,7 +207,7 @@ func (bigPlan) PlanPages(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServ
 	return nil
 }
 
-func pages(fail error, reqs ...*agentv1.RestoreRequest) iter.Seq2[*agentv1.RestoreRequest, error] {
+func pages(fail error, reqs ...*agentv1.RestoreRequest) RestoreRequests {
 	return func(yield func(*agentv1.RestoreRequest, error) bool) {
 		for _, req := range reqs {
 			if !yield(req, nil) {

@@ -179,7 +179,7 @@ func main() {
 		grpc.UnknownServiceHandler(proxy.Handle),
 		grpc.ChainUnaryInterceptor(access.Unary, authn.Unary),
 		grpc.ChainStreamInterceptor(access.Stream, authn.Stream),
-		grpc.MaxRecvMsgSize(edge.MaxMessageSize),
+		grpc.MaxRecvMsgSize(dialer.MaxMessageSize),
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 	controlv1.RegisterSharesServer(server, shareSvc)

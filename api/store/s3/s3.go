@@ -23,7 +23,6 @@ import (
 )
 
 const (
-	defaultPresignTTL = 10 * time.Minute
 	maxGetTTL         = time.Hour
 	deleteConcurrency = 32
 	// deleteBatchSize is the most keys one DeleteObjects request takes.
@@ -62,7 +61,6 @@ func New(opts Options) (*S3, error) {
 	if opts.Bucket == "" || opts.Region == "" {
 		return nil, errors.New("s3 bucket and region must be set")
 	}
-	opts.PresignTTL = cmp.Or(opts.PresignTTL, defaultPresignTTL)
 	client, err := newClient(opts.Endpoint, opts)
 	if err != nil {
 		return nil, err

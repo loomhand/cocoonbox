@@ -437,7 +437,7 @@ type proxyEnv struct {
 
 func newProxyEnv(t *testing.T) *proxyEnv {
 	t.Helper()
-	agentSrv := grpc.NewServer(grpc.MaxRecvMsgSize(MaxMessageSize))
+	agentSrv := grpc.NewServer(grpc.MaxRecvMsgSize(dialer.MaxMessageSize))
 	env := newProxyEnvAt(t, "")
 	agentv1.RegisterSessionServer(agentSrv, env.agent)
 	env.resolver.addr = serve(t, agentSrv)
@@ -459,10 +459,10 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 		grpc.UnknownServiceHandler(proxy.Handle),
 		grpc.ChainUnaryInterceptor(authn.Unary),
 		grpc.ChainStreamInterceptor(authn.Stream),
-		grpc.MaxRecvMsgSize(MaxMessageSize),
+		grpc.MaxRecvMsgSize(dialer.MaxMessageSize),
 	)
 	conn, err := grpc.NewClient(serve(t, edgeSrv), grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize)))
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(dialer.MaxMessageSize)))
 	if err != nil {
 		t.Fatalf("dial edge: %v", err)
 	}

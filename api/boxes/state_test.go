@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"iter"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -443,7 +442,7 @@ func TestRestoreSendsChunkURLsInPages(t *testing.T) {
 
 func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 	const tonicDefault = 4 << 20
-	st, err := s3.New(s3.Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox-state", AccessKey: "ak", SecretKey: "sk"})
+	st, err := s3.New(s3.Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox-state", AccessKey: "ak", SecretKey: "sk", PresignTTL: time.Minute})
 	if err != nil {
 		t.Fatalf("s3: %v", err)
 	}
@@ -1630,15 +1629,15 @@ func (a *fakeAgent) Upload(ctx context.Context, _ string, ep machines.Endpoint, 
 	return final, nil
 }
 
-func (a *fakeAgent) Restore(ctx context.Context, _ string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Restore(ctx context.Context, _ string, ep machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	return a.serveRestore(ctx, ep, reqs, progress, &a.restores)
 }
 
-func (a *fakeAgent) RestorePaths(ctx context.Context, _ string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) RestorePaths(ctx context.Context, _ string, ep machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	return a.serveRestore(ctx, ep, reqs, progress, &a.pathRestores)
 }
 
-func (a *fakeAgent) serveRestore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc, calls *[]restoreCall) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) serveRestore(ctx context.Context, ep machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc, calls *[]restoreCall) (*agentv1.TransferProgress, error) {
 	call := restoreCall{addr: ep.Key}
 	for req, err := range reqs {
 		if err != nil {
@@ -1771,7 +1770,7 @@ type slowAgent struct {
 	fetched int
 }
 
-func (a *slowAgent) Restore(ctx context.Context, _ string, _ machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *slowAgent) Restore(ctx context.Context, _ string, _ machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	var urls []string
 	for req, err := range reqs {
 		if err != nil {

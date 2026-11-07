@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"iter"
 	"maps"
 	"regexp"
 	"slices"
@@ -50,8 +49,8 @@ var (
 type StateAgents interface {
 	Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest, page dialer.PlanPageFunc) error
 	Upload(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	Restore(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Restore(ctx context.Context, box string, ep machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs dialer.RestoreRequests, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
 // agentAuth stamps the credential of the agent a call goes to on its context, afresh for each call.
@@ -366,7 +365,7 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 }
 
 // restorePages yields first, then ids in pages of presigned GETs, each presigned just before it is sent.
-func (l *stateLayer) restorePages(ctx context.Context, p statePath, first *agentv1.RestoreRequest, ids []string) iter.Seq2[*agentv1.RestoreRequest, error] {
+func (l *stateLayer) restorePages(ctx context.Context, p statePath, first *agentv1.RestoreRequest, ids []string) dialer.RestoreRequests {
 	return func(yield func(*agentv1.RestoreRequest, error) bool) {
 		if !yield(first, nil) {
 			return

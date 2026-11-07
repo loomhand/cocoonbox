@@ -4,7 +4,6 @@ package sandboxd
 import (
 	"cmp"
 	"context"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -83,10 +82,9 @@ func (o Options) client() (*client, error) {
 	return newClient(o.URL, o.Token)
 }
 
-var (
-	_ machines.Machines = (*Backend)(nil)
-	_ machines.Tenants  = (*Backend)(nil)
-)
+type task func(context.Context) error
+
+var _ machines.Machines = (*Backend)(nil)
 
 // Backend implements machines.Machines and machines.Tenants on a sandboxd instance, or the mesh it enters, that holds only cocoonbox claims.
 type Backend struct {
@@ -588,7 +586,7 @@ func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool)
 }
 
 // run runs fn as op of machine id, begun at revision, off the caller's request, and ends the op when fn returns.
-func (b *Backend) run(id, op string, revision int64, fn func(context.Context) error) {
+func (b *Backend) run(id, op string, revision int64, fn task) {
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
 		defer cancel()
@@ -1338,7 +1336,7 @@ func (b *Backend) renew(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(context.Context) error) {
+func (b *Backend) loop(ctx context.Context, interval time.Duration, fn task) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1380,7 +1378,7 @@ func fingerprint(v *envVar) string {
 	if v == nil {
 		return ""
 	}
-	raw, _ := json.Marshal(v, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+	raw, _ := json.Marshal(v)
 	return utils.HashHex(string(raw))
 }
 

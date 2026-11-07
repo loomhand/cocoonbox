@@ -19,6 +19,8 @@ import (
 // ProgressFunc receives each progress message of a transfer.
 type ProgressFunc func(*agentv1.TransferProgress)
 
+type RestoreRequests = iter.Seq2[*agentv1.RestoreRequest, error]
+
 // PlanPageFunc receives each message of a plan: the first carries the snapshot, every one a page of its chunks.
 type PlanPageFunc func(*agentv1.PlanResponse) error
 
@@ -80,16 +82,16 @@ func (d *Dialer) Upload(ctx context.Context, box string, ep machines.Endpoint, r
 }
 
 // Restore sends reqs as the request stream of State.Restore and returns the final progress message; an error from reqs ends the call with it.
-func (d *Dialer) Restore(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+func (d *Dialer) Restore(ctx context.Context, box string, ep machines.Endpoint, reqs RestoreRequests, progress ProgressFunc) (*agentv1.TransferProgress, error) {
 	return d.restore(ctx, box, ep, agentv1.StateClient.Restore, reqs, progress)
 }
 
 // RestorePaths sends reqs as the request stream of State.RestorePaths, like Restore.
-func (d *Dialer) RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+func (d *Dialer) RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs RestoreRequests, progress ProgressFunc) (*agentv1.TransferProgress, error) {
 	return d.restore(ctx, box, ep, agentv1.StateClient.RestorePaths, reqs, progress)
 }
 
-func (d *Dialer) restore(ctx context.Context, box string, ep machines.Endpoint, open restoreCall, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+func (d *Dialer) restore(ctx context.Context, box string, ep machines.Endpoint, open restoreCall, reqs RestoreRequests, progress ProgressFunc) (*agentv1.TransferProgress, error) {
 	client, err := d.state(box, ep)
 	if err != nil {
 		return nil, err
@@ -119,7 +121,7 @@ func (d *Dialer) state(box string, ep machines.Endpoint) (agentv1.StateClient, e
 }
 
 // send writes reqs to stream and half-closes it; a failed Send leaves the reason to Recv.
-func send(stream grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], reqs iter.Seq2[*agentv1.RestoreRequest, error], cancel context.CancelFunc) error {
+func send(stream grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], reqs RestoreRequests, cancel context.CancelFunc) error {
 	for req, err := range reqs {
 		if err != nil {
 			cancel()

@@ -55,11 +55,9 @@ func rebaseBox(ctx context.Context, cfg *config.Config, args []string, stdout io
 		return err
 	}
 	defer accounts.Close()
-	u, err := accounts.ByName(args[0])
+	u, err := userByNameOrID(accounts, args[0])
 	if err != nil {
-		if u, err = accounts.Get(args[0]); err != nil {
-			return err
-		}
+		return err
 	}
 	conn, err := grpc.NewClient("unix://"+cfg.OperatorSocket, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {

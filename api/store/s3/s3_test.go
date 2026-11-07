@@ -27,7 +27,7 @@ import (
 func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {
 	s, err := New(Options{
 		Endpoint: "127.0.0.1:9000", PublicEndpoint: "10.203.0.1:9000", Region: "us-east-1",
-		Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk",
+		Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk", PresignTTL: 10 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -370,7 +370,7 @@ func TestListAndDeleteOnMinIO(t *testing.T) {
 	}
 	secret, _ := u.User.Password()
 	bucket := "cb-test-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	s, err := New(Options{Endpoint: u.Host, Region: "us-east-1", Bucket: bucket, Prefix: "state", AccessKey: u.User.Username(), SecretKey: secret})
+	s, err := New(Options{Endpoint: u.Host, Region: "us-east-1", Bucket: bucket, Prefix: "state", AccessKey: u.User.Username(), SecretKey: secret, PresignTTL: 10 * time.Minute})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -430,7 +430,7 @@ func newGCSStore(t *testing.T, addr string) *S3 {
 
 func newStore(t *testing.T, endpoint, prefix string) *S3 {
 	t.Helper()
-	s, err := New(Options{Endpoint: endpoint, Region: "us-east-1", Bucket: "cocoonbox", Prefix: prefix, AccessKey: "ak", SecretKey: "sk"})
+	s, err := New(Options{Endpoint: endpoint, Region: "us-east-1", Bucket: "cocoonbox", Prefix: prefix, AccessKey: "ak", SecretKey: "sk", PresignTTL: 10 * time.Minute})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
