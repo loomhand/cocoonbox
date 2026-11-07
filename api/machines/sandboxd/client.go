@@ -135,7 +135,7 @@ func newClient(rawURL, token string) (*client, error) {
 	if err != nil || base.Host == "" {
 		return nil, fmt.Errorf("sandboxd url %q must be an absolute URL", rawURL)
 	}
-	return &client{base: base, token: token, http: &http.Client{}}, nil
+	return &client{base: base, token: token, http: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {

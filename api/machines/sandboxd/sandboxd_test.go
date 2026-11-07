@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,8 +140,8 @@ func TestAnEmptyHostOnlyValueGoesAsARemoval(t *testing.T) {
 	if _, ok := fake.env()["GH_GIT"]; ok {
 		t.Errorf("env = %+v, want GH_GIT removed", fake.env())
 	}
-	if err := b.Deliver(t.Context(), boxID, machines.Identity{BoxID: boxID}, map[string]*machines.Secret{"GW_KEY": {}}); err != nil {
-		t.Errorf("Deliver of an empty key: %v", err)
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"GW_KEY": {}}}); err != nil {
+		t.Errorf("SetCredentials of an empty key: %v", err)
 	}
 }
 
@@ -178,7 +179,7 @@ func TestDropMissingRemovesWhatTheNodeLostAndNothingRefills(t *testing.T) {
 	fake.lose("sb_1", "GH_GIT")
 	fake.lose("sb_1", "EGRESS_UPSTREAM")
 
-	dropped, err := b.DropMissing(t.Context(), boxID)
+	dropped, err := b.DropMissing(t.Context(), boxID, []string{"CBV_1"})
 	if err != nil || !slices.Equal(dropped, []string{"EGRESS_UPSTREAM", "GH_GIT"}) {
 		t.Fatalf("DropMissing = %v, %v", dropped, err)
 	}
@@ -255,16 +256,71 @@ func TestARereadRefusesAnotherMachinesSandbox(t *testing.T) {
 	}
 }
 
-func TestAFreshAPIFollowsAMachineWhoseClaimMovedToANodeThatListsIt(t *testing.T) {
+func TestAMovedClaimWaitsForAnAPIThatHoldsItsTokenAndAListingLendsNone(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	db := clustertest.Open(t)
-	claimRunning(t, newSharedBackend(t, entry, db))
+	holder := openSharedBackend(t, entry, db)
+	claimRunning(t, holder)
+	token := holder.token(boxID, "sb_1")
 	peer.moveTo(entry)
+	entry.mutate(func(sb *fakeSandbox) { sb.row.Token = "forged" })
 
 	fresh := openSharedBackend(t, entry, db)
-	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
-		t.Errorf("owner after a fresh api's first refresh = %+v, %v; want %s", e, err, entry.addr())
+	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != peer.addr() || fresh.token(boxID, "sb_1") != "" {
+		t.Fatalf("a fresh api's machine = %+v, %v, token %q; want it kept on %s with no token from the listing", e, err, fresh.token(boxID, "sb_1"), peer.addr())
+	}
+	if err := holder.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if e, err := holder.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() || holder.token(boxID, "sb_1") != token {
+		t.Errorf("after the token holder's refresh = %+v, %v; want it followed to %s with its own token", e, err, entry.addr())
+	}
+}
+
+func TestSetCredentialsRefusesANodeOtherThanTheRecordedOne(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	secret := map[string]*machines.Secret{"GW_KEY": {Value: "Bearer k"}}
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: secret, Node: "10.0.0.9:7777"}); !errors.Is(err, machines.ErrConflict) || fake.count("patch") != 0 {
+		t.Errorf("SetCredentials for another node = %v after %d patches, want ErrConflict and none", err, fake.count("patch"))
+	}
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: secret, Node: fake.addr()}); err != nil || fake.envOf("GW_KEY") != "Bearer k" {
+		t.Errorf("SetCredentials for its node = %v", err)
+	}
+}
+
+func TestDropMissingKeepsAnEntryTheCallerStillPushes(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"GW_KEY": {Value: "Bearer k"}}}); err != nil {
+		t.Fatalf("SetCredentials: %v", err)
+	}
+	fake.lose("sb_1", "GW_KEY")
+	if dropped, err := b.DropMissing(t.Context(), boxID, []string{"GW_KEY"}); !errors.Is(err, machines.ErrConflict) || len(dropped) != 0 {
+		t.Errorf("DropMissing = %v, %v; want ErrConflict and nothing dropped", dropped, err)
+	}
+	if _, ok := fake.env()["GW_KEY"]; !ok {
+		t.Error("the entry the caller still pushes is gone")
+	}
+}
+
+func TestTheClientFollowsNoHTTPRedirect(t *testing.T) {
+	var reached atomic.Int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached.Add(1) }))
+	t.Cleanup(elsewhere.Close)
+	node := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(node.Close)
+	c, err := newClient(node.URL, rootToken)
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	if err := c.patchEnv(t.Context(), "sb_1", map[string]*envVar{"GW_KEY": {Value: "Bearer k", Guest: new(false)}}); err == nil || reached.Load() != 0 {
+		t.Errorf("patchEnv through a redirect = %v, reached the other server %d times; want an error and none", err, reached.Load())
 	}
 }
 
@@ -503,7 +559,10 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	claimRunning(t, b)
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pk", Name: "desk_1"}
 
-	if err := b.Deliver(t.Context(), boxID, identity, map[string]*machines.Secret{"GW_KEY": {Value: "Bearer sk-box"}, "CB_CONNECT_KEY": {Value: "Bearer door-key"}}); err != nil {
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"GW_KEY": {Value: "Bearer sk-box"}, "CB_CONNECT_KEY": {Value: "Bearer door-key"}}}); err != nil {
+		t.Fatalf("SetCredentials: %v", err)
+	}
+	if err := b.Deliver(t.Context(), boxID, identity); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	for name, want := range map[string]string{"GW_KEY": "Bearer sk-box", "CB_CONNECT_KEY": "Bearer door-key"} {
@@ -519,7 +578,7 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	if err := json.Unmarshal([]byte(exec.Env["CB_STDIN"]), &file); err != nil || file != identity || !slices.Equal(exec.Argv, writeIdentity) {
 		t.Errorf("identity exec = %+v (%v)", exec, err)
 	}
-	if err := b.Deliver(t.Context(), boxID, identity, nil); err != nil || fake.count("patch") != 1 {
+	if err := b.Deliver(t.Context(), boxID, identity); err != nil || fake.count("patch") != 1 {
 		t.Errorf("Deliver without a gw key: %v, env patches %d", err, fake.count("patch"))
 	}
 	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
@@ -540,21 +599,21 @@ func TestDeliverReportsAFailedExecAnUnreachableGuestAHibernatedBoxAndAnUnknownMa
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1"}
 
 	fake.execExit = 1
-	if err := b.Deliver(t.Context(), boxID, identity, nil); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
+	if err := b.Deliver(t.Context(), boxID, identity); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
 		t.Errorf("Deliver with a failing exec = %v", err)
 	}
 	fake.execExit, fake.execStatus = 0, http.StatusBadGateway
-	if err := b.Deliver(t.Context(), boxID, identity, nil); err == nil || !strings.Contains(err.Error(), "write identity") {
+	if err := b.Deliver(t.Context(), boxID, identity); err == nil || !strings.Contains(err.Error(), "write identity") {
 		t.Errorf("Deliver with an unreachable guest = %v", err)
 	}
 	fake.execStatus = 0
 	h, _ := b.Hibernate(t.Context(), boxID)
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
 	execs := fake.count("exec")
-	if err := b.Deliver(t.Context(), boxID, identity, nil); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
+	if err := b.Deliver(t.Context(), boxID, identity); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
 		t.Errorf("Deliver to a hibernated box = %v, execs %d -> %d", err, execs, fake.count("exec"))
 	}
-	if err := b.Deliver(t.Context(), "cb-missing", identity, nil); !errors.Is(err, machines.ErrNotFound) {
+	if err := b.Deliver(t.Context(), "cb-missing", identity); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("Deliver to an unknown machine = %v", err)
 	}
 }
@@ -1045,7 +1104,7 @@ func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	waitState(t, b, boxID, w.Revision, machines.StateRunning)
-	if err := b.Deliver(t.Context(), boxID, machines.Identity{BoxID: boxID, WakeID: "w1"}, nil); err != nil {
+	if err := b.Deliver(t.Context(), boxID, machines.Identity{BoxID: boxID, WakeID: "w1"}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	for _, call := range []string{"claim", "hibernate", "wake", "exec"} {

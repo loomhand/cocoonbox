@@ -377,7 +377,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	return err
 }
 
-func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
+func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity) error {
 	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
@@ -386,15 +386,6 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 		return &machines.NotRunningError{State: state}
 	}
 	sandbox := e.row.ID
-	if len(keys) > 0 {
-		vars := make(map[string]*envVar, len(keys))
-		for name, sec := range keys {
-			vars[name] = secretVar(sec)
-		}
-		if err = node.patchEnv(ctx, sandbox, vars); err != nil {
-			return fmt.Errorf("install host keys: %w", err)
-		}
-	}
 	file, err := json.Marshal(identity)
 	if err != nil {
 		return fmt.Errorf("encode identity: %w", err)
@@ -439,6 +430,9 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
+	}
+	if at := cmp.Or(e.ownerAddr, b.entryAddr); c.Node != "" && c.Node != at {
+		return fmt.Errorf("machine %s is on %s, not on %s: %w", id, at, c.Node, machines.ErrConflict)
 	}
 	changes, sums, had := map[string]*envVar{}, map[string]string{}, map[string]string{}
 	add := func(name string, v *envVar) {
@@ -504,7 +498,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	return nil
 }
 
-func (b *Backend) DropMissing(ctx context.Context, id string) ([]string, error) {
+func (b *Backend) DropMissing(ctx context.Context, id string, keep []string) ([]string, error) {
 	e, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return nil, err
@@ -515,9 +509,13 @@ func (b *Backend) DropMissing(ctx context.Context, id string) ([]string, error) 
 	}
 	drops := map[string]*envVar{}
 	for name, v := range env {
-		if v.Missing {
-			drops[name] = nil
+		if !v.Missing {
+			continue
 		}
+		if slices.Contains(keep, name) {
+			return nil, fmt.Errorf("%s went missing again: %w", name, machines.ErrConflict)
+		}
+		drops[name] = nil
 	}
 	if len(drops) == 0 {
 		return nil, nil
@@ -1018,7 +1016,7 @@ func (b *Backend) forgetTokens(known map[string]*entry, read time.Time) {
 	})
 }
 
-// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only when moved says the backend itself followed the claim there, and otherwise only lends the claim's token to a later follow.
+// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only when moved says the backend itself followed the claim there.
 func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, moved bool) error {
 	node, err := b.node(addr)
 	if err != nil {
@@ -1030,7 +1028,7 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
 		e := known[id]
-		if r.ID == "" || e.sandbox() != r.ID {
+		if !placed(e, r.ID) {
 			continue
 		}
 		token := r.Token
@@ -1039,10 +1037,6 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 			if full, getErr := node.get(ctx, r.ID); getErr == nil {
 				token = full.Token
 			}
-		}
-		if !placed(e, r.ID) {
-			b.keepToken(id, r.ID, token)
-			continue
 		}
 		if reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
 			b.keepToken(id, r.ID, token)
@@ -1072,10 +1066,10 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 // dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
 	type claimKey struct{ addr, sandbox string }
-	present := map[claimKey]bool{}
+	present, listed := map[claimKey]bool{}, map[string]bool{}
 	for addr, rows := range lists {
 		for _, r := range rows {
-			present[claimKey{addr, r.ID}] = true
+			present[claimKey{addr, r.ID}], listed[r.ID] = true, true
 		}
 	}
 	now := time.Now()
@@ -1091,6 +1085,10 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 	}
 	b.mu.Unlock()
 	for id, sandbox := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
+		if listed[sandbox] && b.token(id, sandbox) == "" {
+			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, which no api holds the token of; the machine stays until an api that holds it follows the claim", sandbox)
+			continue
+		}
 		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox })
 		if err != nil {
 			return err
