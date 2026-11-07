@@ -407,7 +407,7 @@ func (r *operations) takeLocked(rec cluster.Operation) *operation {
 		r.byID[op.id] = op
 	default:
 		op.mu.Lock()
-		if op.remote && !op.olderLocked(rec) || !op.remote && op.finishedAt.IsZero() && !rec.FinishedAt.IsZero() {
+		if op.remote && !op.olderLocked(rec) || !op.remote && !rec.FinishedAt.IsZero() && !sameOperation(op.recordLocked(), rec) {
 			op.adoptLocked(rec)
 		}
 		op.mu.Unlock()

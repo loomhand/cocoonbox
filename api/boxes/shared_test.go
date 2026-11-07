@@ -315,6 +315,26 @@ func TestAStaleRowNeverReopensOrRewindsAnotherProcesssOperation(t *testing.T) {
 	}
 }
 
+func TestALocalOperationAnotherProcessEndedTakesTheTablesEnd(t *testing.T) {
+	a, b, db := newSharedPair(t, t.Context())
+	op, _ := a.svc.ops.start(t.Context(), alice, aliceBox, controlv1.Phase_PHASE_SAVING, 1, time.Minute)
+	clustertest.WaitFor(t, "the operation reaches the table", func() bool {
+		_, err := db.Operation(t.Context(), op.id)
+		return err == nil
+	})
+	op.mu.Lock()
+	op.mirror = nil
+	op.mu.Unlock()
+	op.succeed("saved")
+	if !b.svc.ops.end(t.Context(), op.id, "superseded by operation op-b") {
+		t.Fatal("b did not end a's operation in the table")
+	}
+	clustertest.WaitFor(t, "a takes the table's end", func() bool { return lastEventDetail(op) == "superseded by operation op-b" })
+	if differ, err := a.svc.operationDifferences(t.Context()); err != nil || len(differ) != 0 {
+		t.Errorf("ledger differences = %v, %v; want none", differ, err)
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})
