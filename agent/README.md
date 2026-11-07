@@ -2,7 +2,7 @@
 
 The in-box agent of a cocoonbox. One binary, five subcommands:
 
-- `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
+- `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents`, `Session` and `State` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
 - `toolhost-service` runs as the desktop user `user`, as shuttle's service plugin. It executes every tool that reaches it through shuttle's endpoint.
 - `offload <verb>` is the box side of offload, run as `user` (`docs/contracts.md`, "Offload").
 - `desk VERB [key=value ...|JSON]` calls shuttle's `desk_VERB` on `SHUTTLE_SOCKET` and prints the result.
@@ -13,7 +13,7 @@ The in-box agent of a cocoonbox. One binary, five subcommands:
 The agent follows the layering in `docs/boundaries.md`:
 
 ```
-transports: server.rs (gRPC Agents, Session) · mcp.rs (/mcp)
+transports: server.rs (gRPC Agents, Session, State) · mcp.rs (/mcp)
         │ runner.rs (loop, mode A) and mcp.rs both call dispatch::Dispatcher
         ▼
 dispatch.rs: records every call and result (journal.rs), publishes ComputerAction, injects the desktop session
@@ -42,6 +42,19 @@ toolhost: shell · files · CDP browser · shuttle (desk and computer verbs)
 | `mcp.rs` | MCP Streamable HTTP at `/mcp` for external agents (mode B), next to gRPC on the same listener |
 | `toolhost/` | `rpc.rs` (u32-length-prefixed JSON, one call per connection), `shell.rs`, `files.rs`, `browser.rs` (Chrome over CDP), `act.rs` and `ground.rs` (`computer_act` on shuttle's computer verbs) |
 | `prompts.rs`, `tools.rs` | System prompts and tool schemas |
+| `shuttle.rs` | The production `Tools`: desk calls and runs go to shuttle, every other tool to the toolhost |
+| `runs.rs` | `script_run`, plugin tools and `gui_plan` on shuttle |
+| `plugins.rs` | Script-tool plugins from `TOOLS_DIR` |
+| `route.rs` | Tier router: asks gw's decisions model which tool tier fits a task |
+| `connect.rs` | MCP client of the Connect box door: the owner's connector tools |
+| `flows.rs` | Flow library sync through the box door |
+| `secrets.rs` | Card values typed from a file, kept out of every model, transcript and client text |
+| `exec.rs` | `Session.Exec`: relays a command's stdio between the stream and the toolhost |
+| `state/` | Snapshots of home, `/workspace` and `agent.db` as encrypted chunks |
+| `offload/` | `cocoonbox-agent offload <verb>` |
+| `config.rs` | Environment of `serve` and `toolhost-service` |
+| `sys.rs`, `sys/` | Platform calls std does not expose (libc, Windows API) |
+| `service.rs` | `serve` as a Windows service |
 
 ## Behaviour
 
@@ -51,7 +64,7 @@ toolhost: shell · files · CDP browser · shuttle (desk and computer verbs)
 - **Shell.** Each agent has one persistent bash session with cwd `/workspace`. Commands are sourced from a script file with stdin set to `/dev/null`. Output is capped to about 30 KB (head and tail). The default timeout is 120 s, up to 600 s. The result carries the exit status, also when the command ran `exit`, and a non-zero status or a timeout makes it an error result. A timeout or cancel kills the session's process group, and the next call starts a fresh session.
 - **File paths.** A relative path resolves under `/workspace`. An absolute path is used as given, so the uid `user` is the access boundary.
 - **Browser.** The toolhost attaches to Chrome on `127.0.0.1:9222`, or launches it with the `/home/user/.config/cocoonbox-chrome` profile. A snapshot is a ref-tagged list (`- link "Learn more" [ref=e1]`) of at most 300 lines. It includes open shadow roots and same-origin frames; cross-origin frames are counted, not shown. Clicks are CDP mouse events at the element's center.
-- **Computer.** Each `delegate_computer` task runs in its own driver session on shuttle (`cu-…`). Every call of the task carries that label. `desk_computer_end` ends it when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the newest user message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
+- **Computer.** Each `delegate_computer` task runs in its own driver session on shuttle (`cu-…`). Every call of the task carries that label. `desk_computer_end` ends it when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the last message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
 
 ## MCP (mode B)
 
@@ -96,7 +109,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 ## Environment
 
-These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`. `SHUTTLE_SOCKET`, shuttle's desk endpoint, comes from serve's unit and, for the toolhost, from shuttle, which also sets `SHUTTLE_SERVICE_SOCKET`, the toolhost's own socket.
+These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER`, `AGENT_LISTEN` and, for connector tools, `CONNECT_URL`. `SHUTTLE_SOCKET`, shuttle's desk endpoint, comes from serve's unit and, for the toolhost, from shuttle, which also sets `SHUTTLE_SERVICE_SOCKET`, the toolhost's own socket.
 
 Optional overrides with contract defaults, used by tests, non-standard layouts and the macOS and Windows boxes. The identity pair moves the trust anchor, so only whoever writes the agent's environment, already root, can change it:
 
@@ -107,11 +120,17 @@ Optional overrides with contract defaults, used by tests, non-standard layouts a
 | `CB_IDENTITY_OWNER` | `0` (root): the uid that must own the identity file and its directory |
 | `TOOLHOST_SOCKET` | `SHUTTLE_SOCKET`: where serve calls the toolhost, which shuttle routes to its service |
 | `CB_WORKSPACE` | `/workspace` |
+| `CB_HOME` | `/home/user`: the home that state snapshots cover |
+| `OFFLOAD_SOCKET` | `/run/cocoonbox/offload.sock`: the offload inbox |
+| `TOOLS_DIR` | `/etc/cocoonbox/tools.d`: script-tool plugins |
+| `ROUTING_DIR` | `/etc/cocoonbox/routing.d`: paragraphs appended to the routing |
+| `CDP_PORT` | `9222`: the Chrome DevTools port the toolhost attaches to |
 | `CHROME_BIN` | `google-chrome` |
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
 | `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
 | `CB_CHECKPOINT_NUDGE_MIN` | `0` (off; cbcore images set `40`): after this many minutes of a turn, the main loop asks once that a first version of the deliverable be saved |
 | `CB_REASONING_EFFORT` | unset (the model's default): `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, sent with every request of the main model and the computer subagent as `reasoning_effort` on chat completions and `output_config.effort` on Messages (`minimal` as `low`, `none` left out) |
+| `CB_LOG` | unset: on Windows, the file the service appends its stderr to |
 
 ## Build
 

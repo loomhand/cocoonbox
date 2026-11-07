@@ -15,7 +15,7 @@ cocoonbox-api ── control plane: users, boxes, sharing, Connect, vault, state
         │  claims, wake, hibernate, port relay
         ▼
 sandboxd (cocoonstack/sandbox) ──► cocoon microVM: the box
-                                     ├─ cocoonbox-agent serve: agent loop, gRPC Agents/Session, /mcp
+                                     ├─ cocoonbox-agent serve: agent loop, gRPC Agents/Session/State, /mcp
                                      ├─ shuttle serve (loomhand/shuttle): the desk, computer verbs,
                                      │    gui_plan, script_run, and as its children cua-driver (loomhand/cua)
                                      │    and cocoonbox-agent toolhost-service: shell, files, CDP browser
@@ -49,12 +49,12 @@ make image           # syntax-check the shell scripts, test cut.sh's dry run and
 make gate            # clean gate over the tracked files and the dependencies
 ```
 
-CI runs `make agent` on Linux and macOS, and clippy, the build and the lib tests on Windows. Linux-gated behaviour is verified on Linux; on macOS run the gates in the pinned toolchain image, with the protoc, rsync and tmux the build and the offload tests need:
+CI runs `make agent` on Linux and macOS, and clippy, the build and the lib tests on Windows. Linux-gated behaviour is verified on Linux; on macOS run the gates in the pinned toolchain image, with the protoc, rsync, tmux and Node the build, the offload tests and the toolhost test need:
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w/agent -e CB_NO_BROWSER=1 rust:1.98.0 \
-  sh -c 'apt-get update -qq && apt-get install -y -qq protobuf-compiler rsync tmux >/dev/null &&
-    cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
+  sh -c 'apt-get update -qq && apt-get install -y -qq protobuf-compiler rsync tmux nodejs >/dev/null &&
+    cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && NODE_BIN=$(command -v node) cargo test --locked'
 ```
 
 The root `Package.swift` exports `CocoonBoxKit` and `CocoonBoxTerminal` for packages that build on them: `.package(url: "https://github.com/loomhand/cocoonbox.git", from: "<version>")`. Component details are in [agent/README.md](agent/README.md), [api/README.md](api/README.md) and [macos/README.md](macos/README.md).
