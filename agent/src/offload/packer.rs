@@ -1,4 +1,4 @@
-//! The box packer verbs: `begin`, the `send` stream, messages, `post`, `end` and `wipe-secrets`.
+//! The box packer verbs: `begin`, the `send` stream, messages, `post` and `end`.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -448,7 +448,7 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
         Vec::new()
     };
     let mut out = json!({
-        "ok": true, "dir": copy.dir, "name": copy.name, "copy": was, "findings": [],
+        "ok": true, "dir": copy.dir, "name": copy.name, "copy": was,
     });
     out["refs"] = refs;
     out["ignored"] = ignored.into();
@@ -593,7 +593,7 @@ pub async fn end(layout: &Layout, repo: &str) -> Result<Value, Fail> {
 }
 
 /// Removes the repo's secrets and stops its ssh-agent.
-pub async fn wipe_secrets(layout: &Layout, repo: &str) -> Result<(), Fail> {
+async fn wipe_secrets(layout: &Layout, repo: &str) -> Result<(), Fail> {
     let dir = layout.secrets_dir(repo);
     if dir.join(SSH_SOCKET).exists() {
         let _ = user_systemctl(layout, &["stop", &ssh_unit(repo)]).await;

@@ -29,7 +29,7 @@ const MAX_WAIT_S: u64 = 600;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const KINDS: [&str; 2] = ["claude", "codex"];
 const USAGE: &str = "usage: cocoonbox-agent offload \
-<begin|send|read|status|end|wipe-secrets|restart|post|env|event|serve> [flags]";
+<begin|send|read|status|end|restart|post|env|event|serve> [flags]";
 
 /// The box paths offload works in.
 #[derive(Clone, Debug)]
@@ -490,11 +490,6 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
             call(layout, &req).await?
         }
         "end" => packer::end(layout, &a.repo()?).await?,
-        "wipe-secrets" => {
-            let repo = a.repo()?;
-            packer::wipe_secrets(layout, &repo).await?;
-            json!({"ok": true, "repo": repo})
-        }
         "restart" => call(layout, &json!({"op": "restart", "repo": a.repo()?})).await?,
         "post" => packer::post(layout, &a, stdin_text().await?).await?,
         "env" => {

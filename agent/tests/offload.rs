@@ -921,7 +921,6 @@ async fn begin_takes_the_copy_and_reports_its_ignored_directories() {
     assert_eq!(out["ignored"], json!(["node_modules/", "target/"]));
     assert_eq!(out["cli"]["signed_in"], true);
     assert_eq!(out["cli"]["account"], "u@example.com");
-    assert_eq!(out["findings"], json!([]));
     let index: Index =
         serde_json::from_slice(&std::fs::read(b.layout.state.join("index.json")).unwrap()).unwrap();
     assert_eq!(index[REPO].offload_id, "ffffffffffff");
