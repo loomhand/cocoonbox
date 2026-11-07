@@ -18,7 +18,7 @@ public enum ToolCatalog {
 
     public static let controlNames = Set(control.compactMap { $0["name"] as? String })
 
-    // boxNames are the box tools a connector tool cannot shadow; boxFallback lists the ones every box serves.
+    // boxNames are the box tools a connector tool cannot shadow; boxFallback stands in, without the browser tools, until the box's own list loads.
     public static let boxNames = [
         "shell", "read_file", "write_file", "edit_file", "list_dir", "browser_navigate", "browser_snapshot",
         "browser_click", "browser_type", "browser_read", "computer_state", "computer_act", "screenshot",
