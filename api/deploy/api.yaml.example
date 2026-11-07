@@ -32,9 +32,9 @@ state:
     delete_batch: 1000         # keys per DeleteObjects request, at most 1000
     deleted_retention: 168h    # a deleted box's state stays this long after the first pass that finds it deleted
   conditional_writes: false    # index and timeline rewrites land only on the version read; the store must honor If-Match on PUT (R2 does)
-provision:                     # every box's identity file (design §12) and its user's gw key
+provision:                     # every box's identity file (design §12) and its incarnation's gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
-  gw_admin:                    # per-user gw keys through gw's admin API
+  gw_admin:                    # gw keys through gw's admin API
     url: http://10.203.0.1:18090
     token_file: gw-admin-token # the cocoonbox-boxes tenant admin token
   residential_upstream: ""     # the residential forwarder's proxy URL; empty leaves every box's egress alone
@@ -57,9 +57,9 @@ wake:                          # scheduled box wakes (design §15.13)
   max_awake_for: 1h            # longest awake_for a schedule may ask
 # identity:                    # users of another system through its token review webhook (design §22.6); omit to keep cocoonbox's own users alone
 #   url: https://id.example/v1/identity/token-review
-#   token_file: identity-token # the api's bearer for the webhook, read on every call
+#   token_file: identity-token # the api's bearer for the webhook, read on every call; needs a LoadCredential=identity-token line
 #   timeout: 5s
-cluster:                       # state api processes share in the users database; remove the block before rolling back to an older binary
+cluster:                       # state api processes share in the users database
   ledger: false                # copy box heads and operations there and verify the copy every minute
   shared: false                # make that copy the truth, so api processes may serve together; needs ledger and state.conditional_writes
   drain: 0s                    # fail /healthz this long after a stop signal before stopping, so a balancer moves new calls to the other api of a pair
