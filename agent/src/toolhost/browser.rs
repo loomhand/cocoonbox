@@ -3285,18 +3285,11 @@ pub(super) mod tests {
                 }
             }
         });
+        let body = move |v| if v { version.clone() } else { "[]".to_owned() };
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    Ok((mut s, _)) = http.accept() => {
-                        let mut buf = [0u8; 1024];
-                        let n = s.read(&mut buf).await.unwrap_or(0);
-                        let body = if buf[..n].starts_with(b"GET /json/version") { version.as_str() } else { "[]" };
-                        let head = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
-                        let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-                    }
-                }
+            tokio::select! {
+                _ = stopped.changed() => {}
+                () = serve(http, "application/json", body) => {}
             }
         });
         port
@@ -3342,20 +3335,8 @@ pub(super) mod tests {
                     socket.listen(1024).unwrap()
                 }
             };
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
-                } else {
-                    &list
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
+            let body = |v| if v { version.clone() } else { list.clone() };
+            serve(http, "application/json", body).await;
         });
         port
     }
@@ -3384,17 +3365,7 @@ pub(super) mod tests {
             });
         }
         let list = Value::from(list).to_string();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    list.len()
-                );
-                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
-            }
-        });
+        tokio::spawn(serve(http, "application/json", move |_| list.clone()));
         port
     }
 
@@ -3431,17 +3402,7 @@ pub(super) mod tests {
             });
         }
         let list = Value::from(list).to_string();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    list.len()
-                );
-                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
-            }
-        });
+        tokio::spawn(serve(http, "application/json", move |_| list.clone()));
         port
     }
 
@@ -3613,22 +3574,8 @@ pub(super) mod tests {
                 });
             }
         });
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    version.as_str()
-                } else {
-                    "[]"
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
+        let body = move |v| if v { version.clone() } else { "[]".to_owned() };
+        tokio::spawn(serve(http, "application/json", body));
         (port, log)
     }
 
@@ -3659,22 +3606,8 @@ pub(super) mod tests {
                 });
             }
         });
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
-                } else {
-                    &list
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
+        let body = move |v| if v { version.clone() } else { list.clone() };
+        tokio::spawn(serve(http, "application/json", body));
         (port, log)
     }
 
@@ -3724,20 +3657,15 @@ pub(super) mod tests {
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
             let http = socket.listen(1024).unwrap();
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
+            let body = |v| {
+                let list = usize::from(created.load(std::sync::atomic::Ordering::SeqCst));
+                if v {
+                    version.clone()
                 } else {
-                    &lists[usize::from(created.load(std::sync::atomic::Ordering::SeqCst))]
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
+                    lists[list].clone()
+                }
+            };
+            serve(http, "application/json", body).await;
         });
         (port, log)
     }
@@ -3789,17 +3717,20 @@ pub(super) mod tests {
     async fn page_server(page: &'static str) -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = http.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 4096];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    page.len()
-                );
-                let _ = s.write_all(format!("{head}{page}").as_bytes()).await;
-            }
-        });
+        tokio::spawn(serve(http, "text/html", |_| page.to_owned()));
         port
+    }
+
+    async fn serve(http: TcpListener, kind: &'static str, body: impl Fn(bool) -> String) {
+        while let Ok((mut s, _)) = http.accept().await {
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).await.unwrap_or(0);
+            let body = body(buf[..n].starts_with(b"GET /json/version"));
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: {kind}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+        }
     }
 }
