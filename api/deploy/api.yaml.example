@@ -8,6 +8,7 @@ sandboxd:
   url: http://127.0.0.1:17780
   token_file: sandboxd-token   # the instance's root api_token
   tenant_egress_class: ""      # egress class of every user's tenant; set, machines claim under the user's tenant
+  nodes: []                    # node addresses (as the mesh names them) the api may call besides the entry node; empty allows every peer
 flavor:
   vcpus: 4
   memory_mib: 8192
