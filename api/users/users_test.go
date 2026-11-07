@@ -225,6 +225,23 @@ func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
 	wg.Wait()
 }
 
+func TestCreatesOfOneIDTakeTurnsAndHandBackTheirLockConnections(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	inserts := trace(t, svc, dsn, &queryCounter{sql: "INSERT INTO users"})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			if _, err := svc.createOnce(t.Context(), "firebase", outsideID); err != nil {
+				t.Errorf("createOnce: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if n, held := inserts.n.Load(), svc.store.locks.Stat().AcquiredConns(); n != 1 || held != 0 {
+		t.Errorf("%d user inserts, %d lock connections held after the creates, want 1 and 0", n, held)
+	}
+}
+
 func TestTokensPasswordsAndDisabling(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})

@@ -47,7 +47,7 @@ const (
 	passwordIDP = "password"
 	// githubIDP is signup's provider; an outside provider of that name would reach the users signup made.
 	githubIDP = "github"
-	// ensureLimit bounds the creates Ensure runs at once, since each holds a connection outside the pool.
+	// ensureLimit bounds the creates Ensure runs at once and sizes the user lock pool each holds a connection of.
 	ensureLimit = 4
 )
 
@@ -223,7 +223,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := openStore(ctx, opts.DSN)
+	st, err := openStore(ctx, opts.DSN, ensureLimit)
 	if err != nil {
 		return nil, err
 	}

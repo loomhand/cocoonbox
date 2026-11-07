@@ -33,18 +33,29 @@ var migrations embed.FS
 
 // store keeps the users tables in PostgreSQL.
 type store struct {
-	pool *pgxpool.Pool
+	pool  *pgxpool.Pool
+	locks *pgxpool.Pool
 }
 
-func openStore(ctx context.Context, dsn string) (*store, error) {
+func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error) {
 	pool, err := migrate.Open(ctx, dsn, migrations, "schema_migrations", migrationLock)
 	if err != nil {
 		return nil, err
 	}
-	return &store{pool: pool}, nil
+	cfg := pool.Config()
+	cfg.MaxConns = lockConns
+	locks, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("open the user lock pool: %w", err)
+	}
+	return &store{pool: pool, locks: locks}, nil
 }
 
-func (s *store) close() { s.pool.Close() }
+func (s *store) close() {
+	s.locks.Close()
+	s.pool.Close()
+}
 
 func (s *store) notify(ctx context.Context, payload string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
@@ -268,14 +279,14 @@ func (s *store) clearToken(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
 }
 
-// lockUser holds an advisory lock on user id in every api until the returned func runs, on its own connection so waiters cannot exhaust the pool the holder needs.
+// lockUser holds an advisory lock on user id in every api until the returned func runs, in a transaction on the lock pool so waiters cannot exhaust the pool the holder needs.
 func (s *store) lockUser(ctx context.Context, id string) (func(), error) {
-	conn, err := pgx.ConnectConfig(ctx, s.pool.Config().ConnConfig.Copy())
+	tx, err := s.locks.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("lock user %s: %w", id, err)
 	}
-	release := func() { _ = conn.Close(context.WithoutCancel(ctx)) }
-	if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended('users.ensure:' || $1, 0))", id); err != nil {
+	release := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('users.ensure:' || $1, 0))", id); err != nil {
 		release()
 		return nil, fmt.Errorf("lock user %s: %w", id, err)
 	}
