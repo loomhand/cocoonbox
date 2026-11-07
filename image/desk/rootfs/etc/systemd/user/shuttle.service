@@ -7,6 +7,7 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=/run/cocoonbox-x/Xauthority
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 Environment=CUA_DRIVER_RS_UPDATE_CHECK=false
+Environment=LANG=en_US.UTF-8
 ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X0 ] && [ -S /run/user/1000/bus ]; do sleep 0.5; done'
 ExecStartPre=/usr/local/lib/cocoonbox/shuttle-config
 ExecStart=/usr/local/bin/shuttle serve /run/cocoonbox/desk.sock

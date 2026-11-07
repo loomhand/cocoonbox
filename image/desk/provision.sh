@@ -4,7 +4,6 @@
 # Runs as root inside the guest from an unpacked copy of image/desk (see cut.sh -f cbcore).
 set -euo pipefail
 
-NODE_VERSION=24.21.0
 ROOT=/opt/desk
 AGENT_ENV=/etc/cocoonbox/agent.env
 SHUTTLE_CONFIG=/etc/cocoonbox/shuttle.toml
@@ -37,7 +36,6 @@ install_rootfs() {
 	systemctl --user -M user@ daemon-reload
 }
 
-# shuttle's box config: models through the gw endpoint of the agent's contract
 write_shuttle_config() {
 	log "shuttle config"
 	local gw
@@ -100,7 +98,6 @@ route_chrome() {
 }
 
 check() {
-	[ "$(readlink -f /usr/local/bin/node)" = "/opt/node/$NODE_VERSION/bin/node" ]
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done

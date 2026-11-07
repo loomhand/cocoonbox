@@ -9,7 +9,6 @@ esac
 SHUTTLE_TARBALL="shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
 
-# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/loomhand/shuttle/VERSION, on PATH
 install_shuttle() {
 	local tarball=$1 dir=/opt/loomhand/shuttle/$SHUTTLE_VERSION
 	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -

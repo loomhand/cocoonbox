@@ -9,7 +9,6 @@ DESK=/run/cocoonbox/desk.sock
 
 log() { printf '[desk after agent] %s\n' "$*"; }
 
-# call TOOL: one desk-wire call as cbagent on shuttle's endpoint; prints the answer's text, fails on an error answer
 call() {
 	runuser -u cbagent -- python3 -c '
 import json, socket, struct, sys

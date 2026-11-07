@@ -1,9 +1,5 @@
 #!/bin/bash
-# Provisions a cocoon-macos guest as a desk box: the agent's serve as a LaunchDaemon, shuttle as a LaunchAgent in the Aqua
-# session with the agent's toolhost as its service plugin, the desk runtime and guide, /workspace and /run, and autologin.
-# Runs as root inside the guest from an unpacked copy of image/ with image/macos/vendor/ filled; idempotent. A reboot follows the
-# first run, as /etc/synthetic.conf makes /workspace and /run only at boot. The shuttle app gets Accessibility, Screen
-# Recording, the capture consent and Full Disk Access once per image through UI input; the toolhost runs as its child.
+# Provisions a cocoon-macos guest as a desk box from image/ with image/macos/vendor/ filled; a reboot follows the first run.
 #   BOX_USER (default cocoon), BOX_PASSWORD: the desktop user that logs in automatically
 #   GW_BASE_URL, GW_API_KEY, MODEL_MAIN, MODEL_COMPUTER: the agent's model contract
 #   SHUTTLE_DECIDE (default 1): 0 leaves shuttle without the gw, for a test box with no model access
@@ -64,8 +60,7 @@ agent() {
 	install -m 0755 "$SRC/vendor/cocoonbox-agent" /usr/local/bin/cocoonbox-agent
 	install -m 0755 "$SRC/../desk/rootfs/usr/local/bin/desk" /usr/local/bin/desk
 	install -d -m 0755 /usr/local/lib/cocoonbox
-	install -m 0755 "$SRC/rootfs/usr/local/lib/cocoonbox/serve" "$SRC/rootfs/usr/local/lib/cocoonbox/shuttle-session" \
-		"$SRC/rootfs/usr/local/lib/cocoonbox/restart-shuttle" /usr/local/lib/cocoonbox/
+	install -m 0755 "$SRC/rootfs/usr/local/lib/cocoonbox/serve" "$SRC/rootfs/usr/local/lib/cocoonbox/shuttle-session" /usr/local/lib/cocoonbox/
 	install -d -o _cbagent -g "$AGENT_GROUP" -m 0700 "$STATE_DIR"
 	install -d -o "$BOX_USER" -g "$AGENT_GROUP" -m 2750 "$RUN_DIR/cocoonbox"
 	install -d -m 0755 "$RUN_DIR/cocoonbox-identity"

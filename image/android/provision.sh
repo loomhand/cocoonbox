@@ -23,9 +23,8 @@ esac
 NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
-# the gw endpoint of the agent's contract (export-rootfs.sh)
 GW_BASE_URL=http://10.203.0.1:18090/v1
-# cocoonstack/scrcpy-rfb release master-827baf531; the shell jar is vanilla scrcpy 4.1
+# the shell jar is vanilla scrcpy 4.1
 SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master-827baf531
 SCRCPY_FILES=(
 	"$SCRCPY_RFB /usr/local/bin/scrcpy-rfb 0755"
@@ -113,7 +112,6 @@ setup_scrcpy() {
 	rm -rf "$tmp"
 }
 
-# GUI plans and scripts run the desk runtime of cbcore on Node; shuttle serves their desk calls from Android
 setup_desk() {
 	log "node $NODE_VERSION and the desk runtime"
 	local dir=/opt/node/$NODE_VERSION tmp
@@ -139,7 +137,6 @@ setup_desk() {
 	write_shuttle_config
 }
 
-# shuttle's box config: models through gw, no local controls, and its adb backend on the box's redroid with shuttle's UI server
 write_shuttle_config() {
 	cat >/etc/cocoonbox/shuttle.toml.tmp <<EOF
 base_url = "$GW_BASE_URL"

@@ -1,8 +1,4 @@
-# Provisions a cocoon Windows guest as a desk box: the agent's serve as a service under its virtual account, shuttle as a
-# logon task in the console session with the agent's toolhost as its service plugin, a 1280x800 virtual display and a
-# loopback VNC server in that session for the screen, Git for Windows for the shell, Chrome, the desk runtime and guide, and C:\workspace.
-# Runs as SYSTEM inside the guest from an unpacked copy of image/; idempotent. The desktop user logs in automatically.
-# The time zone is UTC: Windows reads the RTC as local time, and Cloud Hypervisor's RTC runs in UTC.
+# Provisions a cocoon Windows guest as a desk box; runs as SYSTEM from an unpacked copy of image/ and is idempotent.
 #   BOX_USER (default cocoon): the desktop user that logs in automatically
 #   GW_BASE_URL, GW_API_KEY, MODEL_MAIN, MODEL_COMPUTER: the agent's model contract
 #   SHUTTLE_DECIDE (default 1): 0 leaves shuttle without the gw, for a test box with no model access
@@ -174,9 +170,9 @@ function Acl($path, [string[]]$grants) {
 }
 
 function Shuttle {
-    Log 'shuttle v0.1.22, its desk runtime, the guide and the logon task'
+    Log "$($Pinned[0].Name), its desk runtime, the guide and the logon task"
     $tmp = Join-Path $env:TEMP "shuttle-$PID"
-    Expand-Archive -Force (Join-Path $Vendor 'shuttle-v0.1.22-windows-x64.zip') $tmp
+    Expand-Archive -Force (Join-Path $Vendor $Pinned[0].Name) $tmp
     Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue | Stop-ScheduledTask
     Get-Process | Where-Object { $_.Path -like "$ShuttleDir\*" } | Stop-Process -Force -PassThru | Wait-Process -Timeout 30
     if (Test-Path $ShuttleDir) { Remove-Item -Recurse -Force $ShuttleDir }
