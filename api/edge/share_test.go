@@ -37,7 +37,6 @@ const (
 
 func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
 	env := newMCPEnv(t)
-	env.resolver.wake = "w1"
 	box := boxes.BoxID("alice")
 	env.shares.put(openSecret, auth.Share{ID: "sh-open", Owner: "alice", Box: box, Write: true})
 	env.shares.put(namedSecret, auth.Share{ID: "sh-named", Owner: "alice", Box: box, Users: []string{"bob"}})
@@ -88,7 +87,6 @@ func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
 
 func TestUserTokenWinsOverTheSharePrefix(t *testing.T) {
 	env := newMCPEnv(t)
-	env.resolver.wake = "w1"
 	env.users[auth.TokenCredential(shareLikeToken)] = "dave"
 	env.shares.put(shareLikeToken, auth.Share{ID: "sh-twin", Owner: "alice", Box: boxes.BoxID("alice")})
 	req := env.request(t, http.MethodPost, boxes.BoxID("dave"), toolsListRPC)

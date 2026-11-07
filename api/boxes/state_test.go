@@ -77,7 +77,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 func TestSaveStateRefusals(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	if _, err := svc.SaveState(ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("SaveState without a store: %v, want FailedPrecondition", err)
@@ -765,7 +765,7 @@ func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
 	env.fake.push(machines.Machine{ID: first, State: machines.StateRunning})
 	clustertest.WaitFor(t, "the restore reaches the agent", func() bool { return env.agent.restoreCount() > 0 })
 
-	restarted := New(env.fake, testDefaults, env.svc.registry)
+	restarted := newService(env.fake, testDefaults, env.svc.registry)
 	restarted.EnableState(env.agent, env.store, env.keys)
 	if _, _, err := restarted.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve of the unrestored machine after a restart = %v, want Unavailable", err)
@@ -1143,7 +1143,7 @@ func newStateEnv(t *testing.T) *stateEnv {
 	st := newFakeStore()
 	agent := newFakeAgent(st)
 	keys := &fakeKeys{}
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableState(agent, st, keys)
 	return &stateEnv{ctx: auth.WithUser(t.Context(), alice), svc: svc, fake: fake, agent: agent, store: st, keys: keys}
 }
@@ -1296,7 +1296,7 @@ func newFamilyEnv(t *testing.T, image, defaultImage string, rebaseImages ...stri
 	st := newFakeStore()
 	defaults := testDefaults
 	defaults.Image, defaults.RebaseImages = defaultImage, rebaseImages
-	svc := New(fake, defaults, newFakeRegistry())
+	svc := newService(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
 	if box, err := svc.get(ctx, aliceBox); err != nil || box.GetLatestImage() != image {

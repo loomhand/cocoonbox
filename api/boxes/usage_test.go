@@ -69,9 +69,6 @@ func TestUsageRefusals(t *testing.T) {
 	if _, err := svc.Usage(t.Context(), &controlv1.UsageRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Usage without a user = %v, want Unauthenticated", err)
 	}
-	if _, err := svc.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{}); status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("Usage without a meter = %v, want FailedPrecondition", err)
-	}
 	svc.EnableUsage(&fakeMeter{err: errors.New("GET /admin/usage/users: 502 Bad Gateway")}, 5_000_000)
 	if _, err := svc.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), "/admin") {
 		t.Errorf("Usage while gw fails = %v, want Unavailable without gw's path", err)

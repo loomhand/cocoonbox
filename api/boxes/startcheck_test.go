@@ -19,7 +19,7 @@ func TestStartChecksShareTheUserLockAcrossReplicas(t *testing.T) {
 			other := clustertest.OpenReplica(t, dsn)
 			backend, registry := newFakeMachines(), newFakeRegistry()
 			registry.boxes[alice] = []users.Box{{ID: aliceBox, Owner: alice, Name: "first", Agent: true}, {ID: "cb-other", Owner: alice, Name: "second", Agent: true}}
-			first, second := New(backend, testDefaults, registry), New(backend, testDefaults, registry)
+			first, second := newService(backend, testDefaults, registry), newService(backend, testDefaults, registry)
 			first.EnableLedger(t.Context(), shared)
 			second.EnableLedger(t.Context(), other)
 			first.EnableShared(t.Context(), shared)

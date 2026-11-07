@@ -18,7 +18,7 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 	synctest.Test(t, func(t *testing.T) {
 		fake := newFakeMachines()
 		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-		svc := New(fake, testDefaults, newFakeRegistry())
+		svc := newService(fake, testDefaults, newFakeRegistry())
 		ctx := auth.WithUser(t.Context(), alice)
 		mine := startWatch(t, svc, alice)
 		bobs := startWatch(t, svc, bob)
@@ -89,7 +89,7 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 
 func TestWatchSendsABoxChangeAnotherAPIMade(t *testing.T) {
 	registry := newFakeRegistry()
-	svc := New(newFakeMachines(), testDefaults, registry)
+	svc := newService(newFakeMachines(), testDefaults, registry)
 	mine := startWatch(t, svc, alice)
 	mine.next(t, func(*controlv1.ListBoxesResponse) bool { return true })
 	if _, err := registry.RenameBox(t.Context(), alice, aliceBox, "work"); err != nil {

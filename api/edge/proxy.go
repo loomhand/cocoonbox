@@ -114,9 +114,7 @@ func (p *Proxy) EndShare(ctx context.Context, owner, box, id string) error {
 	if err != nil {
 		return err
 	}
-	if wake != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, credential.Header, p.creds.Credential(box, wake))
-	}
+	ctx = metadata.AppendToOutgoingContext(ctx, credential.Header, p.creds.Credential(box, wake))
 	_, err = agentv1.NewAgentsClient(conn).End(ctx, &agentv1.EndRequest{Target: &agentv1.EndRequest_ShareId{ShareId: id}})
 	return err
 }
@@ -156,9 +154,7 @@ func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
 	for _, k := range droppedHeaders {
 		delete(out, k)
 	}
-	if wake != "" {
-		out.Set(credential.Header, p.creds.Credential(box, wake))
-	}
+	out.Set(credential.Header, p.creds.Credential(box, wake))
 	return out
 }
 

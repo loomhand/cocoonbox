@@ -18,14 +18,14 @@ type Vault interface {
 	Credentials(ctx context.Context, owner string) (machines.Credentials, string, error)
 }
 
-// EnableVault puts every owner's keys on the owner's machines; it needs provisioning.
+// EnableVault puts every owner's keys on the owner's machines.
 func (s *Service) EnableVault(v Vault) {
 	s.vault = v
 }
 
 // ApplyVault puts user's keys on the running machines of user's own boxes at once; a hibernated one gets them when it wakes.
 func (s *Service) ApplyVault(ctx context.Context, user string) error {
-	if s.vault == nil || s.provision == nil {
+	if s.vault == nil {
 		return nil
 	}
 	ms, err := s.machines.List(ctx, user)

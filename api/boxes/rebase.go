@@ -69,7 +69,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING,
 		fmt.Sprintf("saved snapshot %s in %s", rec.ID, saved.Round(time.Second)))
 
-	tenant, err := s.tenantOf(user)
+	tenant, err := s.accounts.Tenant(user)
 	if err != nil {
 		logger.Error(op.ctx, err, "read tenant for rebase machine")
 		op.fail("create machine failed")
@@ -135,9 +135,6 @@ func (s *Service) waitReady(op *operation, m machines.Machine) (machines.Machine
 	for cur := range s.machines.Watch(op.ctx, m.ID, m.Revision) {
 		switch cur.State {
 		case machines.StateRunning:
-			if s.provision == nil {
-				return cur, nil
-			}
 			if err := s.provisionMachine(op.ctx, cur, false); err != nil {
 				return machines.Machine{}, err
 			}

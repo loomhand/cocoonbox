@@ -19,8 +19,7 @@ func TestProvisioningIssuesADoorKeyPerIncarnationAndPushesTheCredentials(t *test
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
 	conn := &fakeConnect{}
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	svc.provisionStale(t.Context())
@@ -41,8 +40,7 @@ func TestProvisioningIssuesADoorKeyPerIncarnationAndPushesTheCredentials(t *test
 func TestADoorKeyFailureDoesNotFailProvisioning(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(&fakeConnect{keyErr: errors.New("database down")})
 
 	svc.provisionStale(t.Context())
@@ -58,7 +56,7 @@ func TestAWakePushesTheSecretsWithoutWaitingForThem(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Incarnation: "vm1"})
 	conn := &fakeConnect{gate: make(chan struct{})}
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	resp, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{})
@@ -82,7 +80,7 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox + "-3", Owner: alice, State: machines.StateHibernated})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
 	conn := &fakeConnect{}
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	svc.refreshCredentials(t.Context())
@@ -107,17 +105,14 @@ func TestApplyReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
 		digest string
 	}{
 		{"credentials", func(s *Service) { s.EnableConnect(&fakeConnect{}) }, (*Service).ApplyCredentials, ""},
-		{"vault", func(s *Service) {
-			s.EnableProvisioning(fakeSigner{})
-			s.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
-		}, (*Service).ApplyVault, "d1"},
+		{"vault", func(s *Service) { s.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}}) }, (*Service).ApplyVault, "d1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
 			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
 			fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
-			svc := New(fake, testDefaults, newFakeRegistry())
+			svc := newService(fake, testDefaults, newFakeRegistry())
 			tt.enable(svc)
 			if err := tt.apply(svc, t.Context(), alice); err != nil {
 				t.Fatalf("apply: %v", err)
@@ -144,7 +139,7 @@ func TestAHibernatedMachineKeepsItsDoorKeyAndADeletedOneLosesIt(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox + "-rnew", Owner: alice, State: machines.StateHibernated})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
 	conn := &fakeConnect{}
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	if _, err := svc.Hibernate(auth.WithUser(t.Context(), alice), &controlv1.BoxRef{BoxId: aliceBox}); err != nil {
@@ -167,7 +162,6 @@ func TestAHibernatedMachineKeepsItsDoorKeyAndADeletedOneLosesIt(t *testing.T) {
 func TestAParkDropsTheDoorKeyOfTheMachineItRemovesAndTheRestoreGetsANewOne(t *testing.T) {
 	e := newParkEnv(t)
 	conn := &fakeConnect{}
-	e.svc.EnableProvisioning(fakeSigner{})
 	e.svc.EnableConnect(conn)
 
 	op := e.park(t, e.clock.Add(parkAfter))
@@ -194,7 +188,7 @@ func TestAParkDropsTheDoorKeyOfTheMachineItRemovesAndTheRestoreGetsANewOne(t *te
 
 func TestAnEmptyListingPrunesNoDoorKey(t *testing.T) {
 	conn := &fakeConnect{}
-	svc := New(newFakeMachines(), testDefaults, newFakeRegistry())
+	svc := newService(newFakeMachines(), testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	if err := svc.PruneDoorKeys(t.Context()); err != nil {

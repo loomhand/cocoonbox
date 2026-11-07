@@ -33,17 +33,21 @@ func TestRebaseAfterCapacityRefusalsEndsRunningOnTheNewMachine(t *testing.T) {
 	if _, _, err := backend.Ensure(t.Context(), machines.Spec{ID: aliceBox, Owner: alice, Flavor: defaultFlavor}); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
+	var old machines.Machine
 	clustertest.WaitFor(t, "the old machine runs", func() bool {
-		m, err := backend.Get(t.Context(), aliceBox)
-		return err == nil && m.State == machines.StateRunning
+		old, err = backend.Get(t.Context(), aliceBox)
+		return err == nil && old.State == machines.StateRunning
 	})
+	if err := backend.SetMeta(t.Context(), aliceBox, metaWake, old.Incarnation+"|w1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
 	node.mu.Lock()
 	node.refusals = 2
 	node.mu.Unlock()
 	st := newFakeStore()
 	agent := newFakeAgent(st)
 	agent.chunks = []string{hexID("c1")}
-	svc := New(backend, testDefaults, newFakeRegistry())
+	svc := newService(backend, testDefaults, newFakeRegistry())
 	svc.EnableState(agent, st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
 	rebase := func() *controlv1.OperationEvent {
@@ -148,9 +152,16 @@ func newFakeNode(t *testing.T) *fakeNode {
 		nodeJSON(w, http.StatusOK, row)
 	}))
 	mux.HandleFunc("POST /v1/sandboxes/{id}/{verb}", n.sandbox(func(w http.ResponseWriter, r *http.Request, row *nodeRow) {
-		if r.PathValue("verb") == "release" {
+		switch r.PathValue("verb") {
+		case "release":
 			delete(n.rows, row.ID)
+		case "exec":
+			nodeJSON(w, http.StatusOK, map[string]int{"exit_code": 0})
+			return
 		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("PATCH /v1/sandboxes/{id}/env", n.sandbox(func(w http.ResponseWriter, _ *http.Request, _ *nodeRow) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/ports/{port}", n.sandbox(func(w http.ResponseWriter, _ *http.Request, _ *nodeRow) {

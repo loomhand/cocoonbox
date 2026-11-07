@@ -230,8 +230,6 @@ func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
 
 func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
-	a.svc.EnableProvisioning(fakeSigner{})
-	b.svc.EnableProvisioning(fakeSigner{})
 	a.fake.onDeliver = func() { time.Sleep(100 * time.Millisecond) }
 	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 2})
 	m, err := a.fake.Get(t.Context(), aliceBox)
@@ -449,7 +447,7 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	db := clustertest.Open(t)
 	a, clock := newUserIdleEnv(t)
 	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
-	b.svc = New(a.fake, testDefaults, a.svc.registry)
+	b.svc = newService(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableState(a.agent, a.store, a.keys)
 	b.svc.EnableIdle(0, userIdleAfter, 0)
 	b.svc.idle.now = a.svc.idle.now
@@ -483,7 +481,7 @@ func newSharedPair(t *testing.T, aCtx context.Context) (*stateEnv, *stateEnv, *c
 	db := clustertest.Open(t)
 	a := newStateEnv(t)
 	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
-	b.svc = New(a.fake, testDefaults, a.svc.registry)
+	b.svc = newService(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableState(a.agent, a.store, a.keys)
 	a.svc.EnableLedger(aCtx, db)
 	a.svc.EnableShared(aCtx, db)

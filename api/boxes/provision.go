@@ -46,7 +46,7 @@ type provisioner struct {
 	locks utils.Locks
 }
 
-// EnableProvisioning gives every machine an identity file for signer and, with accounts, a gw key of its incarnation.
+// EnableProvisioning gives every machine an identity file for signer and a gw key of its incarnation.
 func (s *Service) EnableProvisioning(signer Signer) {
 	s.provision = &provisioner{signer: signer, backoff: provisionBackoff}
 }
@@ -58,14 +58,11 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 
 func (s *Service) provisionStale(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.provisionStale")
-	var keys []users.MachineKey
-	if s.accounts != nil {
-		// The keys are read before the machines, so a key issued after the listing never counts as ended.
-		var err error
-		if keys, err = s.accounts.MachineKeys(ctx, ""); err != nil {
-			logger.Error(ctx, err, "list machine keys")
-			return
-		}
+	// The keys are read before the machines, so a key issued after the listing never counts as ended.
+	keys, err := s.accounts.MachineKeys(ctx, "")
+	if err != nil {
+		logger.Error(ctx, err, "list machine keys")
+		return
 	}
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
@@ -84,7 +81,7 @@ func (s *Service) provisionStale(ctx context.Context) {
 		if err := s.syncExit(ctx, m, false); err != nil {
 			logger.WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
-		rekey := s.accounts != nil && wakeOf(m) != "" && !keyed[m.ID]
+		rekey := wakeOf(m) != "" && !keyed[m.ID]
 		if m.State == machines.StateRunning && (wakeOf(m) == "" || m.EnvMissing || rekey) {
 			g.Go(func() error {
 				if err := s.provisionMachine(ctx, m, rekey); err != nil {
@@ -172,20 +169,18 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, reke
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
 	keys := map[string]*machines.Secret{}
 	issued, keyOnly := "", wakeOf(m) != "" && !m.EnvMissing
-	if s.accounts != nil {
-		key, id, err := s.accounts.IssueMachineKey(ctx, m.Owner, m.ID, m.Incarnation)
-		switch {
-		case err != nil && keyOnly:
-			return "", fmt.Errorf("issue gw key: %w", err)
-		case err != nil:
-			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the gw key; the next pass retries: %v", err)
-			if installErr := s.accounts.InstallMachineKey(ctx, m.ID, ""); installErr != nil {
-				return "", fmt.Errorf("record that no gw key is installed: %w", installErr)
-			}
-			keys[gwKeyEnv] = nil
-		default:
-			keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
+	key, id, err := s.accounts.IssueMachineKey(ctx, m.Owner, m.ID, m.Incarnation)
+	switch {
+	case err != nil && keyOnly:
+		return "", fmt.Errorf("issue gw key: %w", err)
+	case err != nil:
+		log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the gw key; the next pass retries: %v", err)
+		if installErr := s.accounts.InstallMachineKey(ctx, m.ID, ""); installErr != nil {
+			return "", fmt.Errorf("record that no gw key is installed: %w", installErr)
 		}
+		keys[gwKeyEnv] = nil
+	default:
+		keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
 	}
 	wake, err := s.provisionWith(ctx, m, keys)
 	if err == nil && issued != "" {
@@ -297,22 +292,22 @@ func (s *Service) revokeMachineKey(ctx context.Context, machine, id string) {
 // agentContext carries m's credential to its agent on calls the control plane makes itself.
 func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.Context {
 	wake := wakeOf(m)
-	if s.provision == nil || wake == "" {
+	if wake == "" {
 		return ctx
 	}
 	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(boxOfMachine(m.ID), wake))
 }
 
-// ready reports whether the control plane may call m's agent: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
+// ready reports whether the control plane may call m's agent: running, not being restored or parked, and provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
 	active := s.ops.activeFor(boxOfMachine(m.ID))
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !unrestored(m) &&
+	return m.State == machines.StateRunning && wakeOf(m) != "" && !unrestored(m) &&
 		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
 }
 
-// reachable reports whether clients may reach m: ready and, with provisioning on, holding every host-only entry.
+// reachable reports whether clients may reach m: ready and holding every host-only entry.
 func (s *Service) reachable(m machines.Machine) bool {
-	return s.ready(m) && (s.provision == nil || !m.EnvMissing)
+	return s.ready(m) && !m.EnvMissing
 }
 
 // wakeOf returns the wake id recorded for m's current incarnation, "" when none.

@@ -18,8 +18,7 @@ func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1"})
 	keys := &fakeVault{digests: map[string]string{alice: "d1"}}
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableVault(keys)
 
 	svc.provisionStale(t.Context())
@@ -51,8 +50,7 @@ func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T
 func TestAWakePushesTheKeys(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Incarnation: "vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
 
 	if _, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{}); err != nil {

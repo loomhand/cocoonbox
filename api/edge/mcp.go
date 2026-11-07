@@ -127,9 +127,7 @@ func (m *MCP) Exchange(req *http.Request, user, box string, use func(*http.Respo
 	}
 	defer m.resolver.Reached(box)()
 	req.URL.Scheme, req.URL.Host, req.URL.Path, req.Host = "http", ep.Key, agentMCPPath, ep.Key
-	if wake != "" {
-		req.Header.Set(credential.Header, m.creds.Credential(box, wake))
-	}
+	req.Header.Set(credential.Header, m.creds.Credential(box, wake))
 	resp, err := m.transportFor(box, ep).RoundTrip(req)
 	if err != nil {
 		if req.Context().Err() == nil {
@@ -239,12 +237,9 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {
 	pr.Out.Host = pr.Out.URL.Host
 	pr.Out.Header.Del("Authorization")
 	pr.Out.Header.Del(auth.HeaderGuestToken)
-	pr.Out.Header.Del(credential.Header)
-	switch {
-	case rt.wake == "":
-	case rt.grant != nil:
+	if rt.grant != nil {
 		pr.Out.Header.Set(credential.Header, m.creds.ShareCredential(box, rt.wake, rt.grant.Principal()))
-	default:
+	} else {
 		pr.Out.Header.Set(credential.Header, m.creds.Credential(box, rt.wake))
 	}
 }

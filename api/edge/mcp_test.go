@@ -27,7 +27,6 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	req := env.request(t, http.MethodPost, boxes.BoxID("alice")+"/extra?x=1", toolsListRPC)
 	req.Header.Set("Mcp-Session-Id", "s0")
 	req.Header.Set(credential.Header, "forged")
-	env.resolver.wake = "w1"
 	resp := env.do(t, req)
 	defer resp.Body.Close()
 
@@ -217,7 +216,6 @@ func TestMCPAgentUnreachable(t *testing.T) {
 
 func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	env := newMCPEnv(t)
-	env.resolver.wake = "w1"
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(toolsListRPC))
 	if err != nil {
 		t.Fatalf("request: %v", err)

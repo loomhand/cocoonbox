@@ -102,14 +102,12 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 // keepAwake names why idle box m stays up, its scheduled wake or work in it, or fails with the check that failed; empty lets it sleep.
 func (s *Service) keepAwake(ctx context.Context, m machines.Machine) (string, error) {
 	box := boxOfMachine(m.ID)
-	if s.wake != nil {
-		list, err := s.wake.store.WakeSchedules(ctx, m.Owner)
-		if err != nil {
-			return "", fmt.Errorf("read its wake schedule: %w", err)
-		}
-		if slices.ContainsFunc(list, func(w users.WakeSchedule) bool { return w.Box == box && w.SleepAt.After(s.idle.now()) }) {
-			return "its scheduled wake is on", nil
-		}
+	list, err := s.wake.store.WakeSchedules(ctx, m.Owner)
+	if err != nil {
+		return "", fmt.Errorf("read its wake schedule: %w", err)
+	}
+	if slices.ContainsFunc(list, func(w users.WakeSchedule) bool { return w.Box == box && w.SleepAt.After(s.idle.now()) }) {
+		return "its scheduled wake is on", nil
 	}
 	if s.activity == nil {
 		return "", nil

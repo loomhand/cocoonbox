@@ -73,14 +73,11 @@ func (s *Service) parkIdle(ctx context.Context) {
 
 // wakesDue returns the boxes whose wake schedule fires within the threshold or still holds them awake.
 func (s *Service) wakesDue(ctx context.Context, now time.Time) (map[string]bool, error) {
-	held := map[string]bool{}
-	if s.wake == nil {
-		return held, nil
-	}
 	list, err := s.wake.store.WakeSchedules(ctx, "")
 	if err != nil {
 		return nil, err
 	}
+	held := map[string]bool{}
 	for _, w := range list {
 		if !w.SleepAt.IsZero() || w.NextAt.Before(now.Add(s.park.after)) {
 			held[w.Box] = true

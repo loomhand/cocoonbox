@@ -36,8 +36,8 @@ func TestUnaryRewritesHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hello: %v", err)
 	}
-	if resp.GetAgentVersion() != boxes.BoxID("alice") {
-		t.Errorf("agent saw %q, want the box and no authorization", resp.GetAgentVersion())
+	if box := boxes.BoxID("alice"); resp.GetAgentVersion() != box+" cred:"+box+":w1" {
+		t.Errorf("agent saw %q, want the box, its credential and no authorization", resp.GetAgentVersion())
 	}
 	if got := header.Get("x-agent-header"); len(got) != 1 || got[0] != "h" {
 		t.Errorf("header x-agent-header = %v", got)
@@ -82,7 +82,6 @@ func TestDialsTheEndpointNotItsKey(t *testing.T) {
 
 func TestUnarySendsBoxCredential(t *testing.T) {
 	env := newProxyEnv(t)
-	env.resolver.wake = "w1"
 	ctx := metadata.AppendToOutgoingContext(env.aliceCtx(t), credential.Header, "forged")
 	resp, err := env.client.Hello(ctx, &agentv1.HelloRequest{})
 	if err != nil {
@@ -484,7 +483,6 @@ func serve(t *testing.T, srv *grpc.Server) string {
 type fakeResolver struct {
 	addr   string
 	screen string
-	wake   string
 	err    error
 	opaque bool
 
@@ -501,7 +499,7 @@ func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.
 	if r.opaque {
 		ep.Key = "box.invalid:1"
 	}
-	return ep, r.wake, r.err
+	return ep, "w1", r.err
 }
 
 func (r *fakeResolver) Reached(boxID string) func() {

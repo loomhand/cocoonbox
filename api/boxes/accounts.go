@@ -68,23 +68,15 @@ func (s *Service) setCredentials(ctx context.Context, m machines.Machine, kind s
 	return s.machines.SetCredentials(ctx, m.ID, creds)
 }
 
-// recordPushes records that secrets of kinds go to m before they do; without accounts nothing records them.
+// recordPushes records that secrets of kinds go to m before they do.
 func (s *Service) recordPushes(ctx context.Context, m machines.Machine, kinds ...string) error {
-	if s.accounts == nil || len(kinds) == 0 {
+	if len(kinds) == 0 {
 		return nil
 	}
 	if err := s.accounts.RecordPushes(ctx, m.ID, m.Owner, m.Node, kinds); err != nil {
 		return fmt.Errorf("record pushes: %w", err)
 	}
 	return nil
-}
-
-// tenantOf returns user's tenant token, empty without accounts.
-func (s *Service) tenantOf(user string) (string, error) {
-	if s.accounts == nil {
-		return "", nil
-	}
-	return s.accounts.Tenant(user)
 }
 
 // secretNames lists the names that secrets sets to a value.

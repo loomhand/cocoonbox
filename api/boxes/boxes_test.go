@@ -98,7 +98,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 	registry.setPolicy(alice, users.Policy{Image: "cbcore:v1"})
 	registry.setPolicy("carol", users.Policy{Image: "cbcore:v0"})
 	registry.setPolicy("dave", users.Policy{Image: "gone:v1"})
-	svc := New(fake, defaults, registry)
+	svc := newService(fake, defaults, registry)
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	for _, tt := range []struct {
 		user, want string
@@ -130,7 +130,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 	} {
 		running := newFakeMachines()
 		running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
-		svc = New(running, defaults, registry)
+		svc = newService(running, defaults, registry)
 		svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 		ctx := auth.WithUser(t.Context(), alice)
 		box, err := svc.get(ctx, aliceBox)
@@ -149,7 +149,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 func TestListNamesTheOfferedImagesOnce(t *testing.T) {
 	defaults := testDefaults
 	defaults.Image, defaults.RebaseImages = "cbcore:v25", []string{"cbcore:v25", "cbdroid:v3", "cbcore:v24"}
-	resp, err := New(newFakeMachines(), defaults, newFakeRegistry()).List(auth.WithUser(t.Context(), alice), &controlv1.ListBoxesRequest{})
+	resp, err := newService(newFakeMachines(), defaults, newFakeRegistry()).List(auth.WithUser(t.Context(), alice), &controlv1.ListBoxesRequest{})
 	if want := []string{"cbcore:v25", "cbdroid:v3", "cbcore:v24"}; err != nil || !slices.Equal(resp.GetOfferedImages(), want) {
 		t.Errorf("List offered %v, %v, want %v", resp.GetOfferedImages(), err, want)
 	}
@@ -157,7 +157,7 @@ func TestListNamesTheOfferedImagesOnce(t *testing.T) {
 
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -200,7 +200,7 @@ func TestEnsureCreatesBox(t *testing.T) {
 func TestHibernateAndWake(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
 	op, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
@@ -247,7 +247,7 @@ func TestOperationFails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
-			svc := New(fake, testDefaults, newFakeRegistry())
+			svc := newService(fake, testDefaults, newFakeRegistry())
 			ctx := auth.WithUser(t.Context(), alice)
 			resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 			if err != nil {
@@ -270,7 +270,7 @@ func TestOperationFails(t *testing.T) {
 func TestSupersededOperationFails(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
 	if err != nil {
@@ -290,7 +290,7 @@ func TestSupersededOperationFails(t *testing.T) {
 func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
 	if err != nil {
@@ -309,7 +309,7 @@ func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 func TestOwnership(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	bobCtx := auth.WithUser(t.Context(), bob)
 
 	if _, err := svc.get(bobCtx, aliceBox); status.Code(err) != codes.NotFound {
@@ -361,7 +361,7 @@ func TestEnsureErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
 			fake.ensureErr = tt.ensure
-			svc := New(fake, testDefaults, newFakeRegistry())
+			svc := newService(fake, testDefaults, newFakeRegistry())
 			_, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{})
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Ensure: %v, want %s %q", err, tt.want, tt.message)
@@ -386,7 +386,7 @@ func TestResolve(t *testing.T) {
 			fake := newFakeMachines()
 			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.addr, fake.addrErr = "10.203.0.10:7443", tt.addrErr
-			ep, _, err := New(fake, testDefaults, newFakeRegistry()).Resolve(t.Context(), alice, aliceBox)
+			ep, _, err := newService(fake, testDefaults, newFakeRegistry()).Resolve(t.Context(), alice, aliceBox)
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Resolve: %v, want %s %q", err, tt.want, tt.message)
 			}
@@ -395,6 +395,15 @@ func TestResolve(t *testing.T) {
 			}
 		})
 	}
+}
+
+func newService(backend machines.Machines, defaults Defaults, registry Registry) *Service {
+	s := New(backend, defaults, registry)
+	s.EnableAccounts(&fakeAccounts{})
+	s.EnableUsage(&fakeMeter{}, 0)
+	s.EnableWake(&fakeWakeStore{schedules: map[string]users.WakeSchedule{}}, testWakeLimits)
+	s.EnableProvisioning(fakeSigner{})
+	return s
 }
 
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
@@ -773,7 +782,7 @@ func (f *fakeMachines) put(m machines.Machine) {
 		f.clock++
 		m.CreatedAt = time.Unix(f.clock, 0)
 	}
-	f.machines[m.ID] = m
+	f.machines[m.ID] = provisioned(m)
 	close(f.changed)
 	f.changed = make(chan struct{})
 }
@@ -803,6 +812,7 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	if m.Meta == nil {
 		m.Meta = cur.Meta
 	}
+	m = provisioned(m)
 	f.machines[m.ID] = m
 	return m, true, f.pushed
 }
@@ -865,7 +875,7 @@ func (f *fakeMachines) setState(id string, state machines.State) {
 	defer f.mu.Unlock()
 	m := f.machines[id]
 	m.State = state
-	f.machines[id] = m
+	f.machines[id] = provisioned(m)
 }
 
 func (f *fakeMachines) setMeta(id, key, value string) {
@@ -881,6 +891,18 @@ func (f *fakeMachines) remove(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.machines, id)
+}
+
+func provisioned(m machines.Machine) machines.Machine {
+	if m.State != machines.StateRunning || m.Incarnation != "" {
+		return m
+	}
+	m.Incarnation, m.Meta = "i0", maps.Clone(m.Meta)
+	if m.Meta == nil {
+		m.Meta = map[string]string{}
+	}
+	m.Meta[metaWake] = "i0|w0"
+	return m
 }
 
 func watch(t *testing.T, svc *Service, ctx context.Context, opID, from string) []*controlv1.OperationEvent {

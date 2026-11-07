@@ -179,7 +179,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
-	tenant, err := s.tenantOf(user)
+	tenant, err := s.accounts.Tenant(user)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}

@@ -4,9 +4,6 @@ import (
 	"context"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -25,9 +22,6 @@ func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*contro
 	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if s.usage == nil {
-		return nil, status.Error(codes.FailedPrecondition, "usage is not metered")
 	}
 	now := s.usage.now().UTC()
 	day := now.Truncate(24 * time.Hour)

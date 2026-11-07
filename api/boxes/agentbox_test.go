@@ -81,7 +81,7 @@ func TestIdleStartsAgainAtAWake(t *testing.T) {
 
 func TestAnAgentBoxGetsNoKeysConnectCredentialsOrDoorKey(t *testing.T) {
 	svc, fake := newCredentialService(t)
-	box := addAgentBox(t, svc, fake)
+	box := addAgentBox(t, svc, fake, "")
 	svc.provisionStale(t.Context())
 	if err := svc.ApplyCredentials(t.Context(), alice); err != nil {
 		t.Fatalf("ApplyCredentials: %v", err)
@@ -125,7 +125,7 @@ func TestAnAgentCreateRecordsItsBoxFirstAndSkipsTheOwnersLimits(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	registry := newFakeRegistry()
 	registry.max = 1
-	svc := New(fake, testDefaults, registry)
+	svc := newService(fake, testDefaults, registry)
 	ctx := auth.WithUser(t.Context(), alice)
 	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "mine"}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("the owner's Create past the running limit = %v, want FailedPrecondition", err)
@@ -180,10 +180,10 @@ func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *clockSi
 	t.Helper()
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	box := aliceBox
 	if agent {
-		box = addAgentBox(t, svc, fake)
+		box = addAgentBox(t, svc, fake, "vm1|w1")
 	}
 	svc.EnableIdle(idleAfter, 0, 0)
 	clock := &clockSigner{now: time.Unix(1_000_000, 0)}
@@ -195,19 +195,18 @@ func newCredentialService(t *testing.T) (*Service, *fakeMachines) {
 	t.Helper()
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(&fakeConnect{})
 	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
 	return svc, fake
 }
 
-func addAgentBox(t *testing.T, svc *Service, fake *fakeMachines) string {
+func addAgentBox(t *testing.T, svc *Service, fake *fakeMachines, wake string) string {
 	t.Helper()
 	b, err := svc.registry.AddBox(t.Context(), users.Box{ID: newBoxID(), Owner: alice, Name: "agent", Agent: true})
 	if err != nil {
 		t.Fatalf("add agent box: %v", err)
 	}
-	fake.put(machines.Machine{ID: b.ID, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 1})
+	fake.put(machines.Machine{ID: b.ID, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 1, Meta: map[string]string{metaWake: wake}})
 	return b.ID
 }

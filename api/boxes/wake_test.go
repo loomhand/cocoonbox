@@ -147,7 +147,7 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 			}
 			e.alarm(t, nine.Add(2*time.Minute))
 
-			restarted := New(e.fake, testDefaults, newFakeRegistry())
+			restarted := newService(e.fake, testDefaults, newFakeRegistry())
 			restarted.EnableWake(e.store, testWakeLimits)
 			e.svc = restarted
 			e.alarm(t, nine.Add(15*time.Minute))
@@ -270,7 +270,7 @@ func TestAlarmHibernatesAfterARestart(t *testing.T) {
 	e.alarm(t, nine.Add(-wakeLead))
 	e.running(t)
 
-	e.svc = New(e.fake, testDefaults, newFakeRegistry())
+	e.svc = newService(e.fake, testDefaults, newFakeRegistry())
 	e.svc.EnableWake(e.store, testWakeLimits)
 	e.alarm(t, nine.Add(5*time.Minute))
 	if e.fake.state(aliceBox) != machines.StateRunning {
@@ -375,7 +375,7 @@ type wakeEnv struct {
 func newWakeEnv(t *testing.T) *wakeEnv {
 	t.Helper()
 	e := &wakeEnv{fake: newFakeMachines(), store: &fakeWakeStore{schedules: map[string]users.WakeSchedule{}}, ctx: auth.WithUser(t.Context(), alice)}
-	e.svc = New(e.fake, testDefaults, newFakeRegistry())
+	e.svc = newService(e.fake, testDefaults, newFakeRegistry())
 	e.svc.EnableWake(e.store, testWakeLimits)
 	return e
 }

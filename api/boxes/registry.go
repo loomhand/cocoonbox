@@ -56,7 +56,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 		}
 	}
 	s.ops.watchers.wake(user)
-	tenant, err := s.tenantOf(user)
+	tenant, err := s.accounts.Tenant(user)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}

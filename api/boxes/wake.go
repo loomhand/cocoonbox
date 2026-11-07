@@ -59,9 +59,6 @@ func (s *Service) SetWakeSchedule(ctx context.Context, req *controlv1.SetWakeSch
 	if err != nil {
 		return nil, err
 	}
-	if s.wake == nil {
-		return nil, status.Error(codes.FailedPrecondition, "scheduled wakes are not configured")
-	}
 	w := users.WakeSchedule{
 		Box: req.GetBoxId(), Owner: user, Cron: strings.TrimSpace(req.GetCron()), TZ: req.GetTz(),
 		AwakeFor: cmp.Or(time.Duration(req.GetAwakeForS())*time.Second, defaultAwakeFor),
@@ -92,14 +89,11 @@ func (s *Service) ListWakeSchedules(ctx context.Context, _ *controlv1.ListWakeSc
 	if err != nil {
 		return nil, err
 	}
-	resp := &controlv1.ListWakeSchedulesResponse{}
-	if s.wake == nil {
-		return resp, nil
-	}
 	list, err := s.wake.store.WakeSchedules(ctx, user)
 	if err != nil {
 		return nil, registryError(ctx, err, "list wake schedules")
 	}
+	resp := &controlv1.ListWakeSchedulesResponse{}
 	for _, w := range list {
 		resp.Schedules = append(resp.Schedules, toWakeSchedule(w))
 	}
@@ -110,9 +104,6 @@ func (s *Service) ClearWakeSchedule(ctx context.Context, ref *controlv1.BoxRef) 
 	user, err := s.ownerOf(ctx, ref.GetBoxId())
 	if err != nil {
 		return nil, err
-	}
-	if s.wake == nil {
-		return nil, status.Error(codes.FailedPrecondition, "scheduled wakes are not configured")
 	}
 	if err := s.wake.store.RemoveWakeSchedule(ctx, user, ref.GetBoxId()); err != nil {
 		if errors.Is(err, users.ErrNotFound) {
@@ -125,9 +116,7 @@ func (s *Service) ClearWakeSchedule(ctx context.Context, ref *controlv1.BoxRef) 
 }
 
 func (s *Service) Reached(box string) func() {
-	if s.wake != nil {
-		s.wake.reach(box)
-	}
+	s.wake.reach(box)
 	var ended reachFunc
 	if s.reaches != nil {
 		s.reaches.reach(box, s.reaches.now())

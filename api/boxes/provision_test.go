@@ -131,7 +131,6 @@ func TestRebaseClaimsUnderTheTenant(t *testing.T) {
 		Incarnation: "pod0/vm0", Meta: map[string]string{metaWake: "pod0/vm0|w0"},
 	})
 	env.svc.EnableAccounts(accounts)
-	env.svc.EnableProvisioning(fakeSigner{})
 	env.agent.chunks = []string{hexID("c1")}
 	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox})
 	if err != nil {
@@ -165,7 +164,6 @@ func TestARestoredMachineGetsItsOwnIDAndItsOwnGWKey(t *testing.T) {
 	env.save(t)
 	accounts := &fakeAccounts{}
 	env.svc.EnableAccounts(accounts)
-	env.svc.EnableProvisioning(fakeSigner{})
 	env.fake.remove(aliceBox)
 
 	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
@@ -190,7 +188,7 @@ func TestReleaseDeletesEveryMachineOfTheUser(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	if err := svc.Release(t.Context(), alice); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
@@ -425,11 +423,10 @@ func newProvisionEnv(accounts *fakeAccounts, ms ...machines.Machine) (*fakeMachi
 	for _, m := range ms {
 		fake.put(m)
 	}
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	if accounts != nil {
 		svc.EnableAccounts(accounts)
 	}
-	svc.EnableProvisioning(fakeSigner{})
 	svc.provision.backoff = time.Millisecond
 	return fake, svc
 }

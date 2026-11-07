@@ -20,7 +20,7 @@ import (
 func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
 	_, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "test"})
@@ -79,7 +79,7 @@ func TestTheRunningLimitIsPerUser(t *testing.T) {
 			fake := newFakeMachines()
 			registry := newFakeRegistry()
 			registry.max, registry.running[alice] = 4, tt.own
-			svc := New(fake, testDefaults, registry)
+			svc := newService(fake, testDefaults, registry)
 			ctx := auth.WithUser(t.Context(), alice)
 			if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil {
 				t.Fatalf("Ensure main: %v", err)
@@ -116,7 +116,7 @@ func TestCreateResolvesAnImageFamily(t *testing.T) {
 		{"cbcore:v9", "", codes.InvalidArgument},
 	} {
 		fake := newFakeMachines()
-		svc := New(fake, defaults, newFakeRegistry())
+		svc := newService(fake, defaults, newFakeRegistry())
 		_, err := svc.Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: tt.image})
 		if status.Code(err) != tt.code {
 			t.Errorf("Create(image %q) = %v, want %s", tt.image, err, tt.code)
@@ -128,7 +128,7 @@ func TestCreateResolvesAnImageFamily(t *testing.T) {
 	}
 	noCore := testDefaults
 	noCore.Image, noCore.RebaseImages = "cbdesk:v25", []string{"cbdesk:v24"}
-	_, err := New(newFakeMachines(), noCore, newFakeRegistry()).Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: "cbcore"})
+	_, err := newService(newFakeMachines(), noCore, newFakeRegistry()).Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: "cbcore"})
 	if want := `image "cbcore" is not offered; choose cbdesk:v25, cbdesk:v24, or the family of one (the name before the tag's ':' after the last '/')`; status.Code(err) != codes.InvalidArgument || status.Convert(err).Message() != want {
 		t.Errorf("Create(cbcore) with no cbcore image offered = %v, want InvalidArgument %q", err, want)
 	}
@@ -136,7 +136,7 @@ func TestCreateResolvesAnImageFamily(t *testing.T) {
 
 func TestCreateRefusals(t *testing.T) {
 	fake := newFakeMachines()
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	for _, tt := range []struct {
 		req  *controlv1.CreateBoxRequest
@@ -174,7 +174,7 @@ func TestEnsureWithoutBoxesAddsOne(t *testing.T) {
 	fake := newFakeMachines()
 	registry := newFakeRegistry()
 	registry.boxes[alice] = nil
-	svc := New(fake, testDefaults, registry)
+	svc := newService(fake, testDefaults, registry)
 	resp, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{})
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -260,7 +260,7 @@ func TestEachBoxResolvesToItsOwnMachine(t *testing.T) {
 	}
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: second.ID, Owner: alice, State: machines.StateRunning})
-	svc := New(fake, testDefaults, registry)
+	svc := newService(fake, testDefaults, registry)
 	for box, machine := range map[string]string{aliceBox: aliceBox + "-r1", second.ID: second.ID} {
 		ep, _, err := svc.Resolve(t.Context(), alice, box)
 		if err != nil || ep.Key != machine+":7443" {

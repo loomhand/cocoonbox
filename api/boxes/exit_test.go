@@ -14,8 +14,7 @@ func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "pod2/vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableResidential(residential, func(user string) bool { return user == alice })
 
 	svc.provisionStale(t.Context())
@@ -32,8 +31,7 @@ func TestProvisionerFollowsTheSwitch(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
 	var on atomic.Bool
 	on.Store(true)
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableResidential(residential, func(string) bool { return on.Load() })
 
 	svc.provisionStale(t.Context())
@@ -55,7 +53,7 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateStarting})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
-	svc := New(fake, testDefaults, newFakeRegistry())
+	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableResidential(residential, func(string) bool { return true })
 
 	if err := svc.ApplyExit(t.Context(), alice); err != nil {
