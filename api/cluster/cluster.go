@@ -46,11 +46,10 @@ var (
 // Notified takes the payload of one notify.
 type Notified func(payload string)
 
-// Change is what a notify on ChannelMachines or ChannelOperations carries: the row, a machine's owner and new version, 0 once removed, and whether an operation finished.
+// Change is what a notify on ChannelMachines or ChannelOperations carries: the row, a machine's owner, and whether an operation finished.
 type Change struct {
 	ID       string
 	Owner    string `json:",omitempty"`
-	Version  int64  `json:",omitzero"`
 	Finished bool   `json:",omitzero"`
 }
 
@@ -92,13 +91,11 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{pool: pool, locks: locks, longLocks: longLocks, leader: cfg.ConnConfig.Copy()}, nil
 }
 
-// Close closes the store; closing a nil store does nothing.
+// Close closes the store.
 func (s *Store) Close() {
-	if s != nil {
-		s.longLocks.Close()
-		s.locks.Close()
-		s.pool.Close()
-	}
+	s.longLocks.Close()
+	s.locks.Close()
+	s.pool.Close()
 }
 
 // Listen calls fn with each notify payload on channel until ctx ends, and reset after each (re)connect since a missed notify is lost.

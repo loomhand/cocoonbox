@@ -271,11 +271,11 @@ func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", func(cluster.Machine) bool { return true }); err != nil || !removed {
 		t.Fatalf("DeleteMachineIf = %t, %v", removed, err)
 	}
-	for _, removed := range []bool{false, true} {
+	for range 2 {
 		select {
 		case c := <-got:
-			if c.ID != "cb-1" || c.Owner != "u-1" || (c.Version == 0) != removed {
-				t.Errorf("notified %+v, want cb-1 of u-1 removed %t", c, removed)
+			if c.ID != "cb-1" || c.Owner != "u-1" {
+				t.Errorf("notified %+v, want cb-1 of u-1", c)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("no notify within 5 s")

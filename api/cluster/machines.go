@@ -166,7 +166,7 @@ func (s *Store) writeMachine(ctx context.Context, m Machine, found bool) (Machin
 		case err != nil:
 			return err
 		}
-		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner, Version: m.Version})
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Owner: m.Owner})
 	})
 	if errors.Is(err, ErrStale) {
 		return Machine{}, ErrStale
