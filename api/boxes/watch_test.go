@@ -21,7 +21,7 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 		svc := New(fake, testDefaults, newFakeRegistry())
 		ctx := auth.WithUser(t.Context(), alice)
 		mine := startWatch(t, svc, alice)
-		bobs := startWatch(t, svc, "bob")
+		bobs := startWatch(t, svc, bob)
 
 		first := mine.next(t, func(*controlv1.ListBoxesResponse) bool { return true })
 		if len(first.GetBoxes()) != 1 || first.GetBoxes()[0].GetState() != controlv1.BoxState_BOX_STATE_RUNNING {
@@ -81,7 +81,7 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 				t.Errorf("message %d repeats the one before: %v", i, all[i])
 			}
 		}
-		if got := bobs.seen(); len(got) != 1 || len(got[0].GetBoxes()) != 1 || got[0].GetBoxes()[0].GetId() != BoxID("bob") {
+		if got := bobs.seen(); len(got) != 1 || len(got[0].GetBoxes()) != 1 || got[0].GetBoxes()[0].GetId() != BoxID(bob) {
 			t.Errorf("bob's Watch saw %v, want only his first list", got)
 		}
 	})

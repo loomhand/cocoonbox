@@ -206,10 +206,7 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 
 func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
-	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
-		a.agent.chunks = hexIDs(chunks...)
-		a.save(t)
-	}
+	a.saveEach(t, []string{"c1"}, []string{"c2"})
 	p := statePath{user: alice, box: aliceBox}
 	unpin, err := a.svc.state.pin(t.Context(), p, snapshotID(1))
 	if err != nil {

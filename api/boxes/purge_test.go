@@ -5,7 +5,7 @@ import "testing"
 func TestDeleteStateRemovesTheUsersObjectsAndNoOthers(t *testing.T) {
 	env := newStateEnv(t)
 	neighbour := alice + "0"
-	for _, user := range []string{alice, neighbour, "bob"} {
+	for _, user := range []string{alice, neighbour, bob} {
 		p := statePath{user: user, box: BoxID(user)}
 		seed(t, env.store, map[string]any{
 			p.head():                  head{Latest: snapshotID(1)},
@@ -25,7 +25,7 @@ func TestDeleteStateRemovesTheUsersObjectsAndNoOthers(t *testing.T) {
 	if left, _ := env.store.List(t.Context(), alice+"/"); len(left) != 0 {
 		t.Errorf("%d objects of the user remain: %v", len(left), left)
 	}
-	for _, user := range []string{neighbour, "bob"} {
+	for _, user := range []string{neighbour, bob} {
 		if left, _ := env.store.List(t.Context(), user+"/"); len(left) != 6 {
 			t.Errorf("%s keeps %d objects, want 6", user, len(left))
 		}

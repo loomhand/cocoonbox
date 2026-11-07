@@ -354,33 +354,6 @@ func waitLocked(t *testing.T, in string) {
 	})
 }
 
-func (e *stateEnv) trySave() error {
-	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: aliceBox})
-	if err != nil {
-		return err
-	}
-	for {
-		events, done, changed := e.svc.ops.local(op.GetId()).since(0)
-		if done {
-			if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
-				return fmt.Errorf("save ended with %v", last)
-			}
-			return nil
-		}
-		<-changed
-	}
-}
-
-func (e *stateEnv) timelineEntries(t *testing.T, p statePath) []timelineEntry {
-	t.Helper()
-	var tl timeline
-	if err := getJSON(e.ctx, e.store, p.timeline(), &tl); err != nil {
-		t.Fatalf("timeline: %v", err)
-	}
-	return tl.Snapshots
-}
-
-// manyFiles is n files under /workspace/src with one chunk each; version v rewrites files 0..v-1.
 func manyFiles(n, v int) []manifestFile {
 	files := []manifestFile{{Root: "workspace", Path: "src", Kind: kindDir, Mode: 0o755}}
 	for i := range n {

@@ -28,7 +28,7 @@ func TestUsageSumsTodayAndMonthByModelUnderTheCap(t *testing.T) {
 				{Model: "typesafe/jev-1.13", Requests: 7, PromptTokens: 2100, CompletionTokens: 70, TotalTokens: 2170, CostMicros: 3_500_000},
 			},
 		},
-		caps: map[string]int64{"bob": gwkeys.Unlimited, "carol": 10_000_000},
+		caps: map[string]int64{bob: gwkeys.Unlimited, "carol": 10_000_000},
 	}
 	svc := &Service{}
 	svc.EnableUsage(meter, 5_000_000)
@@ -50,7 +50,7 @@ func TestUsageSumsTodayAndMonthByModelUnderTheCap(t *testing.T) {
 		t.Errorf("cap %d default %t remaining %d, want the 5000000 default spent past", got.GetDailyCapMicros(), got.GetDefaultCap(), got.GetRemainingTodayMicros())
 	}
 
-	for user, want := range map[string][2]int64{"bob": {gwkeys.Unlimited, -1}, "carol": {10_000_000, 4_500_000}} {
+	for user, want := range map[string][2]int64{bob: {gwkeys.Unlimited, -1}, "carol": {10_000_000, 4_500_000}} {
 		got, err := svc.Usage(auth.WithUser(t.Context(), user), &controlv1.UsageRequest{})
 		if err != nil || got.GetDailyCapMicros() != want[0] || got.GetDefaultCap() || got.GetRemainingTodayMicros() != want[1] {
 			t.Errorf("Usage of %s = %v, %v; want cap %d and %d left", user, got, err, want[0], want[1])

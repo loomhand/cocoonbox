@@ -74,10 +74,7 @@ func TestRetainNeverWantsADroppedSnapshotLater(t *testing.T) {
 func TestGCPrunesSnapshotsAndDeletesTheirChunks(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}, {"c3", "c4"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1", "c2"}, []string{"c2", "c3"}, []string{"c3", "c4"})
 	if env.store.has(p.timeline()) {
 		t.Fatal("a commit started a timeline the GC has not built")
 	}
@@ -125,10 +122,7 @@ func TestGCPrunesSnapshotsAndDeletesTheirChunks(t *testing.T) {
 
 func TestGCDryRunWritesNothing(t *testing.T) {
 	env := newStateEnv(t)
-	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}, {"c3"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1", "c2"}, []string{"c2", "c3"}, []string{"c3"})
 	before := maps.Clone(env.store.objects)
 	dry := env.collect(t, GCOptions{DryRun: true, DeleteBatch: 1000}, 40*24*time.Hour)
 	if !maps.EqualFunc(before, env.store.objects, bytes.Equal) || len(env.store.deleted) != 0 {
@@ -143,10 +137,7 @@ func TestGCDryRunWritesNothing(t *testing.T) {
 func TestGCKeepsPinnedSnapshots(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
 	unpin, _ := env.svc.state.pin(t.Context(), p, snapshotID(1))
 	env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
 	if !env.store.has(p.record(snapshotID(1))) || !env.store.has(p.chunk(hexID("c1"))) {
@@ -162,10 +153,7 @@ func TestGCKeepsPinnedSnapshots(t *testing.T) {
 func TestGCWaitsForASaveBetweenItsIndexReadAndCommit(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1", "c2"}, []string{"c2", "c3"})
 	uploading, release := make(chan struct{}), make(chan struct{})
 	var saveOp string
 	env.store.before = func(action, key string) {
@@ -257,10 +245,7 @@ func TestGCPrunesWithTheTimelineOfASaveThatCommittedWhileItWaited(t *testing.T) 
 func TestGCDeletesChunksWhileNoSaveRuns(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1", "c2"}, []string{"c2", "c3"})
 	var saveOp string
 	env.store.before = func(action, key string) {
 		if action != "delete" || !strings.HasPrefix(key, p.chunks()) || saveOp != "" {
@@ -294,10 +279,7 @@ func TestASaveAfterPruningPlansOnTheHead(t *testing.T) {
 	env := newStateEnv(t)
 	env.svc.state.retryDelay = time.Millisecond
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1"}, {"c1", "c2"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1"}, []string{"c1", "c2"})
 	env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
 	if env.store.has(p.record(snapshotID(1))) {
 		t.Fatal("the GC kept the head's parent")
@@ -331,10 +313,7 @@ func TestASaveAfterPruningPlansOnTheHead(t *testing.T) {
 func TestGCRefusesToPruneAHeadMissingFromTheTimeline(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}
-	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
 	env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
 	if err := putJSON(env.ctx, env.store, p.timeline(), timeline{Snapshots: []timelineEntry{{ID: snapshotID(1)}}}); err != nil {
 		t.Fatalf("setup: %v", err)
@@ -350,18 +329,15 @@ func TestGCRefusesToPruneAHeadMissingFromTheTimeline(t *testing.T) {
 
 func TestGCSkipsTheUsersWhosePolicySaysSo(t *testing.T) {
 	env := newStateEnv(t)
-	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
-		env.agent.chunks = hexIDs(chunks...)
-		env.save(t)
-	}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
 	before := len(env.store.objects)
 	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{NoGC: true})
-	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, "bob"}, time.Now().Add(40*24*time.Hour))
+	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, bob}, time.Now().Add(40*24*time.Hour))
 	if len(env.store.objects) != before {
 		t.Errorf("a pass changed the state of a user whose policy skips the gc: %d objects, want %d", len(env.store.objects), before)
 	}
 	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{})
-	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, "bob"}, time.Now().Add(40*24*time.Hour))
+	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, bob}, time.Now().Add(40*24*time.Hour))
 	if env.store.has(alice + "/chunks/" + hexID("c1")) {
 		t.Error("a pass for every user kept alice's dropped chunk")
 	}
@@ -458,79 +434,6 @@ func TestGCKeepsABoxWhoseDeleteIsStillSaving(t *testing.T) {
 	if left, _ := env.store.List(env.ctx, alice+"/"); len(left) != 1 || left[0].Key != p.index() {
 		t.Errorf("after the purge the user holds %v, want only the index", left)
 	}
-}
-
-func (e *stateEnv) collect(t *testing.T, opts GCOptions, ahead time.Duration) gcReport {
-	t.Helper()
-	r, err := e.svc.state.collect(e.ctx, alice, opts, time.Now().Add(ahead), e.live)
-	if err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-	return r
-}
-
-func (e *stateEnv) live(box string) bool {
-	return e.svc.registry.HasBox(alice, box)
-}
-
-func (e *stateEnv) addBox(t *testing.T, box string) {
-	t.Helper()
-	if _, err := e.svc.registry.AddBox(e.ctx, users.Box{ID: box, Owner: alice, Name: box}); err != nil {
-		t.Fatalf("AddBox: %v", err)
-	}
-	e.fake.put(machines.Machine{ID: box, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1})
-}
-
-func (e *stateEnv) saveBox(t *testing.T, box string) {
-	t.Helper()
-	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: box})
-	if err != nil {
-		t.Fatalf("SaveState %s: %v", box, err)
-	}
-	if events := watch(t, e.svc, e.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
-		t.Fatalf("save of %s ended with %v", box, events[len(events)-1])
-	}
-}
-
-func (e *stateEnv) deleteBox(t *testing.T, box string) {
-	t.Helper()
-	op, err := e.svc.Delete(e.ctx, &controlv1.BoxRef{BoxId: box})
-	if err != nil {
-		t.Fatalf("Delete %s: %v", box, err)
-	}
-	if events := watch(t, e.svc, e.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
-		t.Fatalf("delete of %s ended with %v", box, events[len(events)-1])
-	}
-}
-
-func (e *stateEnv) restoreHead(t *testing.T) {
-	t.Helper()
-	p := statePath{user: alice, box: aliceBox}
-	if _, err := e.svc.state.restore(e.ctx, p, machines.Endpoint{Key: "restore"}, headID(t, e.svc.state, p), noProgress); err != nil {
-		t.Errorf("restore of the head: %v", err)
-	}
-}
-
-func (e *stateEnv) timelineIDs(t *testing.T, p statePath) []string {
-	t.Helper()
-	var tl timeline
-	if err := getJSON(e.ctx, e.store, p.timeline(), &tl); err != nil {
-		t.Fatalf("timeline: %v", err)
-	}
-	var ids []string
-	for _, s := range tl.Snapshots {
-		ids = append(ids, s.ID)
-	}
-	return ids
-}
-
-func (e *stateEnv) indexIDs(t *testing.T) []string {
-	t.Helper()
-	var idx chunkIndex
-	if err := getJSON(e.ctx, e.store, alice+"/index.json", &idx); err != nil {
-		t.Fatalf("index: %v", err)
-	}
-	return idx.Chunks
 }
 
 func hexIDs(names ...string) []string {

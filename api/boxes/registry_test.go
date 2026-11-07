@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -162,7 +163,7 @@ func TestCreateRefusals(t *testing.T) {
 	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "four"}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Create past the quota = %v, want FailedPrecondition", err)
 	}
-	if _, err := svc.Ensure(auth.WithUser(t.Context(), "bob"), &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := svc.Ensure(auth.WithUser(t.Context(), bob), &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("Ensure of alice's box by bob = %v, want NotFound", err)
 	}
 	if _, err := svc.Rename(ctx, &controlv1.RenameBoxRequest{BoxId: aliceBox, Name: "two"}); status.Code(err) != codes.AlreadyExists {
@@ -201,13 +202,13 @@ func TestDeleteSavesThenRemovesEveryMachineOfTheBox(t *testing.T) {
 	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !slices.ContainsFunc(events, func(ev *controlv1.OperationEvent) bool { return ev.GetPhase() == controlv1.Phase_PHASE_DELETING }) {
 		t.Fatalf("delete events = %v", events)
 	}
-	if env.agent.plans() != plans+1 || env.agent.lastPlan().GetConsistency().String() != "CONSISTENCY_QUIESCED" {
+	if env.agent.plans() != plans+1 || env.agent.lastPlan().GetConsistency() != agentv1.Consistency_CONSISTENCY_QUIESCED {
 		t.Errorf("delete planned %d saves, last %v, want one quiesced", env.agent.plans()-plans, env.agent.lastPlan())
 	}
 	if got := strings.Split(env.fake.deletedIDs(), ","); !slices.Contains(got, aliceBox) || !slices.Contains(got, aliceBox+"-rold") || slices.Contains(got, "cb-000000000000") {
 		t.Errorf("deleted machines %q, want both of the box and no other", got)
 	}
-	if !env.store.has(alice + "/boxes/" + aliceBox + "/head.json") {
+	if !env.store.has(statePath{user: alice, box: aliceBox}.head()) {
 		t.Error("the deleted box's saved state is gone")
 	}
 	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
@@ -235,7 +236,7 @@ func TestDeleteOfAHibernatedBoxSkipsTheSave(t *testing.T) {
 
 func TestDeleteRefusals(t *testing.T) {
 	env := newStateEnv(t)
-	if _, err := env.svc.Delete(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := env.svc.Delete(auth.WithUser(t.Context(), bob), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("Delete by bob = %v, want NotFound", err)
 	}
 	gate := make(chan struct{})

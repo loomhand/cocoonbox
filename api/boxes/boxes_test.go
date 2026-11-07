@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"regexp"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -43,7 +45,7 @@ func TestBoxID(t *testing.T) {
 	if !regexp.MustCompile(`^cb-[0-9a-f]{12}$`).MatchString(id) || id != aliceBox {
 		t.Fatalf("BoxID(alice) = %q, want %s", id, aliceBox)
 	}
-	if BoxID("bob") == id {
+	if BoxID(bob) == id {
 		t.Error("BoxID must differ per user")
 	}
 }
@@ -102,7 +104,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 		user, want string
 	}{
 		{alice, "cbcore:v1"},
-		{"bob", ""},
+		{bob, ""},
 		{"carol", "cbcore:v2"},
 		{"dave", ""},
 	} {
@@ -118,7 +120,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 		}
 	}
 
-	if got := defaults.upgrade(svc.ownImage("bob"), "cbdesk:v25"); got != "cbdesk:v25" {
+	if got := defaults.upgrade(svc.ownImage(bob), "cbdesk:v25"); got != "cbdesk:v25" {
 		t.Errorf("bob's upgrade = %q, want cbdesk:v25", got)
 	}
 
@@ -845,6 +847,49 @@ func (f *fakeMachines) watchRevision() int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.revision
+}
+
+func (f *fakeMachines) waitSpec(t *testing.T, n int) machines.Spec {
+	t.Helper()
+	clustertest.WaitFor(t, fmt.Sprintf("Ensure call %d", n), func() bool { return f.specCount() >= n })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.specs[n-1]
+}
+
+func (f *fakeMachines) deletedIDs() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.deleted, ",")
+}
+
+func (f *fakeMachines) specCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.specs)
+}
+
+func (f *fakeMachines) setState(id string, state machines.State) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.machines[id]
+	m.State = state
+	f.machines[id] = m
+}
+
+func (f *fakeMachines) setMeta(id, key, value string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.machines[id]
+	m.Meta = maps.Clone(m.Meta)
+	m.Meta[key] = value
+	f.machines[id] = m
+}
+
+func (f *fakeMachines) remove(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.machines, id)
 }
 
 func watch(t *testing.T, svc *Service, ctx context.Context, opID, from string) []*controlv1.OperationEvent {

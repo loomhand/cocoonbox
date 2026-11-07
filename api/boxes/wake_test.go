@@ -40,7 +40,7 @@ func TestSetWakeScheduleRefusesWhatTheLimitsForbid(t *testing.T) {
 		{name: "never", req: &controlv1.SetWakeScheduleRequest{Cron: "0 9 30 2 *", Tz: "UTC"}, code: codes.InvalidArgument, want: "never fires"},
 		{name: "awake too long", req: &controlv1.SetWakeScheduleRequest{Cron: "0 9 * * *", Tz: "UTC", AwakeForS: 7200}, code: codes.InvalidArgument, want: "awake_for must be in 1m0s..1h0m0s"},
 		{name: "awake too short", req: &controlv1.SetWakeScheduleRequest{Cron: "0 9 * * *", Tz: "UTC", AwakeForS: 30}, code: codes.InvalidArgument, want: "awake_for must be in"},
-		{name: "another user's box", req: &controlv1.SetWakeScheduleRequest{BoxId: BoxID("bob"), Cron: "0 9 * * *", Tz: "UTC"}, code: codes.NotFound},
+		{name: "another user's box", req: &controlv1.SetWakeScheduleRequest{BoxId: BoxID(bob), Cron: "0 9 * * *", Tz: "UTC"}, code: codes.NotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,7 +149,6 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 
 			restarted := New(e.fake, testDefaults, newFakeRegistry())
 			restarted.EnableWake(e.store, testWakeLimits)
-			restarted.wake.now = func() time.Time { return e.clock }
 			e.svc = restarted
 			e.alarm(t, nine.Add(15*time.Minute))
 			if got := e.fake.state(aliceBox); got != tt.want {
@@ -367,7 +366,6 @@ func newWakeEnv(t *testing.T) *wakeEnv {
 	return e
 }
 
-// alarm runs one pass at now on the clock the alarm and its reaches read.
 func (e *wakeEnv) alarm(t *testing.T, now time.Time) {
 	t.Helper()
 	e.clock = now
@@ -375,7 +373,6 @@ func (e *wakeEnv) alarm(t *testing.T, now time.Time) {
 	e.svc.alarm(t.Context(), now)
 }
 
-// schedule stores cron for alice's box with its next time at 09:00 UTC tomorrow, which it returns.
 func (e *wakeEnv) schedule(t *testing.T, cron string, awakeFor time.Duration) time.Time {
 	t.Helper()
 	nine := time.Now().UTC().Truncate(24 * time.Hour).Add(33 * time.Hour)

@@ -3,7 +3,6 @@ package boxes
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strconv"
 	"strings"
 	"testing"
@@ -219,7 +218,6 @@ func TestAFailedParkHibernatesTheBoxAgain(t *testing.T) {
 	}
 }
 
-// parkEnv holds alice's box hibernated at clock, after one save.
 type parkEnv struct {
 	*stateEnv
 	clock time.Time
@@ -241,7 +239,7 @@ func newParkEnv(t *testing.T) *parkEnv {
 	return e
 }
 
-// park runs one sweep at now, letting a machine it wakes come up, and returns the park operation, nil when it parked nothing.
+// park returns the park operation of one sweep at now, nil when it parked nothing.
 func (e *parkEnv) park(t *testing.T, now time.Time) *operation {
 	t.Helper()
 	e.clock = now
@@ -282,23 +280,6 @@ func (e *parkEnv) meta(key string) string {
 func (e *parkEnv) idle(t *testing.T) {
 	t.Helper()
 	clustertest.WaitFor(t, "the operation ends", func() bool { return e.svc.ops.activeFor(aliceBox) == nil })
-}
-
-func (f *fakeMachines) setState(id string, state machines.State) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	m := f.machines[id]
-	m.State = state
-	f.machines[id] = m
-}
-
-func (f *fakeMachines) setMeta(id, key, value string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	m := f.machines[id]
-	m.Meta = maps.Clone(m.Meta)
-	m.Meta[key] = value
-	f.machines[id] = m
 }
 
 func lastEvent(op *operation) *controlv1.OperationEvent {

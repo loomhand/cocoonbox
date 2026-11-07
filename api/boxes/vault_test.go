@@ -16,7 +16,7 @@ const vaultFlag = "COCOONBOX_VAULT"
 func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
-	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning, Incarnation: "vm1"})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1"})
 	keys := &fakeVault{digests: map[string]string{alice: "d1"}}
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
@@ -43,34 +43,8 @@ func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T
 	if m, _ := fake.Get(t.Context(), aliceBox); m.Meta[metaVault] != "d2" {
 		t.Errorf("recorded digest = %q, want d2", m.Meta[metaVault])
 	}
-	if got := pushesTo(fake, BoxID("bob")); got != 1 {
+	if got := pushesTo(fake, BoxID(bob)); got != 1 {
 		t.Errorf("pushes to bob's machine without keys = %d, want only the provisioning push", got)
-	}
-}
-
-func TestApplyVaultReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
-	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
-	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
-	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
-
-	if err := svc.ApplyVault(t.Context(), alice); err != nil {
-		t.Fatalf("ApplyVault: %v", err)
-	}
-	flags := map[string]bool{}
-	for _, c := range fake.credCalls() {
-		flags[c.machine] = c.flags != nil
-	}
-	if len(flags) != 1 || !flags[aliceBox] {
-		t.Errorf("pushes = %v, want alice's running machine only", flags)
-	}
-	running, _ := fake.Get(t.Context(), aliceBox)
-	hibernated, _ := fake.Get(t.Context(), aliceBox+"-2")
-	if running.Meta[metaVault] != "d1" || hibernated.Meta[metaVault] != "" {
-		t.Errorf("digests = %q and %q, want one only on the running machine", running.Meta[metaVault], hibernated.Meta[metaVault])
 	}
 }
 

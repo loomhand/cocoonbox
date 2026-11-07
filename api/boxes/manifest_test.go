@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -60,4 +61,39 @@ func TestTheContractFixtureOpensSplitsAndSealsLikeTheAgent(t *testing.T) {
 	if err != nil || len(parts.files) != 3 || !bytes.Equal(parts.join(), plain) {
 		t.Errorf("split = %d files, %v", len(parts.files), err)
 	}
+}
+
+func TestOpenSealedRejectsTamperingAndOtherIDs(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	id, sealed := sealManifest(secret, sampleFiles())
+	if _, err := openSealed(secret, id, sealed, manifestLimit); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	flipped := slices.Clone(sealed)
+	flipped[len(flipped)-1] ^= 1
+	if _, err := openSealed(secret, id, flipped, manifestLimit); err == nil || !strings.Contains(err.Error(), "authentication") {
+		t.Errorf("tampered object: %v", err)
+	}
+	if _, err := openSealed(secret, snapshotID(1), sealed, manifestLimit); err == nil {
+		t.Error("an object opened under another id")
+	}
+	if _, err := openSealed([]byte("another key, also 32 bytes long."), id, sealed, manifestLimit); err == nil {
+		t.Error("an object opened under another key")
+	}
+	if _, err := openSealed(secret, id, sealed, 10); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("oversized object: %v", err)
+	}
+}
+
+func sealManifest(secret []byte, files []manifestFile) (string, []byte) {
+	plain, err := json.Marshal(manifest{Version: manifestVersion, Files: files})
+	if err != nil {
+		panic(err)
+	}
+	id := hex.EncodeToString(mac(mac(secret, idLabel), plain))
+	sealed, err := sealObject(secret, id, plain)
+	if err != nil {
+		panic(err)
+	}
+	return id, sealed
 }

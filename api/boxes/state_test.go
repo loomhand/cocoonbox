@@ -86,7 +86,7 @@ func TestSaveStateRefusals(t *testing.T) {
 	if _, err := svc.SaveState(ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("SaveState on a hibernated box: %v, want FailedPrecondition", err)
 	}
-	if _, err := svc.SaveState(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := svc.SaveState(auth.WithUser(t.Context(), bob), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("SaveState on another user's box: %v, want NotFound", err)
 	}
 	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
@@ -404,9 +404,7 @@ func TestRestoreSendsChunkURLsInPages(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = chunkIDs(2*pageSize + 1)
 	env.save(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 
 	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
 	if err != nil {
@@ -542,18 +540,7 @@ func TestSaveRefusesUnsafeIDs(t *testing.T) {
 }
 
 func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbcore:v1", Revision: 1})
-	st := newFakeStore()
-	defaults := testDefaults
-	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v1", "cbdesk:v24"}
-	svc := New(fake, defaults, newFakeRegistry())
-	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
-	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.get(ctx, aliceBox)
-	if err != nil || box.GetLatestImage() != "cbcore:v1" {
-		t.Fatalf("box = %v, %v, want latest cbcore:v1 so no upgrade is offered", box, err)
-	}
+	fake, svc, ctx := newFamilyEnv(t, "cbcore:v1", "cbdesk:v25", "cbcore:v1", "cbdesk:v24")
 	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
@@ -563,18 +550,7 @@ func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
 }
 
 func TestRebaseStaysInTheBoxFamilyUnlessTheOperatorAsks(t *testing.T) {
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbdroid:v3", Revision: 1})
-	st := newFakeStore()
-	defaults := testDefaults
-	defaults.Image, defaults.RebaseImages = "cbcore:v2", []string{"cbcore:v1"}
-	svc := New(fake, defaults, newFakeRegistry())
-	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
-	ctx := auth.WithUser(t.Context(), alice)
-	box, err := svc.get(ctx, aliceBox)
-	if err != nil || box.GetLatestImage() != "cbdroid:v3" {
-		t.Fatalf("box = %v, %v, want latest cbdroid:v3 so no upgrade is offered", box, err)
-	}
+	fake, svc, ctx := newFamilyEnv(t, "cbdroid:v3", "cbcore:v2", "cbcore:v1")
 	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); status.Code(err) != codes.InvalidArgument || !strings.Contains(err.Error(), "choose cbcore:v2, cbcore:v1") {
 		t.Errorf("Rebase without an image off an offered family = %v, want InvalidArgument naming the offered images", err)
 	}
@@ -585,7 +561,7 @@ func TestRebaseStaysInTheBoxFamilyUnlessTheOperatorAsks(t *testing.T) {
 		t.Fatalf("refused Rebases created %d machines", n)
 	}
 	operatorCtx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(auth.HeaderOperatorUser, alice))
-	_, err = auth.OperatorUnary(operatorCtx, &controlv1.RebaseRequest{BoxId: aliceBox, Image: "cbcore:v2"}, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+	_, err := auth.OperatorUnary(operatorCtx, &controlv1.RebaseRequest{BoxId: aliceBox, Image: "cbcore:v2"}, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
 		return svc.Rebase(ctx, req.(*controlv1.RebaseRequest))
 	})
 	if err != nil {
@@ -616,9 +592,7 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
 	env.save(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 
 	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
 	if err != nil || resp.GetOperation().GetId() == "" || resp.GetBox().GetState() != controlv1.BoxState_BOX_STATE_STARTING {
@@ -699,9 +673,7 @@ func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 				}
 				env.svc.state.heads = map[statePath]head{}
 			}
-			env.fake.mu.Lock()
-			delete(env.fake.machines, aliceBox)
-			env.fake.mu.Unlock()
+			env.fake.remove(aliceBox)
 
 			if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{}); err != nil {
 				t.Fatalf("Ensure: %v", err)
@@ -717,9 +689,7 @@ func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
 	env.save(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 	block := make(chan struct{})
 	env.agent.restoreGate = block
 
@@ -753,9 +723,7 @@ func TestAFailedRestoreDeletesTheMachineSoEnsureRetries(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
 	env.save(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 	env.agent.restoreErr = errors.New("disk full")
 
 	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
@@ -786,9 +754,7 @@ func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
 	env.save(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 	block := make(chan struct{})
 	env.agent.restoreGate = block
 	cut, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
@@ -821,9 +787,7 @@ func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
 
 func TestEnsureWithoutSavedStateCreatesAnEmptyBox(t *testing.T) {
 	env := newStateEnv(t)
-	env.fake.mu.Lock()
-	delete(env.fake.machines, aliceBox)
-	env.fake.mu.Unlock()
+	env.fake.remove(aliceBox)
 
 	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
 	if err != nil {
@@ -916,9 +880,7 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 			t.Errorf("store lacks %s", key)
 		}
 	}
-	if _, err := l.save(t.Context(), noAuth, statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("save c: %v", err)
-	}
+	saveLive(t, l, statePath{user: alice, box: "cb-00000000000c"}, "c")
 	if n := len(agent.lastUpload().GetPuts()); n != 0 {
 		t.Errorf("a third box with chunks the user holds uploaded %d", n)
 	}
@@ -946,34 +908,6 @@ func TestTwoLayersOnAVersionedStoreMergeTheirIndexWrites(t *testing.T) {
 	}
 }
 
-func TestASaveFailsWhenAnotherLayersGCRewroteTheIndexAfterItsPlan(t *testing.T) {
-	st := newVersionedStore()
-	agent := newFakeAgent(st.fakeStore)
-	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	saver, collector := st.layer(agent), st.layer(agent)
-	p := statePath{user: alice, box: "cb-00000000000a"}
-	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("first save: %v", err)
-	}
-	agent.byBox["a"] = hexIDs("c1", "c2")
-	agent.onUpload = func(machines.Endpoint) {
-		var idx chunkIndex
-		version, _, err := collector.readVersion(t.Context(), p.index(), &idx)
-		if err == nil {
-			err = collector.writeVersion(t.Context(), p.index(), chunkIndex{KeyID: idx.KeyID, Generation: idx.Generation + 1}, version)
-		}
-		if err != nil {
-			t.Errorf("rewrite the index as a gc would: %v", err)
-		}
-	}
-	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); !errors.Is(err, errIndexCollected) {
-		t.Fatalf("save across a gc rewrite = %v, want errIndexCollected", err)
-	}
-	if h, err := collector.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
-		t.Errorf("head after the failed save = %+v, %v, want the first snapshot", h, err)
-	}
-}
-
 func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
@@ -981,9 +915,7 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-			t.Fatalf("save %v: %v", chunks, err)
-		}
+		saveLive(t, saver, p, "a")
 	}
 	saved := false
 	st.before = func(op, key string) {
@@ -1012,9 +944,7 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-			t.Fatalf("save %v: %v", chunks, err)
-		}
+		saveLive(t, saver, p, "a")
 	}
 	agent.byBox = map[string][]string{"a": hexIDs("c1", "c3")}
 	var collected error
@@ -1033,6 +963,9 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	if !errors.Is(err, errIndexCollected) {
 		t.Errorf("save planned before the gc pass = %v, want errIndexCollected", err)
 	}
+	if h, err := collector.head(t.Context(), p); err != nil || h.Latest != snapshotID(2) {
+		t.Errorf("head after the failed save = %+v, %v, want the second snapshot", h, err)
+	}
 }
 
 func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testing.T) {
@@ -1041,9 +974,7 @@ func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testin
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("first save: %v", err)
-	}
+	saveLive(t, saver, p, "a")
 	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
 	var collected error
 	ran := false
@@ -1068,9 +999,7 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 	agent := newFakeAgent(st)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := newStateLayer(agent, st, &fakeKeys{}).save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("first save: %v", err)
-	}
+	saveLive(t, newStateLayer(agent, st, &fakeKeys{}), p, "a")
 	slow := &afterGetStore{fakeStore: st}
 	l := newStateLayer(agent, slow, &fakeKeys{})
 	var mirrored []string
@@ -1099,9 +1028,7 @@ func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("first save: %v", err)
-	}
+	saveLive(t, saver, p, "a")
 	st.mu.Lock()
 	for key := range st.modified {
 		st.modified[key] = time.Now().Add(-40 * 24 * time.Hour)
@@ -1117,9 +1044,7 @@ func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
 		st.before = nil
 		r, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
 	}
-	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-		t.Fatalf("save during the gc pass: %v", err)
-	}
+	saveLive(t, saver, p, "a")
 	if collected != nil || r.chunks != 0 || !st.has(p.chunk(hexID("c2"))) || !st.has(p.manifest(snapshotID(2))) {
 		t.Errorf("the gc pass during a save = %+v, %v; want the save's fresh chunk and manifest kept", r, collected)
 	}
@@ -1132,9 +1057,7 @@ func TestTheGCKeepsAnOldChunkASaveReusesBeforeItsTimelineNamesIt(t *testing.T) {
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-			t.Fatalf("save %v: %v", chunks, err)
-		}
+		saveLive(t, saver, p, "a")
 	}
 	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive); err != nil {
 		t.Fatalf("collect that writes the timeline: %v", err)
@@ -1181,9 +1104,7 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	save := func(chunks ...string) {
 		t.Helper()
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
-			t.Fatalf("save %v: %v", chunks, err)
-		}
+		saveLive(t, saver, p, "a")
 	}
 	save("c1")
 	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive); err != nil {
@@ -1229,21 +1150,167 @@ func newStateEnv(t *testing.T) *stateEnv {
 
 func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
 	t.Helper()
-	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	return e.saveBox(t, aliceBox)
+}
+
+func (e *stateEnv) saveEach(t *testing.T, chunks ...[]string) {
+	t.Helper()
+	for _, c := range chunks {
+		e.agent.chunks = hexIDs(c...)
+		e.save(t)
+	}
+}
+
+func (e *stateEnv) saveBox(t *testing.T, box string) []*controlv1.OperationEvent {
+	t.Helper()
+	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: box})
+	return e.finish(t, "save of "+box, op, err)
+}
+
+func (e *stateEnv) deleteBox(t *testing.T, box string) {
+	t.Helper()
+	op, err := e.svc.Delete(e.ctx, &controlv1.BoxRef{BoxId: box})
+	e.finish(t, "delete of "+box, op, err)
+}
+
+func (e *stateEnv) finish(t *testing.T, what string, op *controlv1.Operation, err error) []*controlv1.OperationEvent {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("SaveState: %v", err)
+		t.Fatalf("%s: %v", what, err)
 	}
 	events := watch(t, e.svc, e.ctx, op.GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
-		t.Fatalf("save ended with %v", last)
+		t.Fatalf("%s ended with %v", what, last)
 	}
-	time.Sleep(time.Millisecond)
 	return events
+}
+
+func (e *stateEnv) trySave() error {
+	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		return err
+	}
+	for {
+		events, done, changed := e.svc.ops.local(op.GetId()).since(0)
+		if done {
+			if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
+				return fmt.Errorf("save ended with %v", last)
+			}
+			return nil
+		}
+		<-changed
+	}
+}
+
+func (e *stateEnv) addBox(t *testing.T, box string) {
+	t.Helper()
+	if _, err := e.svc.registry.AddBox(e.ctx, users.Box{ID: box, Owner: alice, Name: box}); err != nil {
+		t.Fatalf("AddBox: %v", err)
+	}
+	e.fake.put(machines.Machine{ID: box, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1})
+}
+
+func (e *stateEnv) collect(t *testing.T, opts GCOptions, ahead time.Duration) gcReport {
+	t.Helper()
+	r, err := e.svc.state.collect(e.ctx, alice, opts, time.Now().Add(ahead), e.live)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	return r
+}
+
+func (e *stateEnv) live(box string) bool {
+	return e.svc.registry.HasBox(alice, box)
+}
+
+func (e *stateEnv) restoreHead(t *testing.T) {
+	t.Helper()
+	p := statePath{user: alice, box: aliceBox}
+	if _, err := e.svc.state.restore(e.ctx, p, machines.Endpoint{Key: "restore"}, headID(t, e.svc.state, p), noProgress); err != nil {
+		t.Errorf("restore of the head: %v", err)
+	}
+}
+
+func (e *stateEnv) headID(t *testing.T) string {
+	t.Helper()
+	h, err := e.svc.state.head(e.ctx, statePath{user: alice, box: aliceBox})
+	if err != nil || h.Latest == "" {
+		t.Fatalf("head = %v, %v", h, err)
+	}
+	return h.Latest
+}
+
+func (e *stateEnv) entry(t *testing.T, id string) timelineEntry {
+	t.Helper()
+	got, err := e.svc.state.keptEntry(e.ctx, statePath{user: alice, box: aliceBox}, id)
+	if err != nil {
+		t.Fatalf("entry %s: %v", id, err)
+	}
+	return got
+}
+
+func (e *stateEnv) finalEvent(t *testing.T, op *controlv1.Operation) *controlv1.OperationEvent {
+	t.Helper()
+	events := watch(t, e.svc, e.ctx, op.GetId(), "")
+	return events[len(events)-1]
+}
+
+func (e *stateEnv) timelineIDs(t *testing.T, p statePath) []string {
+	t.Helper()
+	var tl timeline
+	if err := getJSON(e.ctx, e.store, p.timeline(), &tl); err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	var ids []string
+	for _, s := range tl.Snapshots {
+		ids = append(ids, s.ID)
+	}
+	return ids
+}
+
+func (e *stateEnv) timelineEntries(t *testing.T, p statePath) []timelineEntry {
+	t.Helper()
+	var tl timeline
+	if err := getJSON(e.ctx, e.store, p.timeline(), &tl); err != nil {
+		t.Fatalf("timeline: %v", err)
+	}
+	return tl.Snapshots
+}
+
+func (e *stateEnv) indexIDs(t *testing.T) []string {
+	t.Helper()
+	var idx chunkIndex
+	if err := getJSON(e.ctx, e.store, alice+"/index.json", &idx); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	return idx.Chunks
 }
 
 func noAuth(ctx context.Context) context.Context { return ctx }
 
-// clockSigner issues credentials that expire credentialLifetime after the fake clock's reading.
+func saveLive(t *testing.T, l *stateLayer, p statePath, key string) {
+	t.Helper()
+	if _, err := l.save(t.Context(), noAuth, p, machines.Endpoint{Key: key}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("save of %s: %v", p.box, err)
+	}
+}
+
+func newFamilyEnv(t *testing.T, image, defaultImage string, rebaseImages ...string) (*fakeMachines, *Service, context.Context) {
+	t.Helper()
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: image, Revision: 1})
+	st := newFakeStore()
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages = defaultImage, rebaseImages
+	svc := New(fake, defaults, newFakeRegistry())
+	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
+	ctx := auth.WithUser(t.Context(), alice)
+	if box, err := svc.get(ctx, aliceBox); err != nil || box.GetLatestImage() != image {
+		t.Fatalf("box = %v, %v, want latest %s so no upgrade is offered", box, err, image)
+	}
+	return fake, svc, ctx
+}
+
 type clockSigner struct {
 	fakeSigner
 
@@ -1274,26 +1341,6 @@ func credentialExpiry(t *testing.T, cred string) time.Time {
 		t.Fatalf("credential %q: %v", cred, err)
 	}
 	return time.Unix(secs, 0)
-}
-
-func (f *fakeMachines) waitSpec(t *testing.T, n int) machines.Spec {
-	t.Helper()
-	clustertest.WaitFor(t, fmt.Sprintf("Ensure call %d", n), func() bool { return f.specCount() >= n })
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.specs[n-1]
-}
-
-func (f *fakeMachines) deletedIDs() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return strings.Join(f.deleted, ",")
-}
-
-func (f *fakeMachines) specCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.specs)
 }
 
 func hexID(name string) string {
@@ -1337,7 +1384,6 @@ func seed(t *testing.T, st *fakeStore, objects map[string]any) {
 	}
 }
 
-// fakeStore calls before, when set, with the operation and key ahead of each store call.
 type fakeStore struct {
 	before func(op, key string)
 
@@ -1436,7 +1482,6 @@ func (s *fakeStore) has(key string) bool {
 	return ok
 }
 
-// versionedStore versions each object by the hash of its bytes.
 type versionedStore struct {
 	*fakeStore
 }
@@ -1739,6 +1784,12 @@ func (a *fakeAgent) lastRestore() restoreCall {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.restores[len(a.restores)-1]
+}
+
+func (a *fakeAgent) pathRestoreCalls() []restoreCall {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.pathRestores)
 }
 
 type afterGetStore struct {

@@ -80,13 +80,13 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-3", Owner: alice, State: machines.StateHibernated})
-	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
 	conn := &fakeConnect{}
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
 	svc.refreshCredentials(t.Context())
-	if reads := conn.owners(); !slices.Equal(reads, []string{alice, "bob"}) {
+	if reads := conn.owners(); !slices.Equal(reads, []string{alice, bob}) {
 		t.Errorf("credential reads = %v, want one per owner", reads)
 	}
 	var pushed []string
@@ -94,28 +94,47 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 		pushed = append(pushed, c.machine)
 	}
 	slices.Sort(pushed)
-	if want := []string{aliceBox, aliceBox + "-2", BoxID("bob")}; !slices.Equal(pushed, want) {
+	if want := []string{aliceBox, aliceBox + "-2", BoxID(bob)}; !slices.Equal(pushed, want) {
 		t.Errorf("pushed to %v, want %v", pushed, want)
 	}
 }
 
-func TestApplyCredentialsReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
-	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
-	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableConnect(&fakeConnect{})
-
-	if err := svc.ApplyCredentials(t.Context(), alice); err != nil {
-		t.Fatalf("ApplyCredentials: %v", err)
-	}
-	flags := map[string]bool{}
-	for _, c := range fake.credCalls() {
-		flags[c.machine] = c.flags != nil
-	}
-	if len(flags) != 1 || !flags[aliceBox] {
-		t.Errorf("pushes = %v, want alice's running machine only", flags)
+func TestApplyReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		enable func(*Service)
+		apply  func(*Service, context.Context, string) error
+		digest string
+	}{
+		{"credentials", func(s *Service) { s.EnableConnect(&fakeConnect{}) }, (*Service).ApplyCredentials, ""},
+		{"vault", func(s *Service) {
+			s.EnableProvisioning(fakeSigner{})
+			s.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
+		}, (*Service).ApplyVault, "d1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeMachines()
+			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
+			fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
+			fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
+			svc := New(fake, testDefaults, newFakeRegistry())
+			tt.enable(svc)
+			if err := tt.apply(svc, t.Context(), alice); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			flags := map[string]bool{}
+			for _, c := range fake.credCalls() {
+				flags[c.machine] = c.flags != nil
+			}
+			if len(flags) != 1 || !flags[aliceBox] {
+				t.Errorf("pushes = %v, want alice's running machine only", flags)
+			}
+			running, _ := fake.Get(t.Context(), aliceBox)
+			hibernated, _ := fake.Get(t.Context(), aliceBox+"-2")
+			if running.Meta[metaVault] != tt.digest || hibernated.Meta[metaVault] != "" {
+				t.Errorf("digests = %q and %q, want %q only on the running machine", running.Meta[metaVault], hibernated.Meta[metaVault], tt.digest)
+			}
+		})
 	}
 }
 
@@ -123,7 +142,7 @@ func TestAHibernatedMachineKeepsItsDoorKeyAndADeletedOneLosesIt(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-rnew", Owner: alice, State: machines.StateHibernated})
-	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
 	conn := &fakeConnect{}
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
@@ -134,7 +153,7 @@ func TestAHibernatedMachineKeepsItsDoorKeyAndADeletedOneLosesIt(t *testing.T) {
 	if err := svc.PruneDoorKeys(t.Context()); err != nil {
 		t.Fatalf("PruneDoorKeys: %v", err)
 	}
-	if dropped, live := conn.doorKeys(); len(dropped) != 0 || !slices.Equal(live, []string{aliceBox, aliceBox + "-rnew", BoxID("bob")}) {
+	if dropped, live := conn.doorKeys(); len(dropped) != 0 || !slices.Equal(live, []string{aliceBox, aliceBox + "-rnew", BoxID(bob)}) {
 		t.Fatalf("dropped %v, prune kept %v; want nothing dropped and every machine kept", dropped, live)
 	}
 	if err := svc.Release(t.Context(), alice); err != nil {

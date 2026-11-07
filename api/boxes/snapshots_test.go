@@ -2,8 +2,6 @@ package boxes
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json/v2"
 	"slices"
 	"strings"
 	"testing"
@@ -197,58 +195,6 @@ func TestRestorePathsRefusals(t *testing.T) {
 	}
 }
 
-func TestOpenSealedRejectsTamperingAndOtherIDs(t *testing.T) {
-	secret := []byte("0123456789abcdef0123456789abcdef")
-	id, sealed := sealManifest(secret, sampleFiles())
-	if _, err := openSealed(secret, id, sealed, manifestLimit); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	flipped := slices.Clone(sealed)
-	flipped[len(flipped)-1] ^= 1
-	if _, err := openSealed(secret, id, flipped, manifestLimit); err == nil || !strings.Contains(err.Error(), "authentication") {
-		t.Errorf("tampered object: %v", err)
-	}
-	if _, err := openSealed(secret, snapshotID(1), sealed, manifestLimit); err == nil {
-		t.Error("an object opened under another id")
-	}
-	if _, err := openSealed([]byte("another key, also 32 bytes long."), id, sealed, manifestLimit); err == nil {
-		t.Error("an object opened under another key")
-	}
-	if _, err := openSealed(secret, id, sealed, 10); err == nil || !strings.Contains(err.Error(), "exceeds") {
-		t.Errorf("oversized object: %v", err)
-	}
-}
-
-func (e *stateEnv) headID(t *testing.T) string {
-	t.Helper()
-	h, err := e.svc.state.head(e.ctx, statePath{user: alice, box: aliceBox})
-	if err != nil || h.Latest == "" {
-		t.Fatalf("head = %v, %v", h, err)
-	}
-	return h.Latest
-}
-
-func (e *stateEnv) entry(t *testing.T, id string) timelineEntry {
-	t.Helper()
-	got, err := e.svc.state.keptEntry(e.ctx, statePath{user: alice, box: aliceBox}, id)
-	if err != nil {
-		t.Fatalf("entry %s: %v", id, err)
-	}
-	return got
-}
-
-func (e *stateEnv) finalEvent(t *testing.T, op *controlv1.Operation) *controlv1.OperationEvent {
-	t.Helper()
-	events := watch(t, e.svc, e.ctx, op.GetId(), "")
-	return events[len(events)-1]
-}
-
-func (a *fakeAgent) pathRestoreCalls() []restoreCall {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return slices.Clone(a.pathRestores)
-}
-
 func sampleFiles() []manifestFile {
 	return []manifestFile{
 		{Root: "home", Path: "Documents", Kind: kindDir, Mode: 0o755},
@@ -259,17 +205,4 @@ func sampleFiles() []manifestFile {
 		{Root: "workspace", Path: "app", Kind: kindDir, Mode: 0o755},
 		{Root: "workspace", Path: "app/main.go", Kind: kindFile, Mode: 0o644, Size: 9, Chunks: hexIDs("m1", "m2", "m1")},
 	}
-}
-
-func sealManifest(secret []byte, files []manifestFile) (string, []byte) {
-	plain, err := json.Marshal(manifest{Version: manifestVersion, Files: files})
-	if err != nil {
-		panic(err)
-	}
-	id := hex.EncodeToString(mac(mac(secret, idLabel), plain))
-	sealed, err := sealObject(secret, id, plain)
-	if err != nil {
-		panic(err)
-	}
-	return id, sealed
 }
