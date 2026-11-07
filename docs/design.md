@@ -9,10 +9,9 @@ cocoonbox gives each user a persistent cloud computer with an agent living in it
 | Part | Choice | Why | Rejected |
 |---|---|---|---|
 | macOS app | **Swift, SwiftUI + AppKit**; live view = swift-rfb (loomhand/swift-rfb, MIT): event-driven RFB client with a Metal renderer, fed directly by Session.Screen | native idle ~30 MB vs Electron's ~130 MB / 400 MB bundle; framebuffer path stays off a webview canvas | Electron, Tauri (WKWebView startup + canvas path) |
-| Mac local helper `cocoonboxd` | Swift, LaunchAgent, dials out to the box | survives the app window; runs "on my Mac" requests; approvals re-checked locally | helper inside the app process |
 | In-box agent `cocoonbox-agent` | **Rust**, single static binary (tokio, tonic, rusqlite) | per-VM RSS is density: ~20 MB vs a Node host's hundreds; same language as gw and cua-driver | Node/TS AI-SDK host |
 | Control plane + edge `cocoonbox-api` | **Go**, a systemd service on the bench host | sandboxd claim lifecycle behind the `machines` interface; routes app ↔ box | Rust |
-| Wire | **gRPC over HTTP/2** everywhere (tonic / grpc-go / grpc-swift 2); bidi streams carry events, RFB bytes and local-exec | one connection per app, streaming both ways, protobuf contracts shared by three languages | HTTP+SSE JSON, WebSocket per channel |
+| Wire | **gRPC over HTTP/2** everywhere (tonic / grpc-go / grpc-swift 2); bidi streams carry events and RFB bytes | one connection per app, streaming both ways, protobuf contracts shared by three languages | HTTP+SSE JSON, WebSocket per channel |
 | Screen executor | **cua-driver** ([loomhand/cua](https://github.com/loomhand/cua), MIT, Rust), a child of shuttle; the box has no cua-driver unit | AT-SPI element tree + element-token clicks + pixel input, one daemon for Linux/Windows/macOS | cua computer-server (a11y stub), OSWorld server (benchmark-shaped, no auth) |
 | Desktop in guest | **real Xorg** with `xserver-xorg-video-dummy` at 1280×800 + `/dev/uinput`, XFCE, AT-SPI on, Xorg's built-in VNC module (TigerVNC `vnc`) on 127.0.0.1:5900 | cua-driver's focus-free pixel input needs real Xorg + uinput; TigerVNC Xvnc cannot hotplug the MPX devices (`linux-mpx-recovery.md:41-42`) | Xvnc (foreground-only input) |
 | Browser | Google Chrome (.deb), CDP on loopback, `--force-renderer-accessibility` | structured channel ahead of pixels | snap chromium |
@@ -24,19 +23,18 @@ Hot-path cost: none. No change to cocoon, sandboxd or gw code; all of it is conf
 ## 2. Topology
 
 ```
-cocoonbox.app ─┐                              bench host
-cocoonboxd  ───┼─ gRPC/h2+TLS ─▶ cocoonbox-api (edge + control) ──▶ sandboxd claim ─▶ VM
-               │                  │ routes by box_id, never sees payload secrets        │
-               │                  └─ gRPC ─────────────────────────────────────────────▶│ cocoonbox-agent :7443
-               │                                                                        │  ├─ shuttle + cua-driver child
-               │                                                                        │  ├─ Chrome CDP (loopback)
-               │                                                                        │  ├─ Xorg VNC :5900 (loopback)
-               │                                                                        │  ├─ stdio MCP servers (plugins)
-               │                                                                        │  └─ proxy → host egress doors (§14.6, §16.3)
-               │                                                                        └──▶ gw 10.203.0.1:18090 ─▶ OpenRouter / vendors
+cocoonbox.app ─── gRPC/h2+TLS ─▶ cocoonbox-api (edge + control) ──▶ sandboxd claim ─▶ VM
+                                  │ routes by box_id, never sees payload secrets        │
+                                  └─ gRPC ─────────────────────────────────────────────▶│ cocoonbox-agent :7443
+                                                                                        │  ├─ shuttle + cua-driver child
+                                                                                        │  ├─ Chrome CDP (loopback)
+                                                                                        │  ├─ Xorg VNC :5900 (loopback)
+                                                                                        │  ├─ stdio MCP servers (plugins)
+                                                                                        │  └─ proxy → host egress doors (§14.6, §16.3)
+                                                                                        └──▶ gw 10.203.0.1:18090 ─▶ OpenRouter / vendors
 ```
 
-The app and `cocoonboxd` always dial out (no inbound port on the Mac). The edge authenticates the user, resolves `box_id → sandboxd claim`, and proxies through the sandboxd port relay the gRPC stream; account credentials never enter the box (§16).
+The app always dials out (no inbound port on the Mac). The edge authenticates the user, resolves `box_id → sandboxd claim`, and proxies through the sandboxd port relay the gRPC stream; account credentials never enter the box (§16).
 
 ## 3. In-box agent (`cocoonbox-agent`)
 
@@ -45,7 +43,7 @@ Tool tiers, cheapest and most reliable first:
 1. **Connectors / MCP tools** from installed plugins.
 2. **Shell + files**: persistent PTY sessions, read / write / edit / ls / grep under `/workspace`.
 3. **Browser**: CDP; page snapshot as a ref-tagged element list (`- role "name" [ref=eN]`, capped), act by ref.
-4. **Computer**: cua-driver `get_window_state` (screenshot + AT-SPI tree) and element-token actions first, pixel `click/type/press_key/hotkey/scroll/drag` last. Only the `computer` subagent holds this tool; the main agent gets a read-only screenshot when its model has vision.
+4. **Computer**: shuttle's computer verbs, `computer_state` (screenshot, windows, AT-SPI elements) and `computer_act` on an element index first, screen pixels last. Only the `computer` subagent holds this tool; the main agent gets a read-only screenshot when its model has vision.
 
 Models (resolved per role in agent config, all via gw):
 
@@ -53,39 +51,16 @@ Models (resolved per role in agent config, all via gw):
 |---|---|---|
 | main | a text model | `/v1/chat/completions` |
 | computer subagent | a vision model | chat; `anthropic/` models use `/v1/messages` when `GW_ANTHROPIC_WIRE=messages` |
-| summarize / memory | small cheap model | chat |
 
 Rule: the wire is the per-deployment switch `GW_ANTHROPIC_WIRE` (default `chat`), for every `anthropic/` model in any role; with `chat`, gw translates. Images from tool results go into a following user image part for vision models and are replaced by text for text-only models.
 
-Privilege split: the loop runs as `cbagent`; tools (shell, files, browser, cua-driver, MCP servers) run as the desktop user `user` in its session. The model's shell cannot read the loop's database or config. The loop holds no real gw key either: gw calls go through the egress proxy, which injects the per-box gw key like any other surrogate, so a key leaked by a tool is worthless and the per-box tenant cap bounds any abuse.
+Privilege split: the loop runs as `cbagent`; tools (shell, files, browser, cua-driver, MCP servers) run as the desktop user `user` in its session. The loop holds no real gw key: gw calls go through the egress proxy, which injects the machine's gw key like any other surrogate, so a key leaked by a tool is worthless and the user's daily cap bounds any abuse.
 
 State: SQLite (`/var/lib/cocoonbox/agent.db`) for agents, transcript, nonces and flow sync rows; `/workspace` for user files. Both survive hibernate (disk is in the snapshot).
 
 ## 4. Interfaces
 
-The protos are `proto/` in this repo, generated for Go, Rust and Swift; contracts.md holds the services. The sketches of 2026-09-30 for `Boxes` (4.1), `Session` (4.2(a)) and `Agents` (4.4) are superseded by `proto/`.
-
-### 4.2 Connect
-
-Three different things, three permission models (Muse's split):
-
-**(a) App ↔ box:** `cocoonbox.agent.v1.Session` (`proto/cocoonbox/agent/v1/session.proto`).
-
-**(b) Accounts:** superseded by §16. The in-VM vault sketched here kept credentials at rest in the VM.
-
-**(c) The user's Mac — `cocoonbox.agent.v1.LocalExec`** (`cocoonboxd` dials out)
-```proto
-service LocalExec {
-  rpc Attach(stream LocalFrame) returns (stream LocalRequest);  // hello{computer_id, root, label}; requests: exec, read, ls, upload, download, cancel
-}
-```
-- Permission modes `ask` (default) / `always` / `never`; `ask` prompts per (action, exact target) with `allow-once | deny | always | never`, TTL 10 min, retired at turn end.
-- `cocoonboxd` re-checks every request against approvals written by the app (the box cannot forge one); read/ls/transfer confined to a chosen root; shell runs under a Seatbelt profile.
-- Local screen control is a later milestone (AX/CGEvent via cua-driver's macOS app, which requires its own signed app for TCC).
-
-### 4.3 Marketplace
-
-Superseded by §17.
+The protos are `proto/` in this repo, generated for Go, Rust and Swift; contracts.md holds the services.
 
 ## 5. Guest image `cocoonbox-desktop:24.04`
 
@@ -101,34 +76,11 @@ Cocoon OCI VM image (`vmlinuz` + `initrd.img` + rootfs) built from cocoon's `os-
 
 The layout: the cbsbx sandboxd instance under `/srv/cb/sbx` (its own cocoon root, `net none` pools, egress proxy), gw on the bridge address `10.203.0.1` (`cbc0`, which holds no VMs), cocoonbox-api behind Caddy, and the guards in `cb-host-net`. The state store is an external S3 endpoint since 2026-10-16 (374b5722), when MinIO left the host. The K3s, vk-cocoon, cocoon-operator, registry and `cocoon-cb` stack that ran the boxes until M4.8 was removed on 2026-10-01.
 
-## 7. Milestones
-
-| # | Deliverable | Acceptance evidence | Size |
-|---|---|---|---|
-| M0 | isolated `cb` env, K3s, registry, vk-cocoon, operator, gw | `kubectl get node cocoon-cb` Ready; `curl 10.203.0.1:18090/health`; a real completion through gw with the new key | 0.5 d |
-| M1 | guest image v1 + cua-driver spike | VM from CocoonSet boots; `cua-driver doctor` clean; `get_window_state` on Mousepad and Chrome returns a non-empty AT-SPI tree; an element-token click and a background pixel click both land (visible in x11vnc); hibernate → registry `cb/<vm>:hibernate` → wake keeps a marker file | 1–1.5 d |
-| M2 | `cocoonbox-agent` v0 (Rust): gw client (chat + messages), shell/files, browser (CDP refs), computer subagent via cua-driver, Agents/Session gRPC, SQLite | from `grpcurl`: the text-model main agent runs Shell; delegates to the vision computer subagent which opens Mousepad and types text; browser task reads example.com H1 via refs | 4–6 d |
-| M3 | `cocoonbox-api` (Go): Boxes on CocoonSet, WatchOperation, edge routing by box_id, user tokens | `Ensure` from zero to RUNNING; `Hibernate`/`Ensure` round trip with a resumable operation stream; agent RPCs reach the box through the edge only | 3 d |
-| M4 | macOS app v0: sign-in, box state, agent list, streaming transcript, live view + take-over | RoyalVNCKit spike first (encodings against x11vnc: ZRLE/Tight); app shows the desktop at 1280×800 and the transcript live; measured: app RSS, time to first frame, input RTT | 4–5 d |
-| M4.5 | sandbox line evaluation | measured lifecycle, relay, egress, density, failure model; recommendation (§14) | done |
-| M4.6 | state layer (§11): user data to object storage, SaveState, Rebase | SaveState twice on a box (second incremental); Rebase v6 → next image keeps /workspace, a logged-in Chrome cookie and agent.db; sizes and timings recorded | in progress |
-| M4.7 | native agents: a plugin for the local agent CLIs (skill + commands + MCP config), a `cocoonbox` CLI (login, mcp-headers, box lifecycle), a control-plane MCP in the api (status, ensure, hibernate, save, rebase) | from each CLI, with the app closed: wake the box, do a GUI task, save, hibernate; no token in any config file | next |
-| M4.8 | sandboxd as the machine backend (§14), after the upstream PRs (per-claim env, dead-VMM restart) land | §14.8: M3 acceptance plus live view, MCP, Rebase, H3, identity, crash, dead-api and lost-machine runs on the sandboxd backend; default flipped; cocoonset kept as fallback | after PRs |
-| M4.9 | proactive agents (§15): routines in the box, api alarms with wake-then-Tick, precheck, notices in the app, limits and kill switches, dual-meter budgets (§15.9, phases a–f) | §15.9 per phase; end to end: the HN digest routine wakes the hibernated box at 08:00, writes the digest, re-hibernates, and its notice shows in the app without a wake; per-run box-seconds and cost match sandboxd's and gw's own records | 8–10 d |
-| M5 | connect (§16): host-side broker with OAuth through the Mac, connector tools for both modes, per-tool policy and approvals; M5.2 git through egress injection. `cocoonboxd` local-exec (§4.2(c)) is tracked separately | §16.8: GitHub and Calendar connected; mode B with the box hibernated; mode A write approved in the app; no token in the guest, its hibernate image or the Mac's configs | 5–6 d, M5.2 2 d |
-| M6 | market (§17): pinned git catalog in the M4.7 plugin format, skills and secret-free stdio MCP servers in the box, visible in both modes; the catalog doubles as the local agents' marketplace | §17.8: a public agent-CLI plugin installs unchanged and works in a box turn and through the bridge; tampered, symlinked and secret-needing plugins refused; survives Rebase | 3–4 d, M6.2 3 d |
-
-M0–M2 are the proof that "any model + our machines" works; M3–M4.8 make it a usable product; M5–M6 (connect, marketplace) come after the current stack runs end to end.
-
 ## 8. Decisions
 
 Settled 2026-09-30:
 1. **Repo:** monorepo `loomhand/cocoonbox`, AGPL-3.0. Layout: `proto/`, `agent/` (Rust), `api/` (Go), `macos/` (Swift), `image/`. AGPL allows reusing gw's protocol crates.
 2. **Endpoint:** the bench host's public origin. Caddy path matcher `@cocoonbox path /cocoonbox.*` → `reverse_proxy h2c://127.0.0.1:18200` placed before the existing default handlers; gRPC method paths (`/cocoonbox.control.v1.Boxes/Ensure`) never collide with the host's other routes. `caddy validate` before a graceful reload.
-
-Open:
-3. **The new gw key(s)** and daily cap.
-4. **Rust for the in-box agent** (recommended).
 
 ## 9. Risks
 
@@ -160,8 +112,6 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
   - `State.Upload` keeps its unary wire format, so a pre-v14 agent can still save: the api cuts batches at 2048 puts or 512 MiB, whichever comes first.
   - The agent's State server accepts messages up to 16 MiB, set explicitly. Before v14 it used tonic's 4 MiB default, and a Rebase of a 96,955-chunk box failed with a 45 MB RestoreRequest (2026-10-01).
   - `State.PlanPages` is `State.Plan` streamed: the first message carries the snapshot fields and every message a page of up to 2048 chunks. The api takes each page as it arrives and keeps only its compact chunk list. It falls back to the unary `Plan` when an agent answers `UNIMPLEMENTED`, which works up to the dialer's 64 MiB, about 930k chunks. The agent keeps serving `Plan` for an api from before `PlanPages`.
-  - Remaining steps:
-    - Fetch a chunk into the cache as soon as its URL arrives when its file is not ready yet, so no URL waits on the write order and the 10 min bound goes away.
 - **Save and restore speed (v15, measured 2026-10-02 on the bench host's dev box):**
   - Plan reuses a file's chunks when its size, mtime and ctime all match the stamp recorded at the last upload, without reading it. ctime is set by the kernel on every write, truncate, rename and chmod, so a write that restores size and mtime (npm extracts with a fixed 1985 mtime) is still reread. Quiesced plans reuse too.
   - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk, and an SQLite file read through the online backup, is recorded for comparison only and never reused (WAL commits leave the main file's stamp unchanged).
@@ -216,7 +166,7 @@ The adversary is the box's own user (`user`, unprivileged), or root inside one b
 - The agent accepts a credential only for the `key_id` in that file. It re-reads the file when a credential carries a `key_id` or `wake_id` other than its cached copy, since a wake rewrites the file under a running agent.
 - The agent never derives its identity from the hostname, pod name or IP, which would mean knowing how it is scheduled.
 - Until the file exists, every call, `Session.Hello` included, gets `UNAVAILABLE` "identity not provisioned". Readiness is the TCP probe on 7443, and the api reports `RUNNING` only after the identity write succeeds, so no client call arrives earlier.
-- The api keeps `wake_id` in the machine's meta (a claim env entry, not secret), so it survives an api restart; a wake is a new VM incarnation.
+- The api keeps `wake_id` in the machine's meta (the api's machine record), so it survives an api restart; a wake is a new VM incarnation.
 
 **Clock.** A woken guest's clock may lag until NTP syncs. `wake_id` changes on every wake, so it carries the real freshness: a credential from before a wake is dead whatever the clock says. `exp` is a coarse bound (10 min, with a small skew allowance of 2 min) against replay within one wake. Replay needs a copy of the edge's traffic, which runs host-local through the sandboxd port relay.
 
@@ -232,14 +182,6 @@ A signature can't prove "request from box X" without a secret in X. The proof mu
 - **Decided: H3 lands with M4.8 (sandboxd).** sandboxd already provides option C for this direction: the none lane, a per-VM `<vsock>_2049` egress door, and per-claim `guest: false` secrets (#268).
   - The gw key becomes a per-claim host-only secret, injected on the host side of that door. The guest never holds it, and no IP identifies the box.
 - Until M4.8 the K8s path (removed 2026-10-01) ran per-box gw keys with per-box caps, at rest in `agent.env` of that one box.
-
-### 12.3 Changes
-
-- **Order:** after the v7 Rebase acceptance. Then split api / agent / infra as usual.
-- **contracts.md:** drop `EDGE_TOKEN` and add `/run/cocoonbox-identity/identity` and the credential header. `GW_API_KEY` stays per box until M4.8.
-- **agent:** verify ed25519 (`ed25519-dalek`, about 40 KB) with the key from the identity file, and read that file.
-- **api:** sign with a per-(box, `wake_id`) cache; write the identity file through the backend's `Deliver` before reporting `RUNNING`; keep `wake_id` in the machine's meta.
-- **infra:** the identity write creates `/run/cocoonbox-identity` 0755; remove `EDGE_TOKEN` from `agent.env` and the golden; per-box gw keys and caps.
 
 ## 13. Native agents without the app (M4.7)
 
@@ -416,9 +358,9 @@ Design, 2026-10-01. It builds on the M4.5 measurements and on three upstream PRs
 | `CreatedAt` | `claimed_at` |
 | `State` | see 14.3 |
 
-- `List` reads the table. `Get` reads the row and then the claim on its node (`GET /v1/sandboxes/{id}`, or `?metadata=cb_machine=…` when there is no row or it names no node) and writes back what changed.
+- `List` reads the table. `Get` reads the row and then the claim on its recorded node (`GET /v1/sandboxes/{id}`) and writes back what changed; a machine with no row is not found.
 - The backend keeps no copy of the table in memory. One `GET /v1/sandboxes` every 2 s on the leader api refreshes the table (the instance holds only cocoonbox claims), and each of the backend's own lifecycle calls writes it. So `Resolve` on the edge path is two indexed reads, the owner's rows and the box's row; a `NOTIFY cocoonbox_machines` per write, naming the machine and its owner, wakes every api's watches.
-- On a sandboxd mesh the refresh also reads `GET /v1/peers` and lists every peer. A machine goes when its node answered the list without it, or when its node has been out of the mesh for 5 min; a peer that does not answer only leaves its rows out. A lookup of an unknown machine asks the entry node, then the peers of the last refresh. Without a mesh the cost is that one `GET /v1/peers` per refresh; claim, wake, hibernate, exec, env writes, the relay and renewals make the same calls as on one node (contracts, Boxes ↔ sandboxd).
+- On a sandboxd mesh the refresh also reads `GET /v1/peers` and lists every peer. A machine goes when its node answered the list without it, or when its node has been out of the mesh for 5 min; a peer that does not answer only leaves its rows out. A lookup follows the claim to the mesh's owner only when the recorded node answers 404 or has left the mesh. Without a mesh the cost is that one `GET /v1/peers` per refresh; claim, wake, hibernate, exec, env writes, the relay and renewals make the same calls as on one node (contracts, Boxes ↔ sandboxd).
 - The row is node-local: a lost node takes its rows with it. The durable per-user record is the state layer (§11), not the claim (14.6).
 
 ### 14.2 Image → template and pool
@@ -497,21 +439,21 @@ Hot-path cost against today's direct h2c to the pod IP:
 - +0.1 ms per message RTT (0.14 vs 0.04 ms).
 - A per-stream ceiling of about 293 MiB/s.
 - sandboxd CPU for the base64 framing: about 26% of a core at a full-rate Raw stream (156–171 MiB/s). At the Tight/ZRLE rates the app uses, that is about 1% or less.
-- `Resolve` stays a map lookup (14.1).
+- `Resolve` is two indexed reads (14.1).
 - Binary relay framing is upstream work only if many full-rate viewers share a node (14.7).
 
-### 14.5 Provisioning on sandboxd: `Deliver`, gw key, identity, meta
+### 14.5 Provisioning on sandboxd: `SetCredentials`, `Deliver`, gw key, identity, meta
 
-The service layer computes each incarnation's identity and hands it to the backend with `Deliver(ctx, id, machines.Identity, keys)`, where `keys` are the gw key and the door key as named host-only secrets. It never gets a root exec into the guest and never knows guest paths or scripts. The sandboxd backend implements the same interface:
+The service layer hands the backend each incarnation's gw key and door key as named host-only secrets with `SetCredentials(ctx, id, machines.Credentials)`, then its identity with `Deliver(ctx, id, machines.Identity)`. It never gets a root exec into the guest and never knows guest paths or scripts. The sandboxd backend implements the same interface:
 
 | `machines` | sandboxd |
 |---|---|
-| `Deliver`: gw key | a `guest: false` env entry `GW_KEY` (below) |
+| `SetCredentials`: gw key | a `guest: false` env entry `GW_KEY` (below) |
 | `Deliver`: identity | written by the backend to the §12 path, either through `POST /v1/sandboxes/{id}/exec` (runs as root in the guest through silkd; exec takes only the claim's own token, which the backend reads with the root by-id `GET /v1/sandboxes/{id}` at each call and never stores; the buffered exec has no stdin, so the file travels in the request `env` as `CB_STDIN`) or as guest env. How it is written is the backend's choice |
 | `Meta` / `SetMeta` | the api's machine record (the `cluster` machines table) since loomhand/cocoonbox#222; before, `guest: true` env entries `CB_META_<key>` (#268). Claim metadata is immutable, and the values (wake id, flags) are not secret |
 | `Incarnation` | a backend concern. It changes on claim, wake, unarchive and cold restart, and needs a per-claim boot counter in the sandbox row (upstream, 14.7). Until then, the backend derives it from `claimed_at`, `restarts` and its own wake count, kept in meta |
 
-- **H3 closes** inside the sandboxd `Deliver`.
+- **H3 closes** inside the sandboxd `SetCredentials`.
   - The key becomes the entry `GW_KEY = Bearer <per-incarnation key>`. It feeds the node secret `{name: gw, header: Authorization, value_env: GW_KEY}` on the pool rule `{host 10.203.0.1, ports [18090], secret gw}`, with `egress_internal_allow: [10.203.0.1/32:18090,9000]` (now the secret `GW_KEY` and the ports 18090, 18091 and 3142; see `deploy/cbsbx/cbsbx-conf`).
   - The agent sends the placeholder from the static `agent.env`, and sandboxd swaps in the machine's key on the host side of the vsock door.
   - The real key is never in the guest, on its disk or in any hibernate image, because `guest: false` values never enter the guest (#268).
@@ -556,8 +498,8 @@ The service layer computes each incarnation's identity and hands it to the backe
 Stays in cocoonbox:
 - `api/machines/sandboxd` (the index, renew loop, state mapping and the relay dialer);
 - the `Endpoint` change through the edge, MCP and `dialer`;
-- per-user gw keys in the keyring;
-- the sandboxd `Deliver` (gw key as `guest: false` env, identity to the §12 path);
+- per-incarnation gw keys (§22.4);
+- the sandboxd `SetCredentials` (gw key as `guest: false` env) and `Deliver` (identity to the §12 path);
 - restore-on-missing in `boxes`;
 - the image additions;
 - the sandboxd node config (pool, egress policy, secret, `egress_internal_allow`);
@@ -1065,11 +1007,9 @@ A user asked for a routine at 09:00 while the Mac is closed. This is the alarm o
 
 ## 16. M5: Connect
 
-Proposed 2026-10-01, for review. It replaces §4.2(b), whose in-VM vault kept credentials at rest in the VM. The user links an external account (GitHub, Google, Notion, …) once in the app. After that, both kinds of agent can use it:
+Proposed 2026-10-01, for review. It replaces an in-VM vault, which kept credentials at rest in the VM. The user links an external account (GitHub, Google, Notion, …) once in the app. After that, both kinds of agent can use it:
 - the box agent (mode A);
 - the user's own local coding agent, through the bridge (mode B, §13).
-
-Local exec on the Mac (§4.2(c)) is not part of this section.
 
 Constraints:
 - Credentials (boundaries.md): no OAuth token or API key is at rest in the VM. The VM's disk, its hibernate memory images and its state uploads all count as at rest.
@@ -1122,7 +1062,7 @@ Why PostgreSQL:
 - Production gets HA, point-in-time recovery and IAM login from Cloud SQL.
 
 Where it runs:
-- **Bench host:** PostgreSQL 16 on the host, with its data directory on the root disk, not the local NVMe. The root disk survives an instance stop, and the local NVMe does not (§18, off-node state store). The api connects over the unix socket with peer authentication, so there is no database password.
+- **Bench host:** PostgreSQL 16 on the host, with its data directory on the root disk, not the local NVMe. The root disk survives an instance stop, and the local NVMe does not. The api connects over the unix socket with peer authentication, so there is no database password.
 - **Production:** Cloud SQL for PostgreSQL, on a private IP only. The api logs in with IAM database authentication through Application Default Credentials, so there is no password and no key file.
 
 Encryption (envelope):
@@ -1154,7 +1094,7 @@ How the broker uses it:
   4. write the new sealed tokens and commit.
   
   A rotated refresh token is therefore stored before the new access token is used. If the commit fails after the vendor rotated, the grant becomes `needs_reconnect`.
-- **Box door:** the broker hashes the presented key and reads `connect_door_keys`. Provisioning an incarnation inserts its row and deletes the machine's older rows in the same transaction, before `Deliver` installs the key. Deleting a machine (box delete, user delete, park, Rebase) deletes its row; a hibernated machine keeps it. At start the api deletes the rows of machines the backend no longer holds.
+- **Box door:** the broker hashes the presented key and reads `connect_door_keys`. Provisioning an incarnation inserts its row and deletes the machine's older rows in the same transaction, before `SetCredentials` installs the key. Deleting a machine (box delete, user delete, park, Rebase) deletes its row; a hibernated machine keeps it. At start the api deletes the rows of machines the backend no longer holds.
 - **Disconnect** and **delete user** remove the rows after the vendor revoke. Deleting a user also deletes the user's state key, which makes any copy of their old rows in a backup unreadable.
 - **Migrations:** numbered SQL files embedded in the binary. The api applies them at start under `pg_advisory_lock`, so concurrent replicas run each one once.
 - **Driver:** `pgx/v5` with its pool. There is no ORM.
@@ -1229,7 +1169,7 @@ Doors:
 | `http://10.203.0.1:18091/mcp`, host-internal | the box (mode A) | a per-machine key that the box never holds | the box owner's connector tools |
 
 The box door follows §12.2 (the proof comes from the channel) and the gw pattern of §14.5:
-- **Key.** When the api provisions an incarnation, it issues a random door key and installs it with the gw key in the same `Deliver` call: a `guest: false` entry `CB_CONNECT_KEY = Bearer <key>`. The broker keeps the key's SHA-256 with the machine and its owner (`connect_door_keys`); the next incarnation's key replaces it. A failure to issue a key is logged and does not stop the box from starting; its connector calls then get 401.
+- **Key.** When the api provisions an incarnation, it issues a random door key and installs it with the gw key in the same `SetCredentials` call: a `guest: false` entry `CB_CONNECT_KEY = Bearer <key>`. The broker keeps the key's SHA-256 with the machine and its owner (`connect_door_keys`); the next incarnation's key replaces it. A failure to issue a key is logged and does not stop the box from starting; its connector calls then get 401.
 - **Node config (v24 pools and later):**
   - the pool rule `{host 10.203.0.1, ports [18091], secret CB_CONNECT_KEY}`, ahead of `{host *, intercept inject}`, because a plain request takes the first rule that matches;
   - the secret `{name CB_CONNECT_KEY, header Authorization}` with no `value_env`, so only the claim's entry feeds it, and a claim without one fails closed.
@@ -1458,7 +1398,7 @@ Decided 2026-10-03:
 
 ## 17. M6: Market
 
-Proposed 2026-10-01; in the backlog since 2026-10-01 until its two open questions are decided (§18). It replaces §4.3. Users install capabilities (skills, MCP servers, agent presets, desktop apps) for the box and for their local agents, from one catalog.
+Proposed 2026-10-01; in the backlog since 2026-10-01 until its two open questions are decided (§18). Users install capabilities (skills, MCP servers, agent presets, desktop apps) for the box and for their local agents, from one catalog.
 
 What goes where:
 
@@ -1652,21 +1592,12 @@ Open (deferred to the backlog):
 - **M6 Market** (§17): waits on its two open questions, a public catalog repository and no hooks in the box.
 - **Zero-page skip in the CH fork snapshot writer** (measured: v6 golden 8.00 → 3.22 GiB, mmap restore of a hole-punched file works; design and hard gate: full snapshots only, never diff snapshots). With the state layer carrying user data across nodes, the remaining cost of dense snapshots is local only: hibernate writes the full memory (23–50 s at 8 GiB), each hibernated box pins its memory size on local disk until released, and the write evicts neighbours' page cache. Revisit when hibernate time or per-node disk becomes the constraint.
 - **S3 checkpoint export sparse + compressed** (sandbox store): only needed if memory-image checkpoints ever travel between nodes again.
-- **Price a proactive wake in the free-tier cost model** (§15.4). Done 2026-10-01 in §15.8: about $0.007 for a text run at list price and $0.059 for a GUI run, or $0.63 a user-month at 3 text runs a day. A free tier's day budget is still open (§15.12, decision 1).
-- **Off-node state store (GCS) for real node-loss recovery.** Done 2026-10-16 (374b5722): the state store is an external S3 endpoint. Before, on the bench host the MinIO state store (`/srv/cb/state`) sits on the same GCP local NVMe as the boxes. That disk survives a host restart but not an instance stop or termination, so a lost node takes the state layer with it, and §14.6's restore-on-missing only covers a lost machine on a live node.
 - **Re-seed cbsbx after a local-SSD wipe.** The template tarballs (`/srv/cb/sbx/build`), the imported templates and the sandboxd goldens live on the same local NVMe as the boxes, so an instance stop leaves no template to claim from. Keep the current and previous template tarball off the node (next to the off-node state store) and document the re-seed: mkfs, `deploy/cbsbx/install`, `cocoon-cbsbx image import`, `cbsbx-conf`.
-- **Per-port internal allow in the sandboxd egress guard** (upstream sandbox mechanism; cocoonstack/sandbox#276). Done 2026-10-01: cbsbx runs sandboxd 90230c0 (#277) with `egress_internal_allow [10.203.0.1/32:18090,9000]` (now `18090,18091,3142`), so the proxy itself refuses any other port on 10.203.0.1; cb-host-net's `CB-OUTPUT` stays as the second layer.
-- **Reopen local agents after an app restart** (app). Quitting the app ended every local agent under On this Mac, and the next launch started none, although the CLIs keep their sessions on disk. Done 2026-10-01:
-  - `~/Library/Application Support/CocoonBox/local-agents.json` lists each open local agent: kind, box id, the CLI's session id, workspace, start time, the automatic and the user's name. The app rewrites it on every change (start, End, rename, a new terminal title), so a killed app loses nothing.
-  - Session ids: `claude` gets one from the app (`--session-id`). `codex` and `cursor-agent` choose their own; the app claims the earliest session in the shared workspace that began after the agent started and before the next agent of the same kind started (`codex`: the rollout's `session_meta` `cwd` and `timestamp`; `cursor-agent`: `~/.cursor/chats/<md5 of the workspace>/<chat id>/meta.json` with a conversation). Two agents of one kind started within the CLI's start-up time can still swap.
-  - Once the box is running, the app reopens them with the box MCP config: `claude --resume <sid>` (a new `--session-id <sid>` when no conversation was written), `codex resume <sid>`, `cursor-agent --resume <chat id>`; an agent with no conversation yet starts fresh. End removes it from the file.
-  - Names: a local agent's automatic name is its terminal title without spinner, status and workspace name (`claude` and `codex` title the conversation; `cursor-agent` shows its chat title); a double-click renames it, and the user's name wins and is kept across restarts.
 - **Offload a coding session into the box:** designed in §27, contract in contracts.md "Offload". The entry is the user's own terminal session, not the app's local agents (§27.4).
 - **Allowlist the tools the mode-A runner forwards** (agent). The loop passes any tool name the model emits to the toolhost, so a model that guesses an internal call (`state_*`, `browser_close`, `desktop_save`) can invoke it. Since v10 the model's shell has sudo, so this adds no privilege inside the box, but the dispatcher should still forward only the tools it advertised. Found during the v10 acceptance (2026-10-01).
 - **M4.9 proactive agents** (§15): the whole build plan (9a–f) waits here, with its decisions settled in §15.12.
 - **Keychain prompt on every app rebuild.** The ad hoc signature changes with each build, so the login keychain asks again. With an Apple Developer account, sign with Developer ID, which also enables notarization, and move the token to the data protection keychain behind Touch ID (`SecAccessControl` `.userPresence`). Until then the prompt stays.
 - **Batch small chunks in state transfers** (agent state layer and api). Restore is one presigned GET per chunk through the sandboxd proxy, so time grows with the chunk count, not the bytes: a 1298-chunk restore took about 11 s against 2 s for a 519-chunk one (2026-10-01). Pack small chunks into larger objects (for example, a pack per save with an index in the manifest, ranges read with one GET), and raise the transfer concurrency. Measure the restore of a 1300-chunk box before and after.
-- **gw: look up keys by owner, and store a hash instead of the key** (upstream gw mechanism; cocoonstack/gateway#137 and #138). Done 2026-10-01: the bench host runs gw HEAD 3ab7a722, which filters `GET /admin/keys?owner=` before paging and stores and reports keys by `ak_id` only. The api lists a user's keys by owner, lets gw generate each key and revokes by `ak_id`.
 
 ## 19. Several boxes per user
 
@@ -1696,7 +1627,7 @@ The app's **+ → Local agent** starts the CLI through the bridge (stdio) instea
 
 - `Boxes.Create{name, image, flavor}` and `Boxes.Delete{box_id}`. `Box.name` is unique per user. `Ensure{box_id}` wakes or creates that box; an empty `box_id` keeps today's meaning, the user's first box, for old clients.
 - **Quota** (as built, 19.6): the total is the per-user max boxes setting (§22.4), the running limit is api config `max_running_boxes`, default 1. Waking or creating a box beyond the running limit fails with `FailedPrecondition` naming the running box; the caller hibernates it first. The api never hibernates a box on its own to make room.
-- **Delete:** a quiesced save first, then the machine is removed. The gw key is the user's since §22.4 and stays (19.6). The state prefix stays until a retention sweep, so a mistaken delete can be restored from the store (as built: `state.gc.deleted_retention`, 19.6).
+- **Delete:** a quiesced save first, then the machine is removed with its incarnation's gw key (19.6). The state prefix stays until a retention sweep, so a mistaken delete can be restored from the store (as built: `state.gc.deleted_retention`, 19.6).
 - Hibernated boxes cost disk only: on sandboxd, the memory file and the disk on the node's NVMe.
 
 ### 19.4 App
@@ -1740,7 +1671,7 @@ Reconciled with §22–§26 before building:
 - **Quota.** The total is the user's max boxes (`users.max_boxes`, at most the admin's cap); `AddBox` counts under a `FOR UPDATE` lock on the user's row, so parallel creates cannot pass it together. Lowering max boxes below the user's box count is refused. The tenant's `max_claims` is max boxes + min(agent boxes, `max_agent_boxes`) + 1, which a hibernated box's claim counts against. The running limit is the user's own `max_running` when an admin set one (users migration 0005, nullable, 1 to max boxes; the console admin table sets it, empty returns the user to the default, the user's page shows it, and `PATCH /cb/api/me` with it answers 403), else api config `max_running_boxes` (default 1). Lowering max boxes below the user's own running limit is refused; lower the limit first. A start (an `Ensure` that creates or wakes a machine, every `Create`) is refused with `FAILED_PRECONDITION`, `box <name> (<id>) is running, and 1 may run at a time; hibernate it first`, while that many other boxes are starting, running or hibernating. A per-user lock spans the check and the claim. The api never hibernates a box on its own.
 - **`Ensure{box_id}`.** An empty id is the user's first (oldest) box, and adds a box named `main` when the user has deleted all of them, so old clients keep working. A box without a machine is listed with `BOX_STATE_UNSPECIFIED` (absent) instead of being left out.
 - **Delete** is an operation (`PHASE_DELETING`): a quiesced save when the box is running and ready (a failed save keeps the box), then every machine of the box is removed, then the row, and the box's live share is revoked in the same transaction, which cuts its sessions (§23). A hibernated or failed box is deleted without a wake, so what stays in the store until the GC purges it is its last save. A delete is refused while another operation runs on the box, and `Ensure`/`Hibernate` are refused during it.
-- **gw key.** Keys are per user since §22.4 (owner = user id, issued at sign-up, revoked at user deletion). Deleting a box releases its claim, and with it the host-only `GW_KEY` env of that claim; the key itself stays, even for the user's last box, since the next box's machine needs it.
+- **gw key.** Each running incarnation has its own key (owner = user id, §22.4). Deleting a box releases its claim and revokes its machines' keys.
 - **Owner MCP sessions are not tracked (§23).** 19.2's per-box `mcp:<client>` agent is dropped: the bridge routes by `box`, the box records nothing for the owner, and the CLI keeps its own history.
 - **Sharing** stays per box: `Shares.Create` checks the box against the caller's boxes (no longer `BoxID(user)`); the partial unique index `shares_live_box` is per box id and needs no change.
 - **State and GC.** The state key and the chunk store are per user (§22.5), so a user's boxes dedupe against each other. A deleted box keeps `<user>/boxes/<box>/` for a retention window (built 2026-10-13): the GC lists boxes from the store, then asks the in-memory box index, so a box listed in the store but not in the table is deleted (a box saves only while its row exists, and no box id is reused). The first pass that finds it writes `deleted.json` with the time; until `state.gc.deleted_retention` (default 7 days) has passed since, the pass prunes it by the rule like any box. The first pass after that deletes every object under the prefix under the box's lock, `deleted.json` last, before the sweep, so the sweep marks none of its chunks and deletes those no other box of the user references. A dry run counts the purge and writes nothing. Until then a deleted box's head was kept forever and its chunks stayed marked.
@@ -1748,7 +1679,7 @@ Reconciled with §22–§26 before building:
 - **Bridge.** `cocoonbox mcp [--box NAME|ID]`. A box tool's `box` argument is stripped and routes the call; without it the call goes to the default box: `--box`, else the newest running box when the bridge first needs one (it stays until that box is deleted). The bridge fills the default `box` into `box_status`, `box_ensure`, `box_hibernate`, `box_save` and `box_upgrade` when the call names none, never into `box_delete`. Names map to ids from `box_list`, cached and refreshed on a miss or after a create or delete; a `cb-` id passes as is, so the edge decides (404 for a box id the user does not own). One MCP session per box, opened on first use; a box is woken on its first call unless `--no-wake`. `tools/list` is the control tools plus the box tools once, each with `box`. Hot path: one map lookup per call.
 - **CLI.** `--box` picks the box of `status`, `ensure`, `hibernate`, `save` and `upgrade` (default the first box). `COCOONBOX_TOKEN`, when set, takes the place of the Keychain item: the app sets it for the agents it starts, which pass it on to the bridge.
 - **App.** A box switcher at the top of the sidebar (select, New Box, Rename, Delete). The screen, events, agents, share and lifecycle buttons follow the selected box; at launch it selects the newest running box, else the first. The sidebar lists every local agent (19.4, decided 2026-10-03); their records keep their `boxID`, now the agent's default box, and all records reopen once per launch at sign-in, a record whose box is gone with the selected box as its default. **+ → Local agent** now runs the agent CLI with the bridge as its stdio MCP server (`cocoonbox mcp --box <id> --endpoint <url>`, the CLI from `Contents/Helpers/cocoonbox`, or `cocoonbox-cli` next to a development build) instead of the direct HTTP config; the token stays in the child's environment as before (`COCOONBOX_TOKEN`), and `claude` (`env`), `codex` (`env_vars`) and `cursor-agent` (`${env:…}`) pass it to the bridge. The MCP server is still named `cocoonbox`, so the tool names a reopened conversation knows are unchanged. The Connect sheet's direct recipes stay.
-- **Local agents and the app's socket** (2026-10-03). The app listens on `~/Library/Application Support/CocoonBox/agents.sock` (mode 0600; the test HOME redirects it). It hands the bridge the socket path and the agent's id the way it hands it the token, as `COCOONBOX_APP_SOCKET` and `COCOONBOX_AGENT` in the CLI's environment, named in the MCP config (`claude` `env`, `codex` `env_vars`, `cursor-agent` `${env:…}`) and never in argv. The bridge connects at start and sends newline-delimited JSON: `{"agent"}` once, then `{"agent","box","at"}` for every call it routes to a box's MCP (the box id; `at` in Unix ms). Control tools (`box_status`, `box_list`, `box_create` and the rest) are not reported, so the row shows only real box work. The app answers the first line with the agent's default box, `{"box"}`, and sends `{"box"}` again whenever the user changes it; the bridge uses the latest one for calls with no `box`, in place of `--box`. So a bridge that restarts with an old `--box` still gets the current default. The agent's terminal pane has a Default box picker; when the box switcher selects another box, the pane says "Screen shows <box>" beside it and changes nothing. The row reads the agent's kind, and below it "↗ main · test2", the boxes it acted on in the last minute. A box stays in that label 60 s after the agent's last call there: longer than an agent's pause between two tool calls while it works, so it does not flicker, and short enough to clear within a minute of the agent stopping or moving on. A call on a box the app's list lacks (one the agent just created) refreshes the list. Best effort: both ends write non-blocking, and a line that does not fit the socket buffer is dropped (the rest of a line the buffer cut goes first on the next write, so lines stay whole). With no socket, an app that quit, or a path longer than `sun_path`, the bridge works as before with its `--box`. Hot path: one mutex read and one non-blocking local `write(2)` of about 100 bytes per call on the bridge; one read and a JSON parse on the app's main queue.
+- **Local agents and the app's socket** (2026-10-03). The app listens on `~/Library/Application Support/CocoonBox/agents.sock` (mode 0600; the test HOME redirects it). It hands the bridge the socket path and the agent's id the way it hands it the token, as `COCOONBOX_APP_SOCKET` and `COCOONBOX_AGENT` in the CLI's environment, named in the MCP config (`claude` `env`, `codex` `env_vars`, `cursor-agent` `${env:…}`) and never in argv. The bridge connects at start and sends newline-delimited JSON: `{"agent"}` once, then `{"agent","box","at"}` for every call it routes to a box's MCP (the box id; `at` in Unix ms). Control tools (`box_status`, `box_list`, `box_create` and the rest) are not reported, so the row shows only real box work. The app answers the first line with the agent's default box, `{"box"}`, and sends `{"box"}` again whenever the user changes it; the bridge uses the latest one for calls with no `box`, in place of `--box`. So a bridge that restarts with an old `--box` still gets the current default. The agent's terminal pane has a Default box picker; when the box switcher selects another box, the pane says "Screen shows <box>" beside it and changes nothing. The row reads the agent's kind, and below it "↗ main · test2", the boxes it acted on in the last minute. A box stays in that label 60 s after the agent's last call there: longer than an agent's pause between two tool calls while it works, so it does not flicker, and short enough to clear within a minute of the agent stopping or moving on. The Boxes.Watch stream adds a box the agent just created. Best effort: both ends write non-blocking, and a line that does not fit the socket buffer is dropped (the rest of a line the buffer cut goes first on the next write, so lines stay whole). With no socket, an app that quit, or a path longer than `sun_path`, the bridge works as before with its `--box`. Hot path: one mutex read and one non-blocking local `write(2)` of about 100 bytes per call on the bridge; one read and a JSON parse on the app's main queue.
 - **Console.** The user page lists boxes with name, id, state and image, and creates, renames and deletes them (`POST /cb/api/boxes`, `PATCH|DELETE /cb/api/boxes/{id}`); the share form picks the box.
 - **MockBox** plays several boxes with one shared desktop and agent set, the running limit of 1 and a quota of 3; its shell answer names the box (`on <name>`), so tests can tell where a call ran.
 
@@ -1833,7 +1764,7 @@ Proposed 2026-10-01. Some boxes should reach the internet through a residential 
   - The claim's upstream value is the forwarder's address with no secret (`http://10.203.1.2:8823`), so no claim env, no API response and no box ever holds the provider credential.
 - **api: which boxes get which exit.** It's a policy decision, so it lives in cocoonbox (the mechanism-only rule).
   - The first cut is a per-user switch, on or off (default off). It lives in the api's `users` table (§22); until that lands, every user has it off.
-  - The api writes or removes the claim's upstream entry through `PATCH /v1/sandboxes/{id}/env` when it provisions a machine (§14.5 `Deliver`), and the provisioner's 10 s pass brings every machine whose entry disagrees with its owner's switch in line, hibernated ones included. A change takes effect for new connections.
+  - The api writes or removes the claim's upstream entry through `PATCH /v1/sandboxes/{id}/env` when it provisions a machine (`SetEgress`), and the provisioner's 10 s pass brings every machine whose entry disagrees with its owner's switch in line, hibernated ones included. A change takes effect for new connections.
   - Later, a per-box choice in the app, and per-site rules (residential only for listed domains) if #279 grows a rule-level upstream.
 
 ### 21.2 Provider facts
@@ -1858,50 +1789,9 @@ Acceptance on the bench host, with dev on residential and a throwaway claim on d
 3. Stopping the forwarder makes dev's requests fail with 502, never a direct dial.
 4. Flipping dev back to datacenter by PATCH changes its exit for new connections without a restart.
 
-## 22. One cocoonbox user, one gw key, one sandboxd tenant
+## 22. One cocoonbox user, one gw owner, one sandboxd tenant
 
-Built 2026-10-02 (22.4 records what was built and the decisions made that night). Proposed 2026-10-01. gw and sandboxd are both multi-tenant. cocoonbox-api keeps a per-user record that links a user to exactly one gw key and one sandboxd tenant, and it hides both from the user: clients hold only their cocoonbox user token. gw then shows each user's total model spend, and sandboxd shows each user's boxes and caps them.
-
-### 22.1 What changes from today
-
-| | Today | Proposed |
-|---|---|---|
-| User record | `users` in api.yaml (name and token hash), edited by hand, api restart | A `users` table in the api's PostgreSQL (the instance Connect uses): user id, token hash, gw `ak_id`, sealed gw key, sandboxd tenant name, sealed tenant token, state |
-| gw key | One per machine (owner = machine id), issued on every new machine and revoked on Rebase | One per user (owner = user id), issued once at sign-up and revoked when the user is deleted. Every machine of the user gets the same key in its claim's `guest: false` env |
-| Model budget | Per key = per machine; the tenant pool is shared | Per key = per user: `/admin/usage` by key is the user's total; the user's day budget is a per-user override in the one tenant (§22.2, gateway#144) |
-| sandboxd | One tenant-less root token; boxes found by `cb_owner` metadata | One sandboxd tenant per user (name = user id, its own token, `max_claims` = the user's box quota, §19.3). The api creates and lists a user's claims with that user's tenant token, so a bug in the api cannot list or claim across users. Root-only surfaces (per-id reads, `GET /v1/info`) keep the root token |
-| Onboarding | Hand edit plus restart | An admin call on the api (later the web console) creates the user, issues the gw key and adds the tenant; deleting reverses all three |
-
-The two invariants hold:
-- the gw key is still injected at egress and never enters a VM;
-- tenant tokens never leave the api.
-
-Sealed values (as built, 22.4): AES-256-GCM directly under the master key (a 32-byte file on the bench host), additional data `users|<id>|<column>`. There is no per-user data key, no envelope and no master key rotation path; the users columns stay under the master key (Connect's §16.1.1 envelope covers only its grants).
-
-### 22.2 What it needs upstream
-
-- **sandboxd: tenants at runtime** (cocoonstack/sandbox#284). Tenants live only in `config.json` and are re-read at boot (sandbox docs/cluster.md), so adding a user means a config edit and a restart, and every restart sweeps the warm pool. Self-serve sign-up needs a root-only API to add, update (token rotation, `max_claims`) and remove a tenant, persisted by sandboxd and applied without a restart. The cluster form has to keep every node's tenant set equal. This is mechanism; cocoonbox only calls it.
-- **gw: per-user budget overrides** (cocoonstack/gateway#144, which supersedes #143). gw already meters per user across all of a user's keys, since a key's `owner` is the user; what it lacks is a per-user cap value (at 3ab7a722 `key_daily_cost_quota_micros` is one tenant-wide number). #144 adds `PUT|GET|DELETE /admin/tenants/{tenant}/users/{user}/budget` (daily cost, monthly cost, daily tokens; a number, `"unlimited"`, or absent to inherit), callable with the tenant's own admin token, plus a tenant option `require_key_owner`. Admission checks every configured scope independently (tenant pool, per key, per user), so the tightest cap wins; an override replaces only the per-user scope, and `"unlimited"` leaves the key and pool caps in force. Caps are soft: a request is checked before it runs and charged after. Built 2026-10-02: the bench host runs gw db2e82e (#145). gw is authoritative for the per-user default; a tenant token cannot read the tenant config, so api.yaml's `accounts.default_daily_cap_micros` only mirrors it for the console and nothing checks that the two agree.
-  - Plan once #144 lands: the api sets a $5 daily override at user creation, `"unlimited"` for admins, and an admin console override; `require_key_owner: true` on `cocoonbox-boxes`; drop the tenant key cap (today $10/day, which would otherwise stop an unlimited admin at $10); keep the pool (today $50/day) as the backstop that admins share. No tenant per user and no global token.
-  - Optional later: per-box attribution inside a user's key. The sandboxd proxy would add an attribution header carrying the claim's id, and gw's end-user attribution (`user`) would record it.
-
-### 22.3 Order and acceptance
-
-Order:
-1. sandboxd runtime tenants (upstream).
-2. The api `users` table, the admin create/delete calls, the per-user gw key (the current gwkeys client issues by user instead of by machine), and Deliver injecting the user's key.
-3. The api moves to the user's tenant token for claim and list.
-4. Migrate dev and test.
-5. Delete the `users` list from api.yaml.
-
-Hot path: none on claim, screen or edge. Deliver reads one sealed key per provision.
-
-Acceptance on the bench host:
-1. Create a user through the admin call, with no restart of api or sandboxd. Its first Ensure works; gw lists one key with owner = the user id; sandboxd lists the claim under the user's tenant.
-2. A second box for the same user carries the same gw key (same `ak_id` in gw's usage), and the user's `max_claims` refuses one box more than the quota.
-3. gw's usage for that key equals the sum of both boxes' model calls.
-4. Delete the user: the key is gone (401), the tenant is gone, the claims are released, and the state prefix stays for the retention window.
-5. User A's token cannot reach user B's box at the edge, and the api's tenant-scoped list for A never shows B's claims.
+Built 2026-10-02 (22.4 records what was built and the decisions made that night). gw and sandboxd are both multi-tenant. cocoonbox-api keeps a per-user record that links a user to its gw keys (owner = user id) and one sandboxd tenant, and it hides both from the user: clients hold only their cocoonbox user token. gw then shows each user's total model spend, and sandboxd shows each user's boxes and caps them.
 
 ### 22.4 As built (2026-10-02)
 
@@ -1911,7 +1801,7 @@ Decided and built:
   - Sign-in is username and password (bcrypt). The `idp` column is there for Google later; no Google code yet.
   - The session is an HttpOnly, Secure, SameSite=Strict cookie for 12 h, stored as a sha256 in `sessions`. Mutating requests must send `application/json`, so a cross-site form cannot post one.
   - Password checks (sign-in and password change) are limited to 5 per username and 20 per client address in 15 minutes (in memory). An attempt is reserved under the limiter's lock before bcrypt runs and given back on a correct password, so parallel requests cannot pass the check together.
-  - Deleting a user disables it first (its token and sessions stop at once), then releases its claims, deletes every object under its state prefix `<user id>/`, removes the tenant, revokes the gw key and drops the row.
+  - Deleting a user disables it first (its token and sessions stop at once), then releases its claims, deletes every object under its state prefix `<user id>/`, removes the tenant, revokes its gw keys and drops the row.
   - Disabling a user stops its tokens and sessions, hibernates its running boxes (their state stays), ends its open gRPC streams and its MCP and Connect door exchanges, and expires its gw key (`expires_at_epoch_secs: 0`); the api's start does the same for the gw key of every disabled user. Enabling clears the expiry; the boxes wake on the next `Ensure`.
 - **Accounts come from an admin or from signup**: the console's admin page (create with an initial password, disable or enable, reset the password, delete, per-user settings) or the root CLI on the host (`cocoonbox-api user add|passwd|token-sha256`, secrets on stdin); and, while an admin has signup on, a person's first sign-in with GitHub, with a seat cap, a queue and invites (contracts "Sign-in with GitHub and signup"). Signup is off by default.
 - **One personal token per user, plus device tokens.** The personal token (once "API token") is what a user pastes; the console shows it once on regenerate, which invalidates the old one. A browser sign-in of the CLI or the app gets a device token of its own instead, so a regenerate no longer signs those out (contracts "Browser sign-in and device tokens"). Only sha256 values are stored.
@@ -1920,12 +1810,12 @@ Decided and built:
 - **gw key per user:** issued at creation (owner = user id, tenant `cocoonbox-boxes`), revoked at deletion. Since loomhand/cocoonbox#225 no machine gets it: each running machine incarnation gets its own key with the same owner, revoked when the incarnation ends (api/README.md, "Host-only credentials").
 - **Tenant per user:** `PUT /v1/tenants/{id}` with the user's token, `max_claims` = max boxes + min(agent boxes, `max_agent_boxes`) + 1 (the +1 is the old machine a Rebase keeps until the new one serves), and `egress_class` = `sandboxd.tenant_egress_class`. A tenant without an egress class reaches nothing on a pool with a policy, and sandboxd before cocoonstack/sandbox#292 cannot give an API tenant one; so machines claim under the user's tenant only while that setting is non-empty, and before #292 they stay root claims stamped with `cb_owner`. The api reconciles every tenant at start.
 - **Listing stays on the root index**, refreshed every 2 s, not a tenant-token request per call, since Resolve is on the edge path. Since loomhand/cocoonbox#222 a listing never sets a machine's owner or node: both come from the api's own record (api/README.md).
-- **Daily model budget per user** (§22.2, built 2026-10-02): tenant `cocoonbox-boxes` sets `user_daily_cost_quota_micros: 5000000` as every user's default, keeps a $500/day pool, drops the per-key cap and sets `require_key_owner`. The api gives admins an `"unlimited"` override at creation and at the startup reconcile when they have none, drops a user's override at deletion, and lets the admin page set a user's cap (dollars, unlimited, or inherit); the user page shows the cap and today's spend (the ledger since UTC midnight). Hot path: none in the api; gw does one in-process override lookup per request with an attributed user.
+- **Daily model budget per user** (cocoonstack/gateway#144, built 2026-10-02): tenant `cocoonbox-boxes` sets `user_daily_cost_quota_micros: 5000000` as every user's default, keeps a $500/day pool, drops the per-key cap and sets `require_key_owner`. The api gives admins an `"unlimited"` override at creation and at the startup reconcile when they have none, drops a user's override at deletion, and lets the admin page set a user's cap (dollars, unlimited, or inherit); the user page shows the cap and today's spend (the ledger since UTC midnight). Hot path: none in the api; gw does one in-process override lookup per request with an attributed user.
 - **Settings per user:** residential exit (default off; only the admin page flips it; `PATCH /cb/api/me` with `residential` answers 403; `ApplyExit` runs after the row is committed) and max boxes (the admin sets the cap, default 1, at most 16; the user picks up to it).
 - **Scheduled saves cover every box**; `state.scheduled_users` is gone with the `users` list (no back-compat).
 - **Storage:** database `cocoonbox` on the bench host's PostgreSQL, role `cocoonbox-api`, peer authentication over the unix socket; migrations are embedded and run at start under `pg_advisory_lock`.
 
-Hot path: none. Token checks read an in-memory index, updated by every write; the root CLI sends `NOTIFY cocoonbox_users` after its writes, and the api, which `LISTEN`s, reloads the index on each notification and after each (re)connect of its listening connection. Ensure unseals one tenant token (microseconds); provisioning unseals the gw key once per new machine.
+Hot path: none. Token checks read an in-memory index, updated by every write; the root CLI sends `NOTIFY cocoonbox_users` after its writes, and the api, which `LISTEN`s, reloads the index on each notification and after each (re)connect of its listening connection. Ensure unseals one tenant token (microseconds); provisioning issues one gw key per incarnation (one gw admin call).
 
 ### 22.5 State key and chunk store per user (decided 2026-10-02, built 2026-10-02)
 
@@ -2074,7 +1964,7 @@ Decided 2026-10-03. Before this, the api kept only the SHA-256 of a share secret
 - **Ending.** Regenerate replaces the sealed secret. Revoke, deleting the box, and Create over an expired row set it to NULL with `revoked_at`. Expiry sets it to NULL when the share's timer fires. When the api starts, it sets it to NULL on every revoked or expired row, which covers a share that expired while no api ran.
 - **Who gets it.** `Share.secret` (field 7) carries the secret in every `Share` that `Shares` returns: `Create`, `List`, `SetWrite` and `Regenerate`. `Shares` serves only the caller's own shares and authenticates user tokens only, so a guest, and a share secret used as a bearer, never gets it. The console's owner endpoints (`/cb/api/shares`) return it as `secret`, from the signed-in user's session. The link is `<endpoint>/cb/s/#<secret>`, and the MCP snippets need the endpoint, the box id, the secret and whether the share names users; the app and the console build them from `List`. No log line carries a secret: the api logs share ids, and an open failure logs the additional data, which holds ids only.
 - **Older shares.** A share created before 0006 has no sealed secret. `List` returns it with an empty `secret`, the app shows "Regenerate to get a link", and the console shows no Show link button. Its link keeps working until it ends; the api does not try to recover it.
-- **App.** The Share sheet shows the link, its Copy button and the MCP snippets for a live share whenever `List` returns the secret, as it does right after Create. The in-memory secret is gone; `AppModel.shareSecret` reads `share.secret`. Regenerate stays and says that it replaces the link and ends the old link's sessions.
+- **App.** The Share sheet shows the link, its Copy button and the MCP snippets for a live share whenever `List` returns the secret, as it does right after Create. The in-memory secret is gone. Regenerate stays and says that it replaces the link and ends the old link's sessions.
 - **Risk.** A database dump together with the master key reveals every live link. Both already reveal each user's gw key, tenant token and state key, and the api already reaches every box, so this adds no new reach to a holder of both.
 
 Hot path: none. The edge lookup is unchanged; `List` reads the secret from the in-memory index, opened once when the api loads the shares.
