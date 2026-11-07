@@ -21,6 +21,7 @@ const (
 	notifyChannel = "cocoonbox_users"
 	endedChannel  = "cocoonbox_ended"
 	notifyTimeout = 5 * time.Second
+	unlockTimeout = 5 * time.Second
 
 	uniqueViolation = "23505"
 
@@ -286,7 +287,11 @@ func (s *store) lockUser(ctx context.Context, id string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("lock user %s: %w", id, err)
 	}
-	release := func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }
+	release := func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+		defer cancel()
+		_ = tx.Rollback(cleanup)
+	}
 	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended('users.ensure:' || $1, 0))", id); err != nil {
 		release()
 		return nil, fmt.Errorf("lock user %s: %w", id, err)
