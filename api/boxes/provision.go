@@ -182,6 +182,11 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		}
 	}
 	wake, err := s.provisionWith(ctx, m, keys)
+	if err == nil && s.accounts != nil {
+		if installErr := s.accounts.InstallMachineKey(ctx, m.ID, issued); installErr != nil {
+			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "record the installed gw key; the next pass keys the machine again: %v", installErr)
+		}
+	}
 	switch {
 	case err == nil || issued == "":
 	case wakeOf(m) != "":
@@ -222,20 +227,24 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	if err := s.recordPushes(ctx, m, kinds...); err != nil {
 		return "", err
 	}
+	if err := s.machines.SetCredentials(ctx, m.ID, machines.Credentials{Secrets: keys, Node: m.Node}); err != nil {
+		return "", err
+	}
 	var identity machines.Identity
 	if wake == "" {
 		identity = machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
-		if err := s.machines.Deliver(ctx, m.ID, identity, keys); err != nil {
+		if err := s.machines.Deliver(ctx, m.ID, identity); err != nil {
 			return "", err
 		}
-	} else if err := s.machines.SetCredentials(ctx, m.ID, machines.Credentials{Secrets: keys}); err != nil {
-		return "", err
 	}
+	keep := secretNames(keys)
 	if s.connect != nil && owned {
-		pushErr = errors.Join(pushErr, s.pushCredentials(ctx, m))
+		creds, err := s.pushCredentials(ctx, m)
+		keep, pushErr = append(keep, secretNames(creds.Secrets)...), errors.Join(pushErr, err)
 	}
 	if s.vault != nil && owned {
-		pushErr = errors.Join(pushErr, s.pushVault(ctx, m))
+		creds, err := s.pushVault(ctx, m)
+		keep, pushErr = append(keep, secretNames(creds.Secrets)...), errors.Join(pushErr, err)
 	}
 	cur, err := s.machines.Get(ctx, m.ID)
 	switch {
@@ -244,7 +253,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	case cur.EnvMissing && pushErr != nil:
 		return "", errors.Join(errEnvMissing, pushErr)
 	case cur.EnvMissing:
-		dropped, err := s.machines.DropMissing(ctx, m.ID)
+		dropped, err := s.machines.DropMissing(ctx, m.ID, keep)
 		if err != nil {
 			return "", errors.Join(errEnvMissing, err)
 		}
@@ -261,7 +270,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	return identity.WakeID, nil
 }
 
-// revokeEndedKeys revokes the gw keys of incarnations that no longer run and every older key of a running one, and returns the running machines that keep a key.
+// revokeEndedKeys revokes the gw keys of incarnations that no longer run and the keys of a running one older than its newest installed key, and returns the running machines whose node holds a key.
 func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, keys []users.MachineKey) map[string]bool {
 	running := map[string]string{}
 	for _, m := range ms {
@@ -272,7 +281,7 @@ func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, ke
 	keyed := map[string]bool{}
 	for _, k := range keys {
 		if inc, ok := running[k.Machine]; ok && inc == k.Incarnation && !keyed[k.Machine] {
-			keyed[k.Machine] = true
+			keyed[k.Machine] = k.Installed
 			continue
 		}
 		s.revokeMachineKey(ctx, k.Machine, k.ID)

@@ -256,7 +256,7 @@ func TestTheProvisionerPushesTheLostHostKeysAgainAndKeepsTheIdentity(t *testing.
 		t.Errorf("deliveries = %+v, want the identity left alone", execs)
 	}
 	pushed := map[string]bool{}
-	for _, c := range fake.credCalls() {
+	for _, c := range slices.Concat(fake.keyCalls(), fake.credCalls()) {
 		for name := range c.secrets {
 			pushed[name] = true
 		}
@@ -330,12 +330,34 @@ func TestAFailedPushAgainRevokesEveryKeyAndAGWOutageDoesNotBlockIt(t *testing.T)
 	}
 	fake.credErr = nil
 	accounts.issueErr = errors.New("gw admin down")
+	accounts.keys = []users.MachineKey{{ID: "ak-live", Machine: aliceBox, Incarnation: "i1", Installed: true}}
 	if err := svc.provisionMachine(t.Context(), m, false); err != nil {
 		t.Fatalf("provisionMachine during a gw outage = %v, want the machine provisioned without a key", err)
+	}
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 1 || keys[0].Installed {
+		t.Errorf("keys after the outage push = %+v, want none installed so the next pass keys the machine", keys)
 	}
 	m, _ = fake.Get(t.Context(), aliceBox)
 	if err := svc.provisionMachine(t.Context(), m, true); err == nil {
 		t.Error("a rekey during a gw outage succeeded")
+	}
+}
+
+func TestAKeyIssuedButNeverInstalledKeysTheMachineAgain(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i1", Meta: map[string]string{metaWake: "i1|w1"}})
+	accounts := &fakeAccounts{keys: []users.MachineKey{{ID: "ak-crashed", Machine: aliceBox, Incarnation: "i1"}}}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+
+	svc.provisionStale(t.Context())
+	svc.provisionStale(t.Context())
+	if want := "key " + aliceBox + " i1;revoke ak-crashed"; accounts.calls() != want {
+		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
+	}
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 1 || !keys[0].Installed {
+		t.Errorf("keys = %+v, want the new key installed", keys)
 	}
 }
 
@@ -369,12 +391,12 @@ func TestTheProvisionerRevokesTheKeysOfEndedIncarnationsAndKeysARunningOneAgain(
 	if execs := fake.execCalls(); len(execs) != 0 {
 		t.Errorf("deliveries = %+v, want the identity left alone", execs)
 	}
-	if creds := fake.credCalls(); len(creds) != 1 || creds[0].secrets[gwKeyEnv] != "Bearer gw-key-"+alice+"-ak1" {
-		t.Errorf("pushes = %+v, want the new gw key", creds)
+	if pushes := fake.keyCalls(); len(pushes) != 1 || pushes[0].secrets[gwKeyEnv] != "Bearer gw-key-"+alice+"-ak1" {
+		t.Errorf("pushes = %+v, want the new gw key", pushes)
 	}
 	svc.provisionStale(t.Context())
-	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 1 || len(fake.credCalls()) != 1 {
-		t.Errorf("keys = %+v after %d pushes, want one key and no second push", keys, len(fake.credCalls()))
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 1 || !keys[0].Installed || len(fake.keyCalls()) != 1 {
+		t.Errorf("keys = %+v after %d pushes, want one installed key and no second push", keys, len(fake.keyCalls()))
 	}
 }
 
@@ -489,6 +511,17 @@ func (a *fakeAccounts) RecordPushes(_ context.Context, machine, owner, node stri
 	defer a.mu.Unlock()
 	for _, kind := range kinds {
 		a.pushes = append(a.pushes, machine+" "+owner+" "+node+" "+kind)
+	}
+	return nil
+}
+
+func (a *fakeAccounts) InstallMachineKey(_ context.Context, machine, id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, k := range a.keys {
+		if k.Machine == machine {
+			a.keys[i].Installed = k.ID == id
+		}
 	}
 	return nil
 }

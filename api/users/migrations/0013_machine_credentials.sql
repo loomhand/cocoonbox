@@ -3,6 +3,7 @@ CREATE TABLE machine_keys (
     machine_id  text NOT NULL,
     user_id     text NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     incarnation text NOT NULL,
+    installed   boolean NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 

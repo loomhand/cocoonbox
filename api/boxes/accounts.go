@@ -17,6 +17,7 @@ type Accounts interface {
 	IssueMachineKey(ctx context.Context, owner, machine, incarnation string) (string, string, error)
 	MachineKeys(ctx context.Context, machine string) ([]users.MachineKey, error)
 	RevokeMachineKey(ctx context.Context, id string) error
+	InstallMachineKey(ctx context.Context, machine, id string) error
 	RecordPushes(ctx context.Context, machine, owner, node string, kinds []string) error
 }
 
@@ -56,16 +57,14 @@ func (s *Service) HibernateAll(ctx context.Context, user string) error {
 	return errors.Join(errs...)
 }
 
-// setCredentials records a push of kind to m when creds carry a secret, then applies creds to m.
+// setCredentials records a push of kind to m's node when creds carry a secret, then applies creds to m there only.
 func (s *Service) setCredentials(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
-	for _, sec := range creds.Secrets {
-		if sec != nil {
-			if err := s.recordPushes(ctx, m, kind); err != nil {
-				return err
-			}
-			break
+	if len(secretNames(creds.Secrets)) > 0 {
+		if err := s.recordPushes(ctx, m, kind); err != nil {
+			return err
 		}
 	}
+	creds.Node = m.Node
 	return s.machines.SetCredentials(ctx, m.ID, creds)
 }
 
@@ -86,4 +85,15 @@ func (s *Service) tenantOf(user string) (string, error) {
 		return "", nil
 	}
 	return s.accounts.Tenant(user)
+}
+
+// secretNames lists the names that secrets sets to a value.
+func secretNames(secrets map[string]*machines.Secret) []string {
+	var names []string
+	for name, sec := range secrets {
+		if sec != nil {
+			names = append(names, name)
+		}
+	}
+	return names
 }

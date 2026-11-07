@@ -8,11 +8,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// MachineKey is a gw key issued to one machine incarnation, named by its ak_id.
+// MachineKey is a gw key issued to one machine incarnation, named by its ak_id; Installed means the machine's node holds it.
 type MachineKey struct {
 	ID          string
 	Machine     string
 	Incarnation string
+	Installed   bool
 }
 
 // IssueMachineKey adds a gw key of owner for machine's incarnation, records it and returns it with its ak_id; a disabled owner's key is born expired.
@@ -33,11 +34,16 @@ func (s *Service) IssueMachineKey(ctx context.Context, owner, machine, incarnati
 
 // MachineKeys lists the recorded gw keys of machine, of every machine when machine is empty, the newest first.
 func (s *Service) MachineKeys(ctx context.Context, machine string) ([]MachineKey, error) {
-	rows, err := s.store.pool.Query(ctx, `SELECT ak_id, machine_id, incarnation FROM machine_keys WHERE $1 = '' OR machine_id = $1 ORDER BY created_at DESC`, machine)
+	rows, err := s.store.pool.Query(ctx, `SELECT ak_id, machine_id, incarnation, installed FROM machine_keys WHERE $1 = '' OR machine_id = $1 ORDER BY created_at DESC`, machine)
 	if err != nil {
 		return nil, fmt.Errorf("list machine keys: %w", err)
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[MachineKey])
+}
+
+// InstallMachineKey records that machine's node holds the gw key with ak_id id and none of its other keys, or none at all for an empty id.
+func (s *Service) InstallMachineKey(ctx context.Context, machine, id string) error {
+	return s.store.exec(ctx, "UPDATE machine_keys SET installed = (ak_id = $2) WHERE machine_id = $1", machine, id)
 }
 
 // RevokeMachineKey revokes the gw key with ak_id id and forgets it.

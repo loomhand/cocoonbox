@@ -27,6 +27,12 @@ func TestMachineKeysAreIssuedPerIncarnationRevokedAndGoWithTheUser(t *testing.T)
 	if err != nil || len(keys) != 2 || keys[0].ID != second || keys[0].Incarnation != "i2" || keys[1].ID != first {
 		t.Fatalf("MachineKeys m1 = %+v, %v; want the newest first", keys, err)
 	}
+	if err := svc.InstallMachineKey(t.Context(), "m1", second); err != nil {
+		t.Fatalf("InstallMachineKey: %v", err)
+	}
+	if keys, _ := svc.MachineKeys(t.Context(), "m1"); !keys[0].Installed || keys[1].Installed {
+		t.Errorf("MachineKeys m1 = %+v, want only the second installed", keys)
+	}
 	if err := svc.RevokeMachineKey(t.Context(), first); err != nil {
 		t.Fatalf("RevokeMachineKey: %v", err)
 	}

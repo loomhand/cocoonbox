@@ -139,7 +139,7 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 		defer cancel()
 		logger := log.WithFunc("boxes.Service.wakeCredentials").WithField("machine", m.ID)
 		if s.connect != nil {
-			if err := s.pushCredentials(pushCtx, m); err != nil {
+			if _, err := s.pushCredentials(pushCtx, m); err != nil {
 				logger.Warnf(pushCtx, "push credentials: %v", err)
 			}
 		}
@@ -151,13 +151,13 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 	}()
 }
 
-// pushCredentials applies the credentials of m's owner to m.
-func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) error {
+// pushCredentials applies the credentials of m's owner to m and returns them.
+func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) (machines.Credentials, error) {
 	creds, err := s.connect.Credentials(ctx, m.Owner)
 	if err != nil {
-		return err
+		return creds, err
 	}
-	return s.setCredentials(ctx, m, users.PushConnect, creds)
+	return creds, s.setCredentials(ctx, m, users.PushConnect, creds)
 }
 
 func (s *Service) deleteMachine(ctx context.Context, id string) error {

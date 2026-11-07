@@ -67,20 +67,21 @@ func (s *Service) syncVault(ctx context.Context, machine string) error {
 	if err != nil {
 		return err
 	}
-	return s.pushVault(ctx, m)
+	_, err = s.pushVault(ctx, m)
+	return err
 }
 
-// pushVault applies the keys of m's owner to m and records their digest on a running m; the caller holds m's lock.
-func (s *Service) pushVault(ctx context.Context, m machines.Machine) error {
+// pushVault applies the keys of m's owner to m, records their digest on a running m and returns them; the caller holds m's lock.
+func (s *Service) pushVault(ctx context.Context, m machines.Machine) (machines.Credentials, error) {
 	creds, digest, err := s.vault.Credentials(ctx, m.Owner)
 	if err != nil {
-		return err
+		return creds, err
 	}
 	if err := s.setCredentials(ctx, m, users.PushVault, creds); err != nil {
-		return err
+		return creds, err
 	}
 	if m.State != machines.StateRunning || m.Meta[metaVault] == digest {
-		return nil
+		return creds, nil
 	}
-	return s.machines.SetMeta(ctx, m.ID, metaVault, digest)
+	return creds, s.machines.SetMeta(ctx, m.ID, metaVault, digest)
 }
