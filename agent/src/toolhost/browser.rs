@@ -372,7 +372,7 @@ pub struct Browser {
 }
 
 impl Browser {
-    /// Creates a browser handle; Chrome starts on first use. `plans` turns on the behaviour of a box that runs GUI plans.
+    /// Creates a browser handle; Chrome starts on first use.
     pub fn new(bin: String, profile: PathBuf, port: u16, plans: bool) -> Self {
         Self {
             bin,
@@ -649,7 +649,7 @@ impl Browser {
                 }
                 let href = cdp.eval("location.href").await?;
                 cdp.press_enter().await?;
-                if cdp.load.started || cdp.eval("location.href").await? != href {
+                if cdp.load.started_at.is_some() || cdp.eval("location.href").await? != href {
                     return Ok(format!(
                         "{typed} and pressed Enter\n{}",
                         cdp.opened_snapshot(self.plans).await?
@@ -1162,7 +1162,6 @@ struct ReadArgs {
 
 #[derive(Default)]
 struct Load {
-    started: bool,
     stopped: bool,
     started_at: Option<Instant>,
 }
@@ -1293,7 +1292,6 @@ impl Cdp {
         self.xhr.note(v);
         match v["method"].as_str() {
             Some("Page.frameStartedLoading") => {
-                self.load.started = true;
                 self.load.started_at.get_or_insert_with(Instant::now);
             }
             Some("Page.frameStoppedLoading") => self.load.stopped = true,
@@ -1349,8 +1347,8 @@ impl Cdp {
     /// Waits [`NAV_START`] for an input to start a load, then for that load to finish.
     async fn opened_page(&mut self) {
         let start = tokio::time::Instant::now();
-        while self.dialog.is_none() && (!self.load.started || !self.load.stopped) {
-            let wait = if self.load.started {
+        while self.dialog.is_none() && (self.load.started_at.is_none() || !self.load.stopped) {
+            let wait = if self.load.started_at.is_some() {
                 LOAD_WAIT
             } else {
                 NAV_START
@@ -1365,7 +1363,7 @@ impl Cdp {
                 _ => break,
             }
         }
-        if self.load.started {
+        if self.load.started_at.is_some() {
             self.wait_loaded().await;
         }
     }
@@ -1383,7 +1381,7 @@ impl Cdp {
         self.click(x, y).await?;
         self.opened_page().await;
         let here = self.eval("[document.title, location.href]").await?;
-        let changed = self.load.started || here[1] != p["href"];
+        let changed = self.load.started_at.is_some() || here[1] != p["href"];
         let out = format!(
             "clicked {element} \"{}\"; page is now {} ({})",
             p["label"].as_str().unwrap_or_default(),
