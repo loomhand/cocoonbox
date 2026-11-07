@@ -647,7 +647,7 @@ fn unpack<R: Read>(input: R, stage: &Path, secrets: &Path) -> Result<Unpacked, F
                 out.env = Some(raw);
             }
             BUNDLE | "HEAD" | "index" => {
-                copy_out(&mut entry, &stage.join(&path), 0o600)?;
+                copy_out(&mut entry, &stage.join(&path))?;
                 out.bundle |= path == BUNDLE;
                 out.worktree |= path != BUNDLE;
             }
@@ -660,7 +660,7 @@ fn unpack<R: Read>(input: R, stage: &Path, secrets: &Path) -> Result<Unpacked, F
                 if let Some(parent) = dest.parent() {
                     super::create_private(parent)?;
                 }
-                copy_out(&mut entry, &dest, 0o600)?;
+                copy_out(&mut entry, &dest)?;
                 out.secrets.push(rel.to_owned());
             }
         }
@@ -668,12 +668,12 @@ fn unpack<R: Read>(input: R, stage: &Path, secrets: &Path) -> Result<Unpacked, F
     Ok(out)
 }
 
-fn copy_out(src: &mut impl Read, dest: &Path, mode: u32) -> Result<(), Fail> {
+fn copy_out(src: &mut impl Read, dest: &Path) -> Result<(), Fail> {
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .truncate(true)
         .write(true)
-        .mode(mode)
+        .mode(0o600)
         .open(dest)
         .map_err(|e| format!("create {}: {e}", dest.display()))?;
     std::io::copy(src, &mut f).map_err(|e| format!("write {}: {e}", dest.display()))?;
@@ -832,8 +832,7 @@ async fn hooks_blocked(files: &[PathBuf]) -> Option<PathBuf> {
     None
 }
 
-/// Whether a CLI's successful status output says it is signed in, and the account it names:
-/// JSON (`claude auth status`) by `loggedIn` and `email` or `authMethod`, text by its first line.
+/// Whether a CLI's successful status output says it is signed in, and the account it names.
 fn sign_in(out: &str) -> (bool, String) {
     if let Ok(v) = serde_json::from_str::<Value>(out) {
         let account = ["email", "account", "authMethod"]
@@ -1058,7 +1057,8 @@ async fn user_systemctl(layout: &Layout, args: &[&str]) -> Result<(), String> {
 
 /// Runs a user-manager command; an rsh command lacks `XDG_RUNTIME_DIR`, so it is set from the home's owner.
 async fn user_command(layout: &Layout, bin: &str, args: &[&str]) -> Result<(), String> {
-    let uid = std::fs::metadata(&layout.home)
+    let uid = tokio::fs::metadata(&layout.home)
+        .await
         .map(|m| m.uid())
         .map_err(|e| format!("stat {}: {e}", layout.home.display()))?;
     let out = tokio::process::Command::new(bin)

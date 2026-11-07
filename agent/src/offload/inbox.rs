@@ -113,7 +113,7 @@ impl EntryKind {
 }
 
 /// One outbox entry.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Entry {
     pub seq: u64,
     pub kind: EntryKind,
@@ -139,7 +139,7 @@ pub struct Change {
 
 impl Change {
     /// The `Session.Events` form.
-    pub fn update(self) -> pb::OffloadUpdate {
+    pub fn into_update(self) -> pb::OffloadUpdate {
         pb::OffloadUpdate {
             repo: self.repo,
             name: self.name,
@@ -867,7 +867,7 @@ impl Inbox {
 }
 
 /// A repo's box CLI session, persisted as `session.json` by the inbox alone.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct Record {
     repo: String,
     name: String,
@@ -1056,7 +1056,7 @@ async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
     while let Some(line) = lines.next_line().await.map_err(|e| format!("read: {e}"))? {
         match serde_json::from_str::<Change>(&line) {
             Ok(c) => {
-                journal.bus.publish(event::Body::Offload(c.update()));
+                journal.bus.publish(event::Body::Offload(c.into_update()));
                 lines.get_mut().set_limit(CHANGE_LINE);
             }
             Err(e) => eprintln!("offload relay: bad change: {e}"),
@@ -1304,7 +1304,6 @@ async fn reply(wr: &mut OwnedWriteHalf, v: &impl Serialize) -> std::io::Result<(
     wr.write_all(&line).await
 }
 
-/// The tmux target of the session's only pane, matched exactly.
 fn room(recs: &HashMap<String, Record>) -> Result<(), Refusal> {
     let running = recs
         .values()
@@ -1318,6 +1317,7 @@ fn room(recs: &HashMap<String, Record>) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// The tmux target of the session's only pane, matched exactly.
 fn pane(rec: &Record) -> String {
     format!("={}:", rec.tmux())
 }
