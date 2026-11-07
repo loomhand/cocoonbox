@@ -200,6 +200,16 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 			keys[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
 		}
 	}
+	var kinds []string
+	if keys[gwKeyEnv] != nil {
+		kinds = append(kinds, users.PushModel)
+	}
+	if keys[connectKeyEnv] != nil {
+		kinds = append(kinds, users.PushDoor)
+	}
+	if err := s.recordPushes(ctx, m, kinds...); err != nil {
+		return "", err
+	}
 	var identity machines.Identity
 	if wake == "" {
 		identity = machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}

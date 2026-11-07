@@ -25,7 +25,8 @@ const cliUsage = `usage:
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
   cocoonbox-api [-config FILE] user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
   cocoonbox-api [-config FILE] state heads
-  cocoonbox-api [-config FILE] box rebase USER BOX IMAGE`
+  cocoonbox-api [-config FILE] box rebase USER BOX IMAGE
+  cocoonbox-api [-config FILE] node cutoff ADDR`
 
 type connections interface {
 	RevokeAll(ctx context.Context, user string) error
@@ -46,6 +47,9 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	}
 	if len(args) >= 2 && args[0] == "box" && args[1] == "rebase" {
 		return rebaseBox(ctx, cfg, args[2:], stdout)
+	}
+	if len(args) == 3 && args[0] == "node" && args[1] == "cutoff" {
+		return cutoffNode(ctx, cfg, args[2], stdout)
 	}
 	if len(args) < 3 || args[0] != "user" {
 		return errors.New(cliUsage)

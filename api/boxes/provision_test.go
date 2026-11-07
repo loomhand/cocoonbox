@@ -345,6 +345,31 @@ func TestAFailedProvisioningRevokesTheKeyItIssuedAndADeleteRevokesTheRest(t *tes
 	}
 }
 
+func TestEveryPushOfASecretIsRecordedWithItsNode(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i1", Node: "n1"})
+	accounts := &fakeAccounts{}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+	svc.EnableConnect(&fakeConnect{})
+	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1", "bob": ""}})
+
+	svc.provisionStale(t.Context())
+	want := []string{aliceBox + " " + alice + " n1 connect", aliceBox + " " + alice + " n1 door", aliceBox + " " + alice + " n1 model", aliceBox + " " + alice + " n1 vault"}
+	if got := accounts.pushed(); !slices.Equal(got, want) {
+		t.Errorf("pushes = %v, want %v", got, want)
+	}
+	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning, Incarnation: "j1", Node: "n2", Meta: map[string]string{metaWake: "j1|w1"}})
+	before := len(accounts.pushed())
+	if err := svc.ApplyVault(t.Context(), "bob"); err != nil {
+		t.Fatalf("ApplyVault: %v", err)
+	}
+	if got := accounts.pushed(); len(got) != before {
+		t.Errorf("pushes = %v, want none for a vault without a secret", got)
+	}
+}
+
 func outgoingCredential(ctx context.Context) string {
 	md, _ := metadata.FromOutgoingContext(ctx)
 	if v := md.Get(credential.Header); len(v) == 1 {
@@ -360,10 +385,11 @@ func (fakeSigner) PublicKey() string                  { return "pub1" }
 func (fakeSigner) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
 type fakeAccounts struct {
-	mu   sync.Mutex
-	log  []string
-	keys []users.MachineKey
-	next int
+	mu     sync.Mutex
+	log    []string
+	keys   []users.MachineKey
+	next   int
+	pushes []string
 }
 
 func (a *fakeAccounts) Tenant(user string) (string, error) { return "tenant-" + user, nil }
@@ -390,6 +416,21 @@ func (a *fakeAccounts) RevokeMachineKey(_ context.Context, id string) error {
 	a.keys = slices.DeleteFunc(a.keys, func(k users.MachineKey) bool { return k.ID == id })
 	a.log = append(a.log, "revoke "+id)
 	return nil
+}
+
+func (a *fakeAccounts) RecordPushes(_ context.Context, machine, owner, node string, kinds []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, kind := range kinds {
+		a.pushes = append(a.pushes, machine+" "+owner+" "+node+" "+kind)
+	}
+	return nil
+}
+
+func (a *fakeAccounts) pushed() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Sorted(slices.Values(a.pushes))
 }
 
 func (a *fakeAccounts) calls() string {

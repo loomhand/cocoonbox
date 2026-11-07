@@ -148,6 +148,19 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 	return out, digest(versions), nil
 }
 
+// Names lists the names of owner's keys.
+func (s *Service) Names(ctx context.Context, owner string) ([]string, error) {
+	list, err := s.store.secrets(ctx, owner)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(list))
+	for _, sec := range list {
+		names = append(names, sec.name)
+	}
+	return names, nil
+}
+
 func (s *Service) changed(ctx context.Context, owner string) {
 	if s.onChange != nil {
 		s.onChange(ctx, owner)

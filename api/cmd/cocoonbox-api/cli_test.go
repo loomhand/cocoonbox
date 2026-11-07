@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -144,6 +146,45 @@ func TestDeleteUserRevokesConnectionsBeforeTheRow(t *testing.T) {
 	}
 }
 
+func TestCutoffRotatesWhatTheNodeGotAndForgetsItsPushes(t *testing.T) {
+	var calls []string
+	ledger := &fakeLedger{calls: &calls, pushes: []users.Push{
+		{Machine: "m1", Owner: "u1", Kind: users.PushModel},
+		{Machine: "m1", Owner: "u1", Kind: users.PushDoor},
+		{Machine: "m1", Owner: "u1", Kind: users.PushConnect},
+		{Machine: "m2", Owner: "u2", Kind: users.PushModel},
+		{Machine: "m2", Owner: "u2", Kind: users.PushVault},
+	}, keys: map[string][]string{"m1": {"k1", "k2"}, "m2": {"k3"}}}
+	var out strings.Builder
+	if err := cutoff(t.Context(), ledger, &fakeGrants{calls: &calls}, fakeNames{"u2": {"OPENAI", "SERPAPI"}}, "10.0.0.5:7777", &out); err != nil {
+		t.Fatalf("cutoff: %v", err)
+	}
+	want := "pushes 10.0.0.5:7777;revoke-key k1;revoke-key k2;drop-door m1;revoke-key k3;drop-door m2;revoke-grants u1;drop-pushes 10.0.0.5:7777"
+	if got := strings.Join(calls, ";"); got != want {
+		t.Errorf("calls = %s, want %s", got, want)
+	}
+	for _, line := range []string{"machine m1 of user u1 got model, door, connect", "user u1: Connect grants revoked", "user u2: tell the user to rotate vault keys OPENAI, SERPAPI"} {
+		if !strings.Contains(out.String(), line) {
+			t.Errorf("output %q lacks %q", out.String(), line)
+		}
+	}
+}
+
+func TestCutoffKeepsThePushesWhenARevokeFailsOrConnectIsOff(t *testing.T) {
+	var calls []string
+	pushes := []users.Push{{Machine: "m1", Owner: "u1", Kind: users.PushConnect}}
+	ledger := &fakeLedger{calls: &calls, pushes: pushes, keys: map[string][]string{"m1": {"k1"}}, revokeErr: errors.New("gw down")}
+	if err := cutoff(t.Context(), ledger, &fakeGrants{calls: &calls}, fakeNames{}, "n1", io.Discard); err == nil {
+		t.Error("cutoff succeeded with a failing revoke")
+	}
+	if err := cutoff(t.Context(), ledger, nil, fakeNames{}, "n1", io.Discard); err == nil {
+		t.Error("cutoff succeeded without Connect for a node that got Connect credentials")
+	}
+	if slices.Contains(calls, "drop-pushes n1") {
+		t.Errorf("calls = %v, want the pushes kept", calls)
+	}
+}
+
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
 
@@ -189,6 +230,59 @@ func (f *fakeAccounts) Boxes(string) []users.Box {
 func (f *fakeAccounts) Delete(_ context.Context, id string) error {
 	*f.calls = append(*f.calls, "delete "+id)
 	return nil
+}
+
+type fakeLedger struct {
+	calls     *[]string
+	pushes    []users.Push
+	keys      map[string][]string
+	revokeErr error
+}
+
+func (f *fakeLedger) PushesOn(_ context.Context, node string) ([]users.Push, error) {
+	*f.calls = append(*f.calls, "pushes "+node)
+	return f.pushes, nil
+}
+
+func (f *fakeLedger) DropPushesOn(_ context.Context, node string) error {
+	*f.calls = append(*f.calls, "drop-pushes "+node)
+	return nil
+}
+
+func (f *fakeLedger) MachineKeys(_ context.Context, machine string) ([]users.MachineKey, error) {
+	var out []users.MachineKey
+	for _, id := range f.keys[machine] {
+		out = append(out, users.MachineKey{ID: id, Machine: machine})
+	}
+	return out, nil
+}
+
+func (f *fakeLedger) RevokeMachineKey(_ context.Context, id string) error {
+	if f.revokeErr != nil {
+		return f.revokeErr
+	}
+	*f.calls = append(*f.calls, "revoke-key "+id)
+	return nil
+}
+
+type fakeGrants struct {
+	calls *[]string
+}
+
+func (f *fakeGrants) DropDoorKey(_ context.Context, machine string) error {
+	*f.calls = append(*f.calls, "drop-door "+machine)
+	return nil
+}
+
+func (f *fakeGrants) RevokeAll(_ context.Context, user string) error {
+	*f.calls = append(*f.calls, "revoke-grants "+user)
+	return nil
+}
+
+type fakeNames map[string][]string
+
+func (f fakeNames) Names(_ context.Context, owner string) ([]string, error) {
+	return f[owner], nil
 }
 
 type memStore struct {

@@ -17,6 +17,7 @@ type Accounts interface {
 	IssueMachineKey(ctx context.Context, owner, machine, incarnation string) (string, string, error)
 	MachineKeys(ctx context.Context, machine string) ([]users.MachineKey, error)
 	RevokeMachineKey(ctx context.Context, id string) error
+	RecordPushes(ctx context.Context, machine, owner, node string, kinds []string) error
 }
 
 // EnableAccounts makes new machines claim with their user's tenant and gives each running incarnation its own gw key.
@@ -53,6 +54,30 @@ func (s *Service) HibernateAll(ctx context.Context, user string) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// setCredentials records a push of kind to m when creds carry a secret, then applies creds to m.
+func (s *Service) setCredentials(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
+	for _, sec := range creds.Secrets {
+		if sec != nil {
+			if err := s.recordPushes(ctx, m, kind); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	return s.machines.SetCredentials(ctx, m.ID, creds)
+}
+
+// recordPushes records that secrets of kinds go to m before they do; without accounts nothing records them.
+func (s *Service) recordPushes(ctx context.Context, m machines.Machine, kinds ...string) error {
+	if s.accounts == nil || len(kinds) == 0 {
+		return nil
+	}
+	if err := s.accounts.RecordPushes(ctx, m.ID, m.Owner, m.Node, kinds); err != nil {
+		return fmt.Errorf("record the pushes: %w", err)
+	}
+	return nil
 }
 
 // tenantOf returns user's tenant token, empty without accounts.

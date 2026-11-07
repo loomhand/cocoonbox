@@ -8,6 +8,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const wakePushTimeout = 30 * time.Second
@@ -41,7 +42,7 @@ func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	var errs []error
 	for _, m := range s.ownerMachines(ms) {
 		if m.State == machines.StateRunning {
-			errs = append(errs, s.machines.SetCredentials(ctx, m.ID, creds))
+			errs = append(errs, s.setCredentials(ctx, m, users.PushConnect, creds))
 		}
 	}
 	return errors.Join(errs...)
@@ -104,21 +105,21 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 		logger.Error(ctx, err, "list machines")
 		return
 	}
-	running := map[string][]string{}
+	running := map[string][]machines.Machine{}
 	for _, m := range s.ownerMachines(ms) {
 		if m.State == machines.StateRunning {
-			running[m.Owner] = append(running[m.Owner], m.ID)
+			running[m.Owner] = append(running[m.Owner], m)
 		}
 	}
-	for owner, ids := range running {
+	for owner, owned := range running {
 		creds, err := s.connect.Credentials(ctx, owner)
 		if err != nil {
 			logger.Warnf(ctx, "read the credentials of %s: %v", owner, err)
 			continue
 		}
-		for _, id := range ids {
-			if err := s.machines.SetCredentials(ctx, id, creds); err != nil {
-				logger.WithField("machine", id).Warnf(ctx, "push credentials: %v", err)
+		for _, m := range owned {
+			if err := s.setCredentials(ctx, m, users.PushConnect, creds); err != nil {
+				logger.WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)
 			}
 		}
 	}
@@ -151,7 +152,7 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) {
 	creds, err := s.connect.Credentials(ctx, m.Owner)
 	if err == nil {
-		err = s.machines.SetCredentials(ctx, m.ID, creds)
+		err = s.setCredentials(ctx, m, users.PushConnect, creds)
 	}
 	if err != nil {
 		log.WithFunc("boxes.Service.pushCredentials").WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)

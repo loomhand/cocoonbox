@@ -7,6 +7,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const metaVault = "vault"
@@ -75,7 +76,7 @@ func (s *Service) pushVault(ctx context.Context, m machines.Machine) error {
 	if err != nil {
 		return err
 	}
-	if err := s.machines.SetCredentials(ctx, m.ID, creds); err != nil {
+	if err := s.setCredentials(ctx, m, users.PushVault, creds); err != nil {
 		return err
 	}
 	if m.State != machines.StateRunning || m.Meta[metaVault] == digest {
