@@ -377,10 +377,3 @@ func toWakeSchedule(w users.WakeSchedule) *controlv1.WakeSchedule {
 func sameAlarm(a, b users.WakeSchedule) bool {
 	return a.NextAt.Equal(b.NextAt) && a.LastWakeAt.Equal(b.LastWakeAt) && a.SleepAt.Equal(b.SleepAt)
 }
-
-func later(a, b time.Time) time.Time {
-	if a.After(b) {
-		return a
-	}
-	return b
-}
