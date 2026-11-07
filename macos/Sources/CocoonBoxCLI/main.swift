@@ -170,17 +170,13 @@ func saveSettings(_ changes: [String: String?]) throws {
     try JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys]).write(to: settingsFile, options: .atomic)
 }
 
-func savedEndpoint() -> String? {
-    settings()["endpoint"]
-}
-
 // sourceKey records where the token came from (browser, paste or app); only a browser token is the CLI's to revoke.
 func sourceKey(_ endpoint: Endpoint) -> String {
     "token_source:" + endpoint.url
 }
 
 func endpointURL(_ flag: String? = value(of: "--endpoint")) -> String? {
-    flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL
+    flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? settings()["endpoint"] ?? Endpoint.configuredURL
 }
 
 func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
@@ -298,12 +294,12 @@ func lifecycle(_ command: String) async {
 func boxCommand() async {
     if words.first == "schedule" { return await scheduleCommand() }
     guard words.first == "create", let name = words.dropFirst().first else {
-        fail("usage: cocoonbox box create NAME [--image IMAGE]")
+        fail("usage: cocoonbox box create NAME [--image IMAGE] [--json]")
     }
     let image = value(of: "--image")
     if arguments.contains(where: { $0.hasPrefix("--image=") })
         || arguments.contains("--image") && (image?.isEmpty != false || image?.hasPrefix("--") == true) {
-        fail("usage: cocoonbox box create NAME [--image IMAGE]")
+        fail("usage: cocoonbox box create NAME [--image IMAGE] [--json]")
     }
     let connection = connection()
     defer { connection.close() }
@@ -421,7 +417,6 @@ func iso(_ ms: Int64) -> String {
     Date(timeIntervalSince1970: Double(ms) / 1000).formatted(.iso8601)
 }
 
-// readExport turns an export file (or stdin for -) into flows to import: name, content and image of each.
 func readExport(_ path: String) throws -> [Cocoonbox_Control_V1_Flow] {
     let data = path == "-" ? FileHandle.standardInput.readDataToEndOfFile() : try Data(contentsOf: URL(fileURLWithPath: path))
     guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["version"] as? Int == 1,
@@ -739,7 +734,6 @@ func readSecret(_ prompt: String) -> String? {
     return readpassphrase(prompt, &buffer, buffer.count, 0).map { String(cString: $0) }
 }
 
-// pastesToken is true for --token -, an SSH session or a non-terminal stdin, unless --browser or --invite.
 func pastesToken() -> Bool {
     if flags.contains("--invite") {
         guard !flags.contains("--token"), !flags.contains("--from-app") else { fail("--invite signs up through the browser; it takes neither --token nor --from-app") }
@@ -839,25 +833,16 @@ func logout() async {
     print("signed out")
 }
 
-// Output serialises writes from the bridge and its upstream streams to stdout.
-final class Output: Sendable {
-    private let lock = Mutex(())
-
-    func write(_ data: Data) {
-        lock.withLock { _ in FileHandle.standardOutput.write(data) }
-    }
-}
-
 func serve() async {
     let endpoint = endpoint()
     let caches = ProcessInfo.processInfo.environment["COCOONBOX_CACHE_DIR"].map { URL(fileURLWithPath: $0) }
         ?? home.appendingPathComponent("Library/Caches/cocoonbox")
-    let output = Output()
+    let output = Mutex(())
     let environment = ProcessInfo.processInfo.environment
     let link = environment["COCOONBOX_APP_SOCKET"].flatMap { path in environment["COCOONBOX_AGENT"].flatMap { AgentLinkClient(path: path, agent: $0) } }
     let bridge = Bridge(
         endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"), link: link,
-        cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
+        cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { data in output.withLock { _ in FileHandle.standardOutput.write(data) } }
     )
     // a client's SIGINT, SIGTERM or SIGHUP still closes the sessions (Claude Code sends SIGKILL 0.5 s after SIGINT).
     let stopping = Mutex(false)
@@ -1313,7 +1298,7 @@ func secrets() {
     print(entries.isEmpty ? "no secrets opted in" : entries.joined(separator: "\n"))
 }
 
-func run(_ argv: [String]) -> Bool {
+func runStep(_ argv: [String]) -> Bool {
     FileHandle.standardError.write(Data(("$ " + argv.joined(separator: " ") + "\n").utf8))
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -1364,7 +1349,7 @@ func setup() {
         : [["codex", "plugin", "marketplace", "add", root.path], ["codex", "plugin", "add", id]]
     if flags.contains("--print") { return steps.forEach { print($0.joined(separator: " ")) } }
     let update = client == "claude" ? ["claude", "plugin", "marketplace", "update", Plugin.marketplace] : ["codex", "plugin", "marketplace", "upgrade", Plugin.marketplace]
-    guard run(steps[0]) || run(update), steps.dropFirst().allSatisfy(run) else { fail("\(client) did not install the plugin") }
+    guard runStep(steps[0]) || runStep(update), steps.dropFirst().allSatisfy(runStep) else { fail("\(client) did not install the plugin") }
     print("installed the cocoonbox plugin for \(client)")
     guard let target = endpointURL().flatMap(Endpoint.init(url:)) else { return }
     if Keychain.token(for: target, service: service) == nil { _ = appToken(target) }

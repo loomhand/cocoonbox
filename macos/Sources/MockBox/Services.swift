@@ -209,7 +209,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
     static let signInOrigin = "https://accounts.example.com"
 
     let world: MockWorld
-    var workspace = FileManager.default.temporaryDirectory
+    let workspace: URL
 
     func hello(request: Cocoonbox_Agent_V1_HelloRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_HelloResponse {
         .with {

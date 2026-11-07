@@ -82,12 +82,12 @@ actor MockWorld {
     private var approvals: [String: CheckedContinuation<Cocoonbox_Agent_V1_RespondRequest, Never>] = [:]
     private var desktopText = ""
     private weak var screen: SyntheticRFBServer?
-    private var animateFPS = 0
+    private let animateFPS: Int
     private var externalDelay: Duration?
     private let restoreOnWake: Bool
     nonisolated let connect: MockConnect
 
-    init(bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false, connect: MockConnect) {
+    init(bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool, restoreOnWake: Bool, connect: MockConnect) {
         self.connect = connect
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS
@@ -160,7 +160,7 @@ actor MockWorld {
         ref.isEmpty ? boxes.first : boxes.first { $0.id == ref || $0.name == ref }
     }
 
-    func ensure(_ boxID: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
+    func ensure(_ boxID: String) throws -> Cocoonbox_Control_V1_EnsureResponse {
         guard let target = box(boxID) else { throw MockWorld.noBox }
         var response = Cocoonbox_Control_V1_EnsureResponse()
         if target.state == .running || target.state == .starting {
@@ -188,7 +188,7 @@ actor MockWorld {
     static let offeredImages = ["cbdesk:v22", "cbcore:v1", "cbdroid:v1"]
 
     // create adds a box within the quota and starts it, as Boxes.Create does, from an offered image or family.
-    func create(name: String, image: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
+    func create(name: String, image: String) throws -> Cocoonbox_Control_V1_EnsureResponse {
         let target = Self.offeredImages.first { $0 == image || $0.hasPrefix(image + ":") }
         guard image.isEmpty || target != nil else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
         guard !name.isEmpty, name.count <= 32, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
@@ -260,7 +260,7 @@ actor MockWorld {
         }
     }
 
-    func hibernate(_ boxID: String = "") -> Cocoonbox_Control_V1_Operation {
+    func hibernate(_ boxID: String) -> Cocoonbox_Control_V1_Operation {
         let target = box(boxID)?.id ?? box.id
         let id = newOperation(target)
         setState(target, .hibernating)
@@ -274,7 +274,7 @@ actor MockWorld {
     }
 
     // saveState plays a quiesced save: the browser closes, then chunks upload with byte progress.
-    func saveState(_ boxID: String = "") -> Cocoonbox_Control_V1_Operation {
+    func saveState(_ boxID: String) -> Cocoonbox_Control_V1_Operation {
         let target = box(boxID) ?? box
         let id = newOperation(target.id)
         let state = target.state
@@ -287,7 +287,7 @@ actor MockWorld {
     }
 
     // rebase plays an image upgrade: save, new machine from the latest image, restore, switch.
-    func rebase(_ boxID: String = "", image: String) -> Cocoonbox_Control_V1_Operation {
+    func rebase(_ boxID: String, image: String) -> Cocoonbox_Control_V1_Operation {
         let rebased = box(boxID) ?? box
         let id = newOperation(rebased.id)
         let target = image.isEmpty ? rebased.latestImage : image
