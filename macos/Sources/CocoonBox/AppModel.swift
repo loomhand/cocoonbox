@@ -490,6 +490,7 @@ final class AppModel {
     }
 
     func start() {
+        guard connection == nil else { return }
         if ProcessInfo.processInfo.environment["CB_TOKEN_STDIN"] == "1", let endpoint = Endpoint(url: endpointURL),
            let line = readLine(strippingNewline: true), !line.isEmpty {
             do {
