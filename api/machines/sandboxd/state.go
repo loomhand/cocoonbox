@@ -4,7 +4,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"maps"
-	"strconv"
 	"strings"
 	"time"
 
@@ -155,6 +154,7 @@ func (e *entry) machine(disk uint32) machines.Machine {
 		return m
 	}
 	m.Image = e.row.Key.Template
+	m.EnvMissing = e.row.EnvMissing
 	m.Flavor = flavorOf(e.row.Key.Size, disk)
 	m.CreatedAt = e.row.ClaimedAt
 	m.Incarnation = fmt.Sprintf("%d.%d.%d", e.row.ClaimedAt.UnixMilli(), e.row.Restarts, e.wakes)
@@ -176,19 +176,6 @@ func (e *entry) record() cluster.Machine {
 		m.Claim, _ = json.Marshal(e.row, json.Deterministic(true))
 	}
 	return m
-}
-
-// loadEnv reads the service meta, the wake count, whether an upstream is set and the names from the claim's env entries.
-func (e *entry) loadEnv(env map[string]envVar) {
-	e.meta, e.env = map[string]string{}, make(map[string]string, len(env))
-	for name, v := range env {
-		e.env[name] = ""
-		if key, ok := strings.CutPrefix(name, envMetaPrefix); ok {
-			e.meta[key] = v.Value
-		}
-	}
-	e.wakes, _ = strconv.Atoi(env[envWakes].Value)
-	_, e.routed = env[envUpstream]
 }
 
 // sizeOf returns the tier of f; disk is not part of a tier.

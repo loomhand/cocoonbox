@@ -11,7 +11,6 @@ import (
 	"maps"
 	"net"
 	"net/http"
-	"net/url"
 	"reflect"
 	"regexp"
 	"slices"
@@ -68,6 +67,8 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
+	// Nodes lists the node addresses the backend may call besides the entry node; empty allows every node the mesh names.
+	Nodes []string
 	// Store holds the machine records: every change lands on a row's version.
 	Store *cluster.Store
 }
@@ -288,7 +289,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 			case err == nil:
 				seen = true
 				if m := b.machine(b.probe(ctx, e)); m.Revision >= revision {
-					if key := fmt.Sprintf("%d|%s|%s|%d|%v", m.State, m.Reason, m.Incarnation, m.Revision, m.Meta); key != last {
+					if key := fmt.Sprintf("%d|%s|%s|%d|%t|%v", m.State, m.Reason, m.Incarnation, m.Revision, m.EnvMissing, m.Meta); key != last {
 						if !send(ctx, out, m) {
 							return
 						}
@@ -452,7 +453,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	add := func(name string, v *envVar) {
 		sum := fingerprint(v)
 		have, ok := e.env[name]
-		if (v == nil && !ok) || (v != nil && ok && have == sum) {
+		if (v == nil && !ok) || (v != nil && ok && have == sum && !e.row.EnvMissing) {
 			return
 		}
 		changes[name], sums[name], had[name] = v, sum, have
@@ -834,22 +835,16 @@ func (b *Backend) token(id, sandbox string) string {
 // lookup refreshes id's row from sandboxd, finding it by metadata when the row names no node, and returns the row.
 func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 	e, err := b.stored(ctx, id)
-	if err != nil && !errors.Is(err, machines.ErrNotFound) {
+	if err != nil {
 		return nil, err
 	}
 	sandbox := e.sandbox()
-	if e != nil && sandbox == "" {
+	if sandbox == "" {
 		return e, nil
 	}
-	var r row
-	var addr string
-	if sandbox != "" {
-		r, addr, err = b.read(ctx, id, e.ownerAddr, sandbox)
-	} else {
-		r, addr, err = b.find(ctx, id)
-	}
+	r, addr, err := b.read(ctx, id, e.ownerAddr, sandbox)
 	if errors.Is(err, machines.ErrNotFound) {
-		if sandbox != "" && b.token(id, sandbox) == "" {
+		if b.token(id, sandbox) == "" {
 			return nil, machines.ErrNotFound
 		}
 		if err = b.forget(ctx, id, sandbox); err != nil {
@@ -861,35 +856,13 @@ func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 		return nil, err
 	}
 	known := map[string]*entry{id: e}
-	if err := b.index(ctx, addr, []row{r}, known); err != nil {
+	if err := b.index(ctx, addr, []row{r}, known, true); err != nil {
 		return nil, err
 	}
+	if known[id] == nil {
+		return nil, machines.ErrNotFound
+	}
 	return known[id], nil
-}
-
-// find looks machine id up on the entry node, then on the peers of the last refresh; it is ErrNotFound only when every node answered.
-func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
-	b.nodeMu.Lock()
-	addrs := slices.Concat([]string{b.entryAddr}, b.peers)
-	b.nodeMu.Unlock()
-	var errs []error
-	for _, addr := range addrs {
-		node, err := b.node(addr)
-		var rows []row
-		if err == nil {
-			rows, err = node.sandboxes(ctx, url.Values{"metadata": {metaMachine + "=" + id}})
-		}
-		switch {
-		case err != nil:
-			errs = append(errs, err)
-		case len(rows) > 0:
-			return rows[0], addr, nil
-		}
-	}
-	if len(errs) > 0 {
-		return row{}, "", errors.Join(errs...)
-	}
-	return row{}, "", machines.ErrNotFound
 }
 
 func (b *Backend) stored(ctx context.Context, id string) (*entry, error) {
@@ -907,7 +880,8 @@ func (b *Backend) machine(e *entry) machines.Machine {
 	m := e.machine(b.opts.DiskGiB)
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	m.Squeezed = b.full[cmp.Or(e.ownerAddr, b.entryAddr)]
+	m.Node = cmp.Or(e.ownerAddr, b.entryAddr)
+	m.Squeezed = b.full[m.Node]
 	return m
 }
 
@@ -967,7 +941,7 @@ func (b *Backend) refresh(ctx context.Context) error {
 	}
 	b.trackAway(addrs, lists, known)
 	for addr, rows := range lists {
-		if err := b.index(ctx, addr, rows, known); err != nil {
+		if err := b.index(ctx, addr, rows, known, false); err != nil {
 			return err
 		}
 	}
@@ -1029,44 +1003,35 @@ func (b *Backend) forgetTokens(known map[string]*entry, read time.Time) {
 	})
 }
 
-// index merges the rows of node addr into known, reading the env of unseen claims and the token of claims whose token this process lacks.
-func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry) error {
+// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only when moved says the backend itself followed the claim there.
+func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, moved bool) error {
 	node, err := b.node(addr)
 	if err != nil {
 		return err
 	}
+	placed := func(e *entry, sandbox string) bool {
+		return e.sandbox() == sandbox && (moved || e.ownerAddr == addr)
+	}
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
-		if id == "" {
+		e := known[id]
+		if !placed(e, r.ID) {
 			continue
 		}
 		token := r.Token
 		r.Token = ""
-		e := known[id]
-		same := e.sandbox() == r.ID
-		unchanged := same && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
-			e.ownerAddr == addr
-		if token == "" && (!same || b.token(id, r.ID) == "") {
+		if token == "" && b.token(id, r.ID) == "" {
 			if full, getErr := node.get(ctx, r.ID); getErr == nil {
 				token = full.Token
 			}
 		}
-		if unchanged {
+		if reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
 			b.keepToken(id, r.ID, token)
 			continue
 		}
-		var env map[string]envVar
-		if !same {
-			if env, err = node.env(ctx, r.ID); err != nil {
-				return fmt.Errorf("read env of %s: %w", r.ID, err)
-			}
-		}
 		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-			e = cmp.Or(e, &entry{id: id, owner: r.Metadata[metaOwner]})
-			// The tenant stamp is sandboxd's own, so it outranks the owner metadata the api wrote.
-			e.owner = cmp.Or(r.Tenant, e.owner)
-			if env != nil && (e.row == nil || e.row.ID != r.ID) {
-				e.loadEnv(env)
+			if !placed(e, r.ID) {
+				return e, false
 			}
 			cur := r
 			e.row, e.image, e.ownerAddr = &cur, r.Key.Template, addr
@@ -1075,25 +1040,30 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 		if err != nil {
 			return err
 		}
+		if next == nil {
+			delete(known, id)
+			continue
+		}
 		known[id] = next
 		b.keepToken(id, r.ID, token)
 	}
 	return nil
 }
 
-// dropUnlisted drops the machines of known that lists lack while their node answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
+// dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
-	present := map[string]bool{}
-	for _, rows := range lists {
+	type claimAt struct{ addr, sandbox string }
+	present := map[claimAt]bool{}
+	for addr, rows := range lists {
 		for _, r := range rows {
-			present[r.Metadata[metaMachine]] = true
+			present[claimAt{addr, r.ID}] = true
 		}
 	}
 	now := time.Now()
 	b.mu.Lock()
 	missing := map[string]string{}
 	for id, e := range known {
-		if present[id] || e.busy(now) || e.row == nil {
+		if e.busy(now) || e.row == nil || present[claimAt{e.ownerAddr, e.row.ID}] {
 			continue
 		}
 		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
@@ -1208,8 +1178,8 @@ func (b *Backend) mesh(ctx context.Context) []string {
 		log.WithFunc("sandboxd.Backend.mesh").Warnf(ctx, "list the peers: %v", err)
 		peers = b.peers
 	}
-	b.peers = peers
-	return slices.Concat([]string{b.entryAddr}, peers)
+	b.peers = slices.DeleteFunc(peers, func(addr string) bool { return !b.allowed(addr) })
+	return slices.Concat([]string{b.entryAddr}, b.peers)
 }
 
 // trackAway notes when a node that the claims of known name stopped being in the mesh and answering the list, and forgets nodes no claim names.
@@ -1240,6 +1210,9 @@ func (b *Backend) node(addr string) (*client, error) {
 	if addr == b.entryAddr {
 		return b.api, nil
 	}
+	if !b.allowed(addr) {
+		return nil, fmt.Errorf("node %s is not in the sandboxd nodes", addr)
+	}
 	b.nodeMu.Lock()
 	defer b.nodeMu.Unlock()
 	if c := b.nodes[addr]; c != nil {
@@ -1251,6 +1224,10 @@ func (b *Backend) node(addr string) (*client, error) {
 	}
 	b.nodes[addr] = c
 	return c, nil
+}
+
+func (b *Backend) allowed(addr string) bool {
+	return addr == b.entryAddr || len(b.opts.Nodes) == 0 || slices.Contains(b.opts.Nodes, addr)
 }
 
 // probe marks e ready once its agent answers through the relay, and returns e as it then stands.
@@ -1336,7 +1313,7 @@ func send(ctx context.Context, out chan<- machines.Machine, m machines.Machine) 
 }
 
 func secretVar(sec *machines.Secret) *envVar {
-	if sec == nil {
+	if sec == nil || sec.Value == "" {
 		return nil
 	}
 	v := &envVar{Value: sec.Value, Guest: new(false)}

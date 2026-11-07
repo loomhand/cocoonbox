@@ -80,6 +80,10 @@ type Machine struct {
 	Routed bool
 	// Squeezed reports that the machine's node has no room for another running machine.
 	Squeezed bool
+	// EnvMissing reports host-only entries the backend lost the values of; they need a push again.
+	EnvMissing bool
+	// Node names the backend node that holds the machine.
+	Node string
 }
 
 // Identity tells a box agent which box and wake it serves and which edge key signs its credentials; the guest takes Name as its hostname.

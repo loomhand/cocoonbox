@@ -66,6 +66,7 @@ type row struct {
 	Restarts   int               `json:"restarts,omitzero"`
 	Failed     string            `json:"failed,omitempty"`
 	ClaimedAt  time.Time         `json:"claimed_at,omitzero"`
+	EnvMissing bool              `json:"env_missing,omitzero"`
 }
 
 type envVar struct {
@@ -205,14 +206,6 @@ func (c *client) get(ctx context.Context, id string) (row, error) {
 
 func (c *client) verb(ctx context.Context, id, verb string, body any) error {
 	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, nil, body, nil)
-}
-
-func (c *client) env(ctx context.Context, id string) (map[string]envVar, error) {
-	var resp struct {
-		Env map[string]envVar `json:"env"`
-	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/env", nil, nil, &resp)
-	return resp.Env, err
 }
 
 // patchEnv merges entries into the claim's env; a nil entry removes the name.
