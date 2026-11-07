@@ -4,6 +4,9 @@ package sandboxd
 import (
 	"cmp"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -441,7 +444,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	}
 	changes, sums, had := map[string]*envVar{}, map[string]string{}, map[string]string{}
 	add := func(name string, v *envVar) {
-		sum := fingerprint(v)
+		sum := fingerprint(b.opts.Token, v)
 		have, ok := e.env[name]
 		if (v == nil && !ok) || (v != nil && ok && have == sum && !e.row.EnvMissing) {
 			return
@@ -1385,13 +1388,15 @@ func secretVar(sec *machines.Secret) *envVar {
 	return v
 }
 
-// fingerprint identifies an env entry without keeping its value; nil has none.
-func fingerprint(v *envVar) string {
+// fingerprint identifies an env entry by an HMAC under key, so a reader of the database alone cannot test guesses of its value; nil has none.
+func fingerprint(key string, v *envVar) string {
 	if v == nil {
 		return ""
 	}
 	raw, _ := json.Marshal(v)
-	return utils.HashHex(string(raw))
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write(raw)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 func waitOn(waits map[string]chan struct{}, key string) chan struct{} {
