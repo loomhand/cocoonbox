@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # Test stand-in for `cocoonbox-agent offload <verb>` (contracts.md "Offload"); HOME files stub-findings.json and stub-auto-back steer begin and send --back.
-import json, os, subprocess, sys, tarfile, tempfile, time
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
 
 HEADINGS = ["## Goal and definition of done", "## User preferences and constraints", "## Current state", "## Decisions made",
             "## Files touched", "## Next steps", "## Commands", "## Environment facts", "## Gotchas learned", "## Open questions"]
@@ -218,7 +225,7 @@ elif verb == "end":
     save(session_path, session)
     entry["copy"] = "mirror"
     save(index_path, index)
-    subprocess.run(["rm", "-rf", os.path.join(os.environ["HOME"], "stub-secrets", key)])
+    shutil.rmtree(os.path.join(os.environ["HOME"], "stub-secrets", key), ignore_errors=True)
     reply({"ok": True})
 
 else:
