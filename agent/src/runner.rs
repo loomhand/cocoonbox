@@ -131,6 +131,7 @@ impl Runtime {
                 Arc::clone(&journal),
                 flows,
                 cfg.plugins.iter().map(|p| p.name.clone()).collect(),
+                cfg.automation == Automation::Desk,
             )),
             journal,
             main_tools: loop_tools(false, &cfg),

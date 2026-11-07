@@ -67,21 +67,24 @@ pub struct Dispatcher {
     flows: Option<Arc<Syncer>>,
     /// Plugin script tools, which read and write flows as `script_run` does.
     plugins: Vec<String>,
+    scaled: bool,
 }
 
 impl Dispatcher {
-    /// Creates a dispatcher over `tools` that writes history to `journal` and syncs `flows` around the calls that read or write them.
+    /// Creates a dispatcher over `tools` that writes history to `journal` and syncs `flows` around the calls that read or write them; with `scaled`, `computer_act` takes x,y in screenshot pixels, which it does not announce.
     pub fn new(
         tools: Arc<dyn Tools>,
         journal: Arc<Journal>,
         flows: Option<Arc<Syncer>>,
         plugins: Vec<String>,
+        scaled: bool,
     ) -> Self {
         Self {
             tools,
             journal,
             flows,
             plugins,
+            scaled,
         }
     }
 
@@ -226,7 +229,10 @@ impl Dispatcher {
     }
 
     fn announce(&self, agent_id: &str, args: &Value) {
-        let coord = |k: &str| args[k].as_f64().map_or(0, |v| v.round() as i32);
+        let coord = |k: &str| match args[k].as_f64() {
+            Some(v) if !self.scaled => v.round() as i32,
+            _ => 0,
+        };
         let text = ["text", "key", "app"]
             .iter()
             .find_map(|k| args[*k].as_str().map(str::to_owned))
@@ -242,7 +248,7 @@ impl Dispatcher {
             .unwrap_or_default();
         self.journal
             .bus
-            .publish(event::Body::ComputerAction(pb::ComputerAction {
+            .publish_live(event::Body::ComputerAction(pb::ComputerAction {
                 agent_id: agent_id.to_owned(),
                 action: args["action"].as_str().unwrap_or_default().to_owned(),
                 x: coord("x"),
@@ -314,6 +320,7 @@ mod tests {
             Arc::clone(&journal),
             None,
             Vec::new(),
+            false,
         );
         (dir, tools, journal, dispatcher)
     }
@@ -364,12 +371,21 @@ mod tests {
         assert!(history.is_empty(), "subagent entries stay out of history");
 
         let mut actions = Vec::new();
+        let mut first = u64::MAX;
         while let Ok(ev) = live.try_recv() {
+            first = first.min(ev.offset);
             if let Some(event::Body::ComputerAction(a)) = &ev.body {
                 actions.push((a.action.clone(), a.x, a.y));
             }
         }
         assert_eq!(actions, [("click".to_owned(), 3, 4)]);
+        let replay = journal.bus.subscribe(first - 1).unwrap().replay;
+        assert!(
+            !replay
+                .iter()
+                .any(|e| matches!(e.body, Some(event::Body::ComputerAction(_)))),
+            "a live highlight entered the replay ring"
+        );
     }
 
     #[tokio::test]

@@ -3635,7 +3635,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     {
         match ev.body {
             Some(event::Body::ComputerAction(a)) => {
-                assert_eq!((a.action.as_str(), a.x, a.y), ("click", 10, 20));
+                assert_eq!((a.action.as_str(), a.x, a.y), ("click", 0, 0));
                 saw_action = true;
             }
             Some(event::Body::Transcript(e)) => panic!("an owner session recorded {e:?}"),
