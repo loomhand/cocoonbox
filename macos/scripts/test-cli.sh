@@ -10,7 +10,7 @@ swift build -c release --product cocoonbox-cli >/dev/null
 bin="$(swift build --show-bin-path)"
 release="$(swift build -c release --show-bin-path)/cocoonbox-cli"
 
-port=50071
+port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 work="$(mktemp -d)"
 export COCOONBOX_ENDPOINT="http://127.0.0.1:$port"
 export CB_KEYCHAIN_SERVICE=io.github.loomhand.cocoonbox.test
@@ -51,6 +51,15 @@ def check(name, ok, detail=""):
 
 def run(*args):
     return subprocess.run([cli, *args], capture_output=True, text=True, timeout=60)
+
+def wait_for(condition, seconds=5):
+    deadline = time.time() + seconds
+    while not condition() and time.time() < deadline:
+        time.sleep(0.05)
+    return condition()
+
+def deletes():
+    return open(mocklog).read().count("mcp DELETE /cocoonbox.mcp/cb-mock00000000")
 
 status = run("status", "--json")
 check("status over gRPC", json.loads(status.stdout)["state"] == "hibernated", status.stdout + status.stderr)
@@ -163,7 +172,7 @@ result, _ = b.tool("read_file", {"path": "/workspace/notes.md"})
 check("a box tool after hibernate wakes the box again", "Notes" in text(result), result)
 b.close()
 
-time.sleep(1)
+wait_for(lambda: deletes() >= 1)
 log = open(mocklog).read()
 check("the box sees the client's own name", "rpc=initialize client=test-client" in log)
 check("closing stdin ends the box session", "mcp DELETE /cocoonbox.mcp/cb-mock00000000" in log)
@@ -173,7 +182,7 @@ t.send("notifications/initialized", notify=True)
 time.sleep(2)
 t.p.terminate()
 t.p.wait(timeout=10)
-time.sleep(1)
+wait_for(lambda: deletes() >= 2)
 log = open(mocklog).read()
 check("SIGTERM ends the box session too", log.count("mcp DELETE /cocoonbox.mcp/cb-mock00000000") >= 2, log[-400:])
 c = Bridge()
@@ -184,7 +193,7 @@ c.p.send_signal(signal.SIGINT)
 time.sleep(0.5)
 c.p.kill()
 c.p.wait(timeout=10)
-time.sleep(1)
+wait_for(lambda: deletes() >= 3)
 log = open(mocklog).read()
 check("SIGINT then SIGKILL 0.5 s later, as Claude Code stops a server, ends the box session", log.count("mcp DELETE /cocoonbox.mcp/cb-mock00000000") >= 3, log[-400:])
 h = Bridge()
@@ -193,7 +202,7 @@ h.send("notifications/initialized", notify=True)
 time.sleep(2)
 h.p.send_signal(signal.SIGHUP)
 h.p.wait(timeout=10)
-time.sleep(1)
+wait_for(lambda: deletes() >= 4)
 log = open(mocklog).read()
 check("SIGHUP, as a closed terminal sends, ends the box session", log.count("mcp DELETE /cocoonbox.mcp/cb-mock00000000") >= 4, log[-400:])
 authed = "\n".join(line for line in log.splitlines() if "/.well-known/" not in line)
@@ -426,12 +435,6 @@ class FakeApp:
         for c in self.conns:
             c.close()
         self.s.close()
-
-def wait_for(condition, seconds=5):
-    deadline = time.time() + seconds
-    while not condition() and time.time() < deadline:
-        time.sleep(0.05)
-    return condition()
 
 app_sock = os.path.join(work, "app.sock")
 app = FakeApp(app_sock, test_id)
@@ -678,7 +681,6 @@ check("offload secrets add records the entry", r.returncode == 0 and r.stdout.st
 r = cb("offload", "secrets", "remove", "file:.env")
 check("offload secrets remove", r.stdout.strip() == "no secrets opted in", r)
 
-# the app's item is the CLI's own under a service one ".cli" shorter
 def as_service(service, *args, data=None, binary=None):
     return subprocess.run([binary or cli, *args], input=data, capture_output=True, text=True, timeout=60, env=dict(os.environ, CB_KEYCHAIN_SERVICE=service))
 def app_service(name):
@@ -762,7 +764,6 @@ r = subprocess.run([cli, "login", "--token", "-"], input="mock-token\n", capture
 seen = len(open(mocklog).read())
 r = run("logout", "--everywhere")
 check("logout --everywhere signs out everywhere at the server and here", r.returncode == 0 and "signed out everywhere" in r.stdout and "account=signed-out-everywhere" in open(mocklog).read()[seen:] and "run cocoonbox login" in run("status").stderr, r.stdout + r.stderr)
-# A token copied from the app is the app's device: the CLI's logout deletes its own item and revokes nothing.
 for how in ("login --from-app", "an implicit copy"):
     service = app_service("revoke-" + how.split()[-1])
     seen = len(open(mocklog).read())
