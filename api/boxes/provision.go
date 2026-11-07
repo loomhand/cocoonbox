@@ -176,13 +176,16 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 			return "", fmt.Errorf("issue gw key: %w", err)
 		case err != nil:
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the gw key; the next pass retries: %v", err)
+			if installErr := s.accounts.InstallMachineKey(ctx, m.ID, ""); installErr != nil {
+				return "", fmt.Errorf("record that no gw key is installed: %w", installErr)
+			}
 			keys[gwKeyEnv] = nil
 		default:
 			keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
 		}
 	}
 	wake, err := s.provisionWith(ctx, m, keys)
-	if err == nil && s.accounts != nil {
+	if err == nil && issued != "" {
 		if installErr := s.accounts.InstallMachineKey(ctx, m.ID, issued); installErr != nil {
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "record the installed gw key; the next pass keys the machine again: %v", installErr)
 		}
@@ -270,7 +273,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	return identity.WakeID, nil
 }
 
-// revokeEndedKeys revokes the gw keys of incarnations that no longer run and the keys of a running one older than its newest installed key, and returns the running machines whose node holds a key.
+// revokeEndedKeys revokes the gw keys of incarnations that no longer run and the keys of a running one older than its newest installed key, and returns the running machines whose newest key is installed.
 func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, keys []users.MachineKey) map[string]bool {
 	running := map[string]string{}
 	for _, m := range ms {
@@ -278,13 +281,16 @@ func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, ke
 			running[m.ID] = m.Incarnation
 		}
 	}
-	keyed := map[string]bool{}
+	keyed, pruned := map[string]bool{}, map[string]bool{}
 	for _, k := range keys {
-		if inc, ok := running[k.Machine]; ok && inc == k.Incarnation && !keyed[k.Machine] {
-			keyed[k.Machine] = k.Installed
+		if inc, ok := running[k.Machine]; !ok || inc != k.Incarnation || pruned[k.Machine] {
+			s.revokeMachineKey(ctx, k.Machine, k.ID)
 			continue
 		}
-		s.revokeMachineKey(ctx, k.Machine, k.ID)
+		if _, seen := keyed[k.Machine]; !seen {
+			keyed[k.Machine] = k.Installed
+		}
+		pruned[k.Machine] = k.Installed
 	}
 	return keyed
 }

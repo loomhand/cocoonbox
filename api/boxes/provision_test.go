@@ -361,6 +361,36 @@ func TestAKeyIssuedButNeverInstalledKeysTheMachineAgain(t *testing.T) {
 	}
 }
 
+func TestANewestKeyNotYetInstalledKeysTheMachineAgainAndPrunesTheOlder(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i1", Meta: map[string]string{metaWake: "i1|w1"}})
+	accounts := &fakeAccounts{keys: []users.MachineKey{{ID: "ak-unpushed", Machine: aliceBox, Incarnation: "i1"}, {ID: "ak-live", Machine: aliceBox, Incarnation: "i1", Installed: true}}}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+
+	svc.provisionStale(t.Context())
+	svc.provisionStale(t.Context())
+	if want := "key " + aliceBox + " i1;revoke ak-unpushed;revoke ak-live"; accounts.calls() != want {
+		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
+	}
+}
+
+func TestAGWOutageRemovesNoKeyItCannotRecordAsGone(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i1", EnvMissing: true, Meta: map[string]string{metaWake: "i1|w1"}})
+	accounts := &fakeAccounts{issueErr: errors.New("gw admin down"), installErr: errors.New("db down")}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+	svc.provision.backoff = time.Millisecond
+
+	m, _ := fake.Get(t.Context(), aliceBox)
+	if err := svc.provisionMachine(t.Context(), m, false); err == nil || len(fake.keyCalls()) != 0 {
+		t.Errorf("provisionMachine = %v after %d key pushes, want an error and none", err, len(fake.keyCalls()))
+	}
+}
+
 func TestProvisioningLeavesAMachineThatStoppedRunning(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Incarnation: "i1", Meta: map[string]string{metaWake: "i1|w1"}})
@@ -469,12 +499,13 @@ func (fakeSigner) PublicKey() string                  { return "pub1" }
 func (fakeSigner) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
 type fakeAccounts struct {
-	mu       sync.Mutex
-	log      []string
-	keys     []users.MachineKey
-	next     int
-	pushes   []string
-	issueErr error
+	mu         sync.Mutex
+	log        []string
+	keys       []users.MachineKey
+	next       int
+	pushes     []string
+	issueErr   error
+	installErr error
 }
 
 func (a *fakeAccounts) Tenant(user string) (string, error) { return "tenant-" + user, nil }
@@ -518,6 +549,9 @@ func (a *fakeAccounts) RecordPushes(_ context.Context, machine, owner, node stri
 func (a *fakeAccounts) InstallMachineKey(_ context.Context, machine, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.installErr != nil {
+		return a.installErr
+	}
 	for i, k := range a.keys {
 		if k.Machine == machine {
 			a.keys[i].Installed = k.ID == id
