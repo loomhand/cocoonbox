@@ -128,7 +128,7 @@ public nonisolated struct Cocoonbox_Control_V1_CatalogEntry: Sendable {
   /// Where the user picks the repositories of the GitHub App; empty otherwise.
   public var installURL: String = String()
 
-  /// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection.
+  /// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box use it through egress injection.
   public var grantOnly: Bool = false
 
   /// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
@@ -318,7 +318,7 @@ public nonisolated struct Cocoonbox_Control_V1_ActivityEntry: Sendable {
 
   public var tool: String = String()
 
-  /// `mcp` (mode B), `box` (mode A), or `console` and `app` for a disconnect.
+  /// `mcp` (mode B), `box` (mode A), or `console` for a disconnect.
   public var door: String = String()
 
   public var caller: String = String()

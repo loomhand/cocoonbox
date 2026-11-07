@@ -138,7 +138,7 @@ type CatalogEntry struct {
 	Available bool `protobuf:"varint,4,opt,name=available,proto3" json:"available,omitempty"`
 	// Where the user picks the repositories of the GitHub App; empty otherwise.
 	InstallUrl string `protobuf:"bytes,5,opt,name=install_url,json=installUrl,proto3" json:"install_url,omitempty"`
-	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection.
+	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box use it through egress injection.
 	GrantOnly bool `protobuf:"varint,6,opt,name=grant_only,json=grantOnly,proto3" json:"grant_only,omitempty"`
 	// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
 	Checkable     bool `protobuf:"varint,7,opt,name=checkable,proto3" json:"checkable,omitempty"`
@@ -822,7 +822,7 @@ type ActivityEntry struct {
 	AtMs        int64                  `protobuf:"varint,1,opt,name=at_ms,json=atMs,proto3" json:"at_ms,omitempty"`
 	ConnectorId string                 `protobuf:"bytes,2,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
 	Tool        string                 `protobuf:"bytes,3,opt,name=tool,proto3" json:"tool,omitempty"`
-	// `mcp` (mode B), `box` (mode A), or `console` and `app` for a disconnect.
+	// `mcp` (mode B), `box` (mode A), or `console` for a disconnect.
 	Door   string `protobuf:"bytes,4,opt,name=door,proto3" json:"door,omitempty"`
 	Caller string `protobuf:"bytes,5,opt,name=caller,proto3" json:"caller,omitempty"`
 	// `allow`, `approved`, `denied`, `off`, `approval_required`, `needs_reconnect` or `disconnect`.

@@ -749,7 +749,7 @@ Scope:
   - `delete_rows` also deletes the agent's routines.
   - `queue_turn`, which builds the user entry at :201-210, takes an `origin`.
 - `agent/src/runner.rs`:
-  - New `queue_routine` next to `send`. It enqueues on the same per-agent slot (`slot`), skipping attachments and auto-title. `send` is the only enqueue path today.
+  - New `queue_routine` next to `send`. It enqueues on the same per-agent slot (`slot`), skipping auto-title. `send` is the only enqueue path today.
   - `run_turn`: a `max_run_s` sleep arm in its `select!` for routine turns, which ends them as `timeout`. Today no turn has a wall time; the only limits are steps (40 main, 300 for a plan, 30 computer) and the model client's 180 s read timeout.
   - `take_over`: a routine turn waits at most 10 min, then ends as `waiting_for_user`. Today the approval wait (`ask`) has no timeout; the turn lets go of the turns read lock while it waits.
   - Usage per model (main and computer) goes into the run row. `TurnEnd` keeps one sum, as now.

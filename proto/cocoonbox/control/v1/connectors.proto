@@ -48,7 +48,7 @@ message CatalogEntry {
   bool available = 4;
   // Where the user picks the repositories of the GitHub App; empty otherwise.
   string install_url = 5;
-  // The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection.
+  // The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box use it through egress injection.
   bool grant_only = 6;
   // The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
   bool checkable = 7;
@@ -132,7 +132,7 @@ message ActivityEntry {
   int64 at_ms = 1;
   string connector_id = 2;
   string tool = 3;
-  // `mcp` (mode B), `box` (mode A), or `console` and `app` for a disconnect.
+  // `mcp` (mode B), `box` (mode A), or `console` for a disconnect.
   string door = 4;
   string caller = 5;
   // `allow`, `approved`, `denied`, `off`, `approval_required`, `needs_reconnect` or `disconnect`.
