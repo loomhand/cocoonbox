@@ -200,6 +200,12 @@ func (*fakeGW) DailyCaps(context.Context) (map[string]int64, error) { return nil
 
 func (*fakeGW) SetDailyCap(context.Context, string, *int64) error { return nil }
 
+func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
+	return "gw-machine", "ak-machine", nil
+}
+
+func (*fakeGW) Delete(context.Context, string) error { return nil }
+
 func (g *fakeGW) disabled(owner string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()

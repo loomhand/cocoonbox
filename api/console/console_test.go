@@ -540,6 +540,12 @@ func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) err
 	return nil
 }
 
+func (g *fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
+	return "gw-machine", "ak-machine", nil
+}
+
+func (g *fakeGW) Delete(context.Context, string) error { return nil }
+
 func (g *fakeGW) capOf(owner string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()

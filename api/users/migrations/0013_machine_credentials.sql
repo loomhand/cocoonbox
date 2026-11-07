@@ -1,0 +1,9 @@
+CREATE TABLE machine_keys (
+    ak_id       text PRIMARY KEY,
+    machine_id  text NOT NULL,
+    user_id     text NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    incarnation text NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX machine_keys_machine ON machine_keys (machine_id);

@@ -1331,6 +1331,12 @@ func (*fakeGW) DailyCap(context.Context, string) (*int64, error) { return nil, n
 func (*fakeGW) DailyCaps(context.Context) (map[string]int64, error) { return nil, nil }
 func (*fakeGW) SetDailyCap(context.Context, string, *int64) error   { return nil }
 
+func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
+	return "gw-machine", "ak-machine", nil
+}
+
+func (*fakeGW) Delete(context.Context, string) error { return nil }
+
 type fakeTenants struct{}
 
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -48,14 +49,14 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	}
 
 	execs := fake.execCalls()
-	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+alice {
-		t.Fatalf("deliveries = %+v, want one with the gw key", execs)
+	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+alice+"-ak1" {
+		t.Fatalf("deliveries = %+v, want one with the incarnation's gw key", execs)
 	}
 	identity := execs[0].identity
 	if identity.BoxID != aliceBox || identity.Name != users.FirstBoxName || identity.KeyID != "k1" || identity.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(identity.WakeID) {
 		t.Errorf("identity = %+v", identity)
 	}
-	if accounts.calls() != "key "+alice {
+	if accounts.calls() != "key "+aliceBox+" pod1/vm1" {
 		t.Errorf("account calls = %q", accounts.calls())
 	}
 	ep, wake, err := svc.Resolve(ctx, alice, aliceBox)
@@ -64,9 +65,9 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	}
 }
 
-func TestWakeReprovisionsIdentityOnly(t *testing.T) {
+func TestWakeReprovisionsTheIdentityWithANewGWKey(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w-old"}})
 	accounts := &fakeAccounts{}
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableAccounts(accounts)
@@ -79,7 +80,7 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	if _, err := svc.Rename(ctx, &controlv1.RenameBoxRequest{BoxId: aliceBox, Name: "desk_1"}); err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaWake: "pod1/vm1|w-old"}})
 	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is starting; call box_ensure to bring it up" {
 		t.Errorf("Resolve of an unprovisioned incarnation: %v, want Unavailable box is starting; call box_ensure to bring it up", err)
 	}
@@ -92,11 +93,11 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 		_, wake, err := svc.Resolve(ctx, alice, aliceBox)
 		return err == nil && wake != "w-old"
 	})
-	if accounts.calls() != "" {
-		t.Errorf("wake asked for a gw key again: %q", accounts.calls())
+	if accounts.calls() != "key "+aliceBox+" pod1/vm2" {
+		t.Errorf("account calls = %q, want one gw key for the new incarnation", accounts.calls())
 	}
-	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey != "" || execs[0].identity.WakeID == "w-old" || execs[0].identity.Name != "desk_1" {
-		t.Errorf("deliveries = %+v, want one identity named desk_1 without a gw key", execs)
+	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey == "" || execs[0].identity.WakeID == "w-old" || execs[0].identity.Name != "desk_1" {
+		t.Errorf("deliveries = %+v, want one identity named desk_1 with a gw key", execs)
 	}
 }
 
@@ -141,7 +142,7 @@ func TestRebaseClaimsUnderTheTenant(t *testing.T) {
 	accounts := &fakeAccounts{}
 	env.fake.put(machines.Machine{
 		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1,
-		Incarnation: "pod0/vm0", Meta: map[string]string{metaGW: "1", metaWake: "pod0/vm0|w0"},
+		Incarnation: "pod0/vm0", Meta: map[string]string{metaWake: "pod0/vm0|w0"},
 	})
 	env.svc.EnableAccounts(accounts)
 	env.svc.EnableProvisioning(fakeSigner{})
@@ -167,12 +168,12 @@ func TestRebaseClaimsUnderTheTenant(t *testing.T) {
 	if !strings.HasPrefix(restoreCred, "cred:"+aliceBox+":") || restoreCred == "cred:"+aliceBox+":w0" {
 		t.Errorf("restore on the new machine sent credential %q", restoreCred)
 	}
-	if want := "key " + alice; accounts.calls() != want {
+	if want := "key " + newID + " pod1/vm1"; accounts.calls() != want {
 		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
 	}
 }
 
-func TestARestoredMachineGetsItsOwnIDAndTheUsersGWKey(t *testing.T) {
+func TestARestoredMachineGetsItsOwnIDAndItsOwnGWKey(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
 	env.save(t)
@@ -195,7 +196,7 @@ func TestARestoredMachineGetsItsOwnIDAndTheUsersGWKey(t *testing.T) {
 	if last := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("restore ended with %v", last[len(last)-1])
 	}
-	if want := "key " + alice; accounts.calls() != want {
+	if want := "key " + newID + " pod1/vm1"; accounts.calls() != want {
 		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
 	}
 }
@@ -238,7 +239,7 @@ func TestTheProvisionerDeletesAMachineAnInterruptedRebaseLeftOnlyOnceNoOperation
 
 func TestTheProvisionerPushesTheLostHostKeysAgainAndKeepsTheIdentity(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Routed: true, EnvMissing: true, Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w1", metaVault: "d1"}})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Routed: true, EnvMissing: true, Meta: map[string]string{metaWake: "pod1/vm1|w1", metaVault: "d1"}})
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableAccounts(&fakeAccounts{})
 	svc.EnableProvisioning(fakeSigner{})
@@ -282,11 +283,65 @@ func TestAMachineStaysUnprovisionedWhileTheBackendStillMissesAnEntry(t *testing.
 	svc.provision.backoff = time.Millisecond
 
 	m, _ := fake.Get(t.Context(), aliceBox)
-	if err := svc.provisionMachine(t.Context(), m); !errors.Is(err, errEnvMissing) {
+	if err := svc.provisionMachine(t.Context(), m, false); !errors.Is(err, errEnvMissing) {
 		t.Errorf("provisionMachine = %v, want errEnvMissing", err)
 	}
 	if _, _, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve: %v, want Unavailable", err)
+	}
+}
+
+func TestTheProvisionerRevokesTheKeysOfEndedIncarnationsAndKeysARunningOneAgain(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i2", Meta: map[string]string{metaWake: "i2|w2"}})
+	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated, Incarnation: "j1", Meta: map[string]string{metaWake: "j1|w1"}})
+	accounts := &fakeAccounts{keys: []users.MachineKey{{ID: "ak-old", Machine: aliceBox, Incarnation: "i1"}, {ID: "ak-asleep", Machine: aliceBox + "-2", Incarnation: "j1"}}}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+
+	svc.provisionStale(t.Context())
+	if want := "revoke ak-old;revoke ak-asleep;key " + aliceBox + " i2"; accounts.calls() != want {
+		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
+	}
+	if execs := fake.execCalls(); len(execs) != 0 {
+		t.Errorf("deliveries = %+v, want the identity left alone", execs)
+	}
+	if creds := fake.credCalls(); len(creds) != 1 || creds[0].secrets[gwKeyEnv] != "Bearer gw-key-"+alice+"-ak1" {
+		t.Errorf("pushes = %+v, want the new gw key", creds)
+	}
+	svc.provisionStale(t.Context())
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 1 || len(fake.credCalls()) != 1 {
+		t.Errorf("keys = %+v after %d pushes, want one key and no second push", keys, len(fake.credCalls()))
+	}
+}
+
+func TestAFailedProvisioningRevokesTheKeyItIssuedAndADeleteRevokesTheRest(t *testing.T) {
+	fake := newFakeMachines()
+	fake.execErr = errors.New("exec: 502")
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i1"})
+	accounts := &fakeAccounts{}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
+	svc.provision.backoff = time.Millisecond
+
+	m, _ := fake.Get(t.Context(), aliceBox)
+	if err := svc.provisionMachine(t.Context(), m, false); err == nil {
+		t.Fatal("provisionMachine succeeded with a failing delivery")
+	}
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 0 {
+		t.Errorf("keys after the failures = %+v, want each issued key revoked", keys)
+	}
+	fake.execErr = nil
+	if err := svc.provisionMachine(t.Context(), m, false); err != nil {
+		t.Fatalf("provisionMachine: %v", err)
+	}
+	if err := svc.deleteMachine(t.Context(), aliceBox); err != nil {
+		t.Fatalf("deleteMachine: %v", err)
+	}
+	if keys, _ := accounts.MachineKeys(t.Context(), ""); len(keys) != 0 {
+		t.Errorf("keys after the delete = %+v, want none", keys)
 	}
 }
 
@@ -305,21 +360,36 @@ func (fakeSigner) PublicKey() string                  { return "pub1" }
 func (fakeSigner) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
 type fakeAccounts struct {
-	mu  sync.Mutex
-	log []string
+	mu   sync.Mutex
+	log  []string
+	keys []users.MachineKey
+	next int
 }
 
 func (a *fakeAccounts) Tenant(user string) (string, error) { return "tenant-" + user, nil }
 
-func (a *fakeAccounts) GWKey(user string) (string, error) {
-	a.record("key " + user)
-	return "gw-key-" + user, nil
-}
-
-func (a *fakeAccounts) record(call string) {
+func (a *fakeAccounts) IssueMachineKey(_ context.Context, owner, machine, incarnation string) (string, string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.log = append(a.log, call)
+	a.next++
+	id := "ak" + strconv.Itoa(a.next)
+	a.keys = slices.Insert(a.keys, 0, users.MachineKey{ID: id, Machine: machine, Incarnation: incarnation})
+	a.log = append(a.log, "key "+machine+" "+incarnation)
+	return "gw-key-" + owner + "-" + id, id, nil
+}
+
+func (a *fakeAccounts) MachineKeys(_ context.Context, machine string) ([]users.MachineKey, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.DeleteFunc(slices.Clone(a.keys), func(k users.MachineKey) bool { return machine != "" && k.Machine != machine }), nil
+}
+
+func (a *fakeAccounts) RevokeMachineKey(_ context.Context, id string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.keys = slices.DeleteFunc(a.keys, func(k users.MachineKey) bool { return k.ID == id })
+	a.log = append(a.log, "revoke "+id)
+	return nil
 }
 
 func (a *fakeAccounts) calls() string {

@@ -138,7 +138,7 @@ func (s *Service) waitReady(op *operation, m machines.Machine) (machines.Machine
 			if s.provision == nil {
 				return cur, nil
 			}
-			if err := s.provisionMachine(op.ctx, cur); err != nil {
+			if err := s.provisionMachine(op.ctx, cur, false); err != nil {
 				return machines.Machine{}, err
 			}
 			return s.machines.Get(op.ctx, m.ID)

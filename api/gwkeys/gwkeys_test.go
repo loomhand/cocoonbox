@@ -65,6 +65,28 @@ func TestAddReplacesTheOwnersKeys(t *testing.T) {
 	}
 }
 
+func TestAddMachineKeepsTheOwnersKeysAndDeleteRevokesOne(t *testing.T) {
+	gw, c := newFakeGW(t)
+	gw.put("gw-user", owner)
+	key, id, err := c.AddMachine(t.Context(), owner, true)
+	if err != nil || !keyFormat.MatchString(key) || id != akID(key) {
+		t.Fatalf("AddMachine = %q, %q, %v", key, id, err)
+	}
+	_, expired, err := c.AddMachine(t.Context(), owner, false)
+	if err != nil || gw.key(expired)["expires_at_epoch_secs"] != 0.0 || gw.key(id)["expires_at_epoch_secs"] != nil {
+		t.Fatalf("AddMachine disabled = %v, keys %v and %v; want only the second expired", err, gw.key(expired), gw.key(id))
+	}
+	if ids := gw.idsOf(owner); len(ids) != 3 {
+		t.Errorf("keys of %s = %v, want the user's and both machine keys", owner, ids)
+	}
+	if err := c.Delete(t.Context(), id); err != nil || gw.key(id) != nil || gw.key(akID("gw-user")) == nil {
+		t.Errorf("Delete = %v, want only that key gone", err)
+	}
+	if err := c.Delete(t.Context(), id); err != nil {
+		t.Errorf("Delete of an absent key = %v", err)
+	}
+}
+
 func TestRevokeDeletesOnlyThatOwner(t *testing.T) {
 	gw, c := newFakeGW(t)
 	gw.put("gw-old", owner)

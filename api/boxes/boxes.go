@@ -551,7 +551,7 @@ func (s *Service) follow(op *operation, machine string) {
 		}
 		if m.State == machines.StateRunning && !s.ready(m) {
 			op.record(observation{state: controlv1.BoxState_BOX_STATE_STARTING, detail: "provisioning"})
-			if err := s.provisionMachine(op.ctx, m); err != nil {
+			if err := s.provisionMachine(op.ctx, m, false); err != nil {
 				log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Error(op.ctx, err, "provision "+machine)
 				op.fail(cmp.Or(failureWords[op.phase], "machine failed"))
 				return

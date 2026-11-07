@@ -160,10 +160,16 @@ func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) {
 
 func (s *Service) deleteMachine(ctx context.Context, id string) error {
 	err := s.machines.Delete(ctx, id)
-	if s.connect != nil && (err == nil || errors.Is(err, machines.ErrNotFound)) {
+	if err != nil && !errors.Is(err, machines.ErrNotFound) {
+		return err
+	}
+	if s.connect != nil {
 		if dropErr := s.connect.DropDoorKey(ctx, id); dropErr != nil {
 			log.WithFunc("boxes.Service.deleteMachine").WithField("machine", id).Warnf(ctx, "drop the box door key: %v", dropErr)
 		}
+	}
+	if s.accounts != nil {
+		s.revokeMachineKeys(ctx, id)
 	}
 	return err
 }

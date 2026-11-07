@@ -15,12 +15,12 @@ import (
 	"github.com/loomhand/cocoonbox/api/credential"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
 	metaWake = "wake"
-	metaGW   = "gw"
 
 	gwKeyEnv      = "GW_KEY"
 	connectKeyEnv = "CB_CONNECT_KEY"
@@ -47,7 +47,7 @@ type provisioner struct {
 	locks utils.Locks
 }
 
-// EnableProvisioning gives every machine an identity file for signer and, with accounts, its user's gw key.
+// EnableProvisioning gives every machine an identity file for signer and, with accounts, a gw key of its incarnation.
 func (s *Service) EnableProvisioning(signer Signer) {
 	s.provision = &provisioner{signer: signer, backoff: provisionBackoff}
 }
@@ -59,11 +59,21 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 
 func (s *Service) provisionStale(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.provisionStale")
+	var keys []users.MachineKey
+	if s.accounts != nil {
+		// The keys are read before the machines, so a key issued after the listing never counts as ended.
+		var err error
+		if keys, err = s.accounts.MachineKeys(ctx, ""); err != nil {
+			logger.Error(ctx, err, "list machine keys")
+			return
+		}
+	}
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
 		logger.Error(ctx, err, "list machines")
 		return
 	}
+	keyed := s.revokeEndedKeys(ctx, ms, keys)
 	current := serving(ms)
 	var g errgroup.Group
 	g.SetLimit(provisionFanout)
@@ -75,9 +85,10 @@ func (s *Service) provisionStale(ctx context.Context) {
 		if err := s.syncExit(ctx, m, false); err != nil {
 			logger.WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
-		if m.State == machines.StateRunning && (wakeOf(m) == "" || m.EnvMissing) {
+		rekey := s.accounts != nil && wakeOf(m) != "" && !keyed[m.ID]
+		if m.State == machines.StateRunning && (wakeOf(m) == "" || m.EnvMissing || rekey) {
 			g.Go(func() error {
-				if err := s.provisionMachine(ctx, m); err != nil {
+				if err := s.provisionMachine(ctx, m, rekey); err != nil {
 					logger.WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
 				}
 				return nil
@@ -110,8 +121,8 @@ func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
 	}
 }
 
-// provisionMachine provisions m unless its current incarnation already has a wake id and the backend holds all its host-only entries.
-func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) error {
+// provisionMachine provisions m unless its current incarnation has a wake id, the backend holds all its host-only entries and rekey is off.
+func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, rekey bool) error {
 	p := s.provision
 	unlock := p.locks.Lock(m.ID)
 	defer unlock()
@@ -126,7 +137,7 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 	if err != nil {
 		return err
 	}
-	if wakeOf(cur) != "" && !cur.EnvMissing {
+	if wakeOf(cur) != "" && !cur.EnvMissing && !rekey {
 		return nil
 	}
 	logger := log.WithFunc("boxes.Service.provisionMachine").WithField("machine", m.ID)
@@ -152,24 +163,32 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 	return lastErr
 }
 
-// provisionOnce writes m's host-only keys and, unless the incarnation has a wake id, its identity; it fails while the backend still misses an entry.
+// provisionOnce issues m's gw key, provisions m with it and revokes it when that fails.
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
-	logger := log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID)
+	keys := map[string]*machines.Secret{}
+	issued := ""
+	if s.accounts != nil {
+		key, id, err := s.accounts.IssueMachineKey(ctx, m.Owner, m.ID, m.Incarnation)
+		if err != nil {
+			return "", fmt.Errorf("gw key: %w", err)
+		}
+		keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
+	}
+	wake, err := s.provisionWith(ctx, m, keys)
+	if err != nil && issued != "" {
+		s.revokeMachineKey(context.WithoutCancel(ctx), m.ID, issued)
+	}
+	return wake, err
+}
+
+// provisionWith writes keys and m's other host-only entries and, unless the incarnation has a wake id, its identity; it fails while the backend still misses an entry.
+func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys map[string]*machines.Secret) (string, error) {
+	logger := log.WithFunc("boxes.Service.provisionWith").WithField("machine", m.ID)
 	p := s.provision
 	if err := s.syncExit(ctx, m, m.EnvMissing); err != nil {
 		return "", fmt.Errorf("exit: %w", err)
 	}
 	wake := wakeOf(m)
-	keys := map[string]*machines.Secret{}
-	if s.accounts != nil && (m.Meta[metaGW] == "" || m.EnvMissing) {
-		key, err := s.accounts.GWKey(m.Owner)
-		if err != nil {
-			return "", fmt.Errorf("gw key: %w", err)
-		}
-		if key != "" {
-			keys[gwKeyEnv] = &machines.Secret{Value: "Bearer " + key}
-		}
-	}
 	box := boxOfMachine(m.ID)
 	owned := !s.agentBox(m.Owner, box)
 	if s.connect != nil && owned {
@@ -201,11 +220,6 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if cur, err := s.machines.Get(ctx, m.ID); err != nil || cur.EnvMissing {
 		return "", cmp.Or(err, errEnvMissing)
 	}
-	if keys[gwKeyEnv] != nil && m.Meta[metaGW] == "" {
-		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {
-			return "", err
-		}
-	}
 	if wake != "" {
 		return wake, nil
 	}
@@ -213,6 +227,43 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		return "", err
 	}
 	return identity.WakeID, nil
+}
+
+// revokeEndedKeys revokes the gw keys of incarnations that no longer run and every older key of a running one, and returns the running machines that keep a key.
+func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, keys []users.MachineKey) map[string]bool {
+	running := map[string]string{}
+	for _, m := range ms {
+		if m.State == machines.StateRunning {
+			running[m.ID] = m.Incarnation
+		}
+	}
+	keyed := map[string]bool{}
+	for _, k := range keys {
+		if inc, ok := running[k.Machine]; ok && inc == k.Incarnation && !keyed[k.Machine] {
+			keyed[k.Machine] = true
+			continue
+		}
+		s.revokeMachineKey(ctx, k.Machine, k.ID)
+	}
+	return keyed
+}
+
+// revokeMachineKeys revokes every gw key of machine; a failure is logged, and the provisioner retries.
+func (s *Service) revokeMachineKeys(ctx context.Context, machine string) {
+	keys, err := s.accounts.MachineKeys(ctx, machine)
+	if err != nil {
+		log.WithFunc("boxes.Service.revokeMachineKeys").WithField("machine", machine).Warnf(ctx, "list the gw keys: %v", err)
+		return
+	}
+	for _, k := range keys {
+		s.revokeMachineKey(ctx, machine, k.ID)
+	}
+}
+
+func (s *Service) revokeMachineKey(ctx context.Context, machine, id string) {
+	if err := s.accounts.RevokeMachineKey(ctx, id); err != nil {
+		log.WithFunc("boxes.Service.revokeMachineKey").WithField("machine", machine).Warnf(ctx, "revoke gw key %s: %v", id, err)
+	}
 }
 
 // agentContext carries m's credential to its agent on calls the control plane makes itself.

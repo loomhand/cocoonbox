@@ -8,15 +8,18 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
-// Accounts holds each user's backend tenant token and gw key.
+// Accounts holds each user's backend tenant token and the gw key of each machine incarnation.
 type Accounts interface {
 	Tenant(user string) (string, error)
-	GWKey(user string) (string, error)
+	IssueMachineKey(ctx context.Context, owner, machine, incarnation string) (string, string, error)
+	MachineKeys(ctx context.Context, machine string) ([]users.MachineKey, error)
+	RevokeMachineKey(ctx context.Context, id string) error
 }
 
-// EnableAccounts makes new machines claim with their user's tenant and carry their user's gw key.
+// EnableAccounts makes new machines claim with their user's tenant and gives each running incarnation its own gw key.
 func (s *Service) EnableAccounts(accounts Accounts) {
 	s.accounts = accounts
 }
