@@ -165,8 +165,8 @@ A local coding agent's task moves into the box and back. The local agent writes 
 - **Repo key:** the first 12 hex of sha256 of `<absolute Mac path of the top level>\n<oldest root commit of HEAD>` (empty for an unborn HEAD). It names the repo everywhere below.
 - **Box copy:** `/workspace/<name>`. `name` is the top level's basename with every character outside `A-Za-z0-9._-` turned into `-` and leading dots dropped, at most 64 characters, then `-2`, `-3`, … while another key holds it or `/workspace/<name>` exists. `begin` assigns it once.
 - **Offload id:** 12 random lowercase hex, made by the Mac per offload.
-- **Kind:** `claude`, `codex` or `cursor`, the box CLI; the inbox starts `claude` and `codex` only. `--kind` picks it; the default is the local session's kind.
-- **Refs:** S, the Mac's snapshot (a temporary index with `git add -A` over HEAD's tree, `commit-tree` with HEAD as parent), is `refs/cocoonbox/offload/<id>`. S', the box's snapshot at back, made the same way in the box, is `refs/cocoonbox/back/<id>`. The box's branches arrive on the Mac as `refs/cocoonbox/box/<branch>`.
+- **Kind:** `claude` or `codex`, the box CLI. `--kind` picks it; the default is the local session's kind.
+- **Refs:** S, the Mac's snapshot (a temporary index with `git add -A` over HEAD's tree, `commit-tree` with HEAD as parent), is `refs/cocoonbox/offload/<id>`; a commit of the index's tree is `refs/cocoonbox/index/<id>`, so the copy's index finds its staged blobs. S', the box's snapshot at back, made the same way in the box, is `refs/cocoonbox/back/<id>`. The box's branches arrive on the Mac as `refs/cocoonbox/box/<branch>`.
 - **tmux session:** `cb-off-<repo key>-<kind>`.
 
 **Directories.**
@@ -175,7 +175,7 @@ A local coding agent's task moves into the box and back. The local agent writes 
 |---|---|---|
 | Mac: `~/Library/Application Support/CocoonBox/offload/<repo key>/` | the user, 0700 | `handover.md` (path from `cocoonbox offload handover-path`), `env.json`, the bundle while it is sent, the box's `back.md`, and `offload.json` while the offload is in flight: `id`, `repo`, `box`, `box_name`, `name`, `dir`, `kind`, `base` (S), `top`, `started_at_ms`, `seen` (the last outbox seq `offload inbox` showed); written before `send`, removed after `end` |
 | Mac: `~/Library/Application Support/CocoonBox/offload/repos.json` | the user, 0600 in the 0700 `offload/` | per repo key: the opted-in secret entries (`file:<repo path>`, `aws`, `kube`, `gcloud`, `ssh:<key name>`; names and paths only, set with `cocoonbox offload secrets add\|remove`) and whether the user said yes to the size confirm |
-| Box: `/home/user/.local/share/cocoonbox/offload/` | `user`, 0700 | `index.json` (repo key → name), `excludes`, and per repo key the inbox, outbox, session record, hooks file, first prompt, `env.log`, `handover.md` (the box agent's) and `stage/` (emptied after each `send`). The state layer saves it |
+| Box: `/home/user/.local/share/cocoonbox/offload/` | `user`, 0700 | `index.json` (repo key → name), `excludes`, and per repo key the inbox, outbox, session record, hooks file, first prompt, `env.json`, `env-state.json`, `env.log`, `restart.md`, `handover.md` (the box agent's) and `stage/` (emptied after each `send`). The state layer saves it |
 | Box: `/run/cocoonbox-offload/secrets/<repo key>/` | `user`, 0700; files 0600 | opted-in secrets, on a 64 MiB tmpfs the image mounts at `/run/cocoonbox-offload` (`user`, 0700). Never saved |
 
 **Offload, Mac side** (three Execs):
@@ -187,7 +187,7 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 
 **Back, Mac side:**
 1. `offload send --repo K --back [--interrupt]`, unless the outbox already holds this offload's `back`.
-2. `offload read --repo K --since N --wait S`, repeated until a `back` entry, for at most 600 s in all; then `back` fails (exit 1) with the session's status, and BACK stays queued for the CLI's next idle.
+2. `offload read --repo K --since N --wait S`, repeated until a `back` entry, for at most 540 s in all; then `back` fails (exit 1) with the session's status, and BACK stays queued for the CLI's next idle.
 3. `GIT_SSH_COMMAND="cocoonbox rsh --box B" GIT_SSH_VARIANT=simple git fetch box:/workspace/<name> '+refs/heads/*:refs/cocoonbox/box/*' '+refs/cocoonbox/back/<id>:refs/cocoonbox/back/<id>'`.
 4. Merge against S: fast-forward when the local repo still equals S, else a clean `git merge-tree --write-tree` applied uncommitted, else the branch `cocoonbox/back-<UTC yyyymmddThhmmssZ>` at S' and an untouched tree.
    - **Fast-forward:** the work tree moves from S to S'. The uncommitted state it replaces is the one the box started from, kept in S.
@@ -205,7 +205,6 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 | `read --repo K [--since N] [--wait S]` | Mac | outbox entries after seq N; `--wait` long-polls up to S ≤ 600 seconds. `entries` (`[{"seq","kind","offload_id","cli","time_ms","body"}]`), `status` |
 | `status [--repo K]` | Mac, app | `sessions` (`[{"repo","name","cli","offload_id","status","copy","tmux_alive","hook_at_ms","hooks_silent","transcript_mtime_ms","window_activity_ms","inbox_seq","outbox_seq"}]`) |
 | `end --repo K` | Mac, after the fetch | ends the CLI (`/exit`, `/quit` for `codex`, SIGTERM after 10 s), wipes the repo's secrets, and marks the copy returned |
-| `wipe-secrets --repo K` | Mac | removes the repo's secrets now |
 | `restart --repo K` | the user | the inbox's `restart` |
 | `post (--progress \| --question \| --back) [--repo K] < body` | box agent | an outbox entry; `--repo` defaults to `COCOONBOX_OFFLOAD_REPO`. `--progress` and `--back` refuse a body without every hand-over heading and list the missing ones. `--back` also makes S'. `seq`, `status` (`posted`, or `ready` for `--back`) |
 | `env [--repo K] [--no-wait] [--json]` | box agent | waits for the environment step through the inbox's `env`, at most 900 s, and prints per tool the wanted version and its source, what is installed, and `ready`, `missing` or `failed`, then each lockfile fetch. Text unless `--json`. An inbox that is down, or stops during the wait, is `inbox`; a step that an inbox restart cut short is `failed`. `--no-wait` reads the report as it stands without the inbox |
@@ -231,7 +230,7 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 2. The hand-over.
 3. "Attached by the packer": the branch and S, `git status --short`, `git log --oneline @{upstream}..HEAD` (else the last 5 commits), Mac-only settings found in `.git/config` (`credential.helper osxkeychain`, an absolute `core.hooksPath`), and `env.json` in short.
 
-**Box CLI** in tmux `cb-off-<repo key>-<kind>`, a login shell in the copy, started with `send-keys`, the prompt read from a file. Bypass mode by default, as the offload sheet states: `claude --dangerously-skip-permissions --settings <hooks file> "$(cat <prompt file>)"`, the hooks file (ours, never the user's settings) also carrying `"skipDangerousModePermissionPrompt": true`, since the bypass-mode dialog would hold the first prompt; `codex --dangerously-bypass-approvals-and-sandbox -c 'notify=["cocoonbox-agent","offload","event","--repo","<K>","--cli","codex","--hook","notify"]' "$(cat <prompt file>)"`; `cursor` at O6. The tmux environment carries `COCOONBOX_OFFLOAD_REPO`, the `MISE_<TOOL>_VERSION` pins and the secrets' variables. The `claude` hooks, all calling `offload event`: `UserPromptSubmit` → `working`, `Stop` and `StopFailure` → `idle` (or `blocked`), `Notification` → `waiting_for_user` (a `blocked` session stays `blocked`), `SessionEnd` → `stopped` (except reason `clear`). `claude` ends a turn that an API error stopped with `StopFailure`, not `Stop`. The hook commands send their stdout to `/dev/null`, so nothing reaches the model. `codex`: a delivered prompt → `working`, `notify` → `idle` (or `blocked`).
+**Box CLI** in tmux `cb-off-<repo key>-<kind>`, a login shell in the copy, started with `send-keys`, the prompt read from a file. Bypass mode by default, as the offload sheet states: `claude --dangerously-skip-permissions --settings <hooks file> "$(cat <prompt file>)"`, the hooks file (ours, never the user's settings) also carrying `"skipDangerousModePermissionPrompt": true`, since the bypass-mode dialog would hold the first prompt; `codex --dangerously-bypass-approvals-and-sandbox -c 'notify=["cocoonbox-agent","offload","event","--repo","<K>","--cli","codex","--hook","notify"]' "$(cat <prompt file>)"`. The tmux environment carries `COCOONBOX_OFFLOAD_REPO`, the `MISE_<TOOL>_VERSION` pins and the secrets' variables. The `claude` hooks, all calling `offload event`: `UserPromptSubmit` → `working`, `Stop` and `StopFailure` → `idle` (or `blocked`), `Notification` → `waiting_for_user` (a `blocked` session stays `blocked`), `SessionEnd` → `stopped` (except reason `clear`). `claude` ends a turn that an API error stopped with `StopFailure`, not `Stop`. The hook commands send their stdout to `/dev/null`, so nothing reaches the model. `codex`: a delivered prompt → `working`, `notify` → `idle` (or `blocked`).
 
 **Inbox.** Socket `/run/cocoonbox/offload.sock`, `user:cbagent` 0660, in `/run/cocoonbox` (2750; the setgid bit gives the socket group `cbagent`). The verbs (as `user`) and the agent (`cbagent`) connect; there is no port and no edge route, so from the Mac it is reached only through `Session.Exec`, owner only. One JSON object per line; each request gets one response line, except `watch`. Errors are `{"ok":false,"code":"invalid|refused|failed","error"}`.
 
@@ -273,7 +272,7 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 - `secrets/file/<repo path>`: `/workspace/<name>/<repo path>` becomes a symlink to the tmpfs copy, so a save holds the link only.
 - `secrets/aws`, `secrets/kube`: `AWS_SHARED_CREDENTIALS_FILE`, `KUBECONFIG`. `secrets/gcloud/<path>`: a directory, `CLOUDSDK_CONFIG`.
 - `secrets/ssh/<key name>`: added to an `ssh-agent` whose socket is on the tmpfs, `SSH_AUTH_SOCK`, then deleted.
-- Kept until `end`, `wipe-secrets` or a box restart. A node-local hibernate image carries them (accepted, design §27).
+- Kept until `end`, the repo's next `begin` or a box restart. A node-local hibernate image carries them (accepted, design §27).
 
 **State excludes.** At every `send` the box packer writes to `excludes` the copy's git-ignored directories (`git ls-files -oi --exclude-standard --directory`, the entries ending in `/`), one absolute path per line. The state layer leaves out every listed path under `/workspace/` and ignores any other line; a restore rebuilds them.
 
@@ -294,7 +293,7 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 | VPN-only hosts | Mac | hosts in the remotes, config and `.env*` that resolve to private ranges, or only through a split-DNS resolver (`scutil --dns`) | warn |
 | Secrets not opted in | Mac | git-ignored `.env*`; the hand-over's "Secrets needed"; unset names the code reads (`os.Getenv`, `process.env`, `std::env::var`) | warn, with a per-repo opt-in |
 | Size | Mac | rsync's dry run over 500 MB | confirm; a yes is kept per repo in `repos.json` |
-| LFS, submodules | Mac | `filter=lfs` in `.gitattributes`; `.gitmodules` | warn: not carried |
+| LFS, submodules | Mac | `filter=lfs` in `.gitattributes`; `.gitmodules` | warn: LFS files are not carried; rsync carries submodule work trees and `.git/modules` |
 
 **Entry points** (design §27.4). The user's own `claude` runs `/cocoonbox:offload` and `/cocoonbox:back` from the plugin, which `cocoonbox setup claude` (or the app's plugin install item) installs or updates; `codex` and other CLIs get the request to paste from `cocoonbox offload --handover-prompt`, or the user runs `cocoonbox offload` and `cocoonbox back` directly. The app lists the offloads in flight in its sidebar's **Offloaded** section, from the `offload.json` records, `offload status` of each running box and `offload` events, and only watches: offload and back start from the user's own TUI, never from the app. A `back` that finds no record but a `back.md` names that file.
 
