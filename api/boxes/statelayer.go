@@ -92,6 +92,14 @@ type timeline struct {
 	Snapshots []timelineEntry `json:"snapshots"`
 }
 
+func (tl timeline) ids() []string {
+	ids := make([]string, 0, len(tl.Snapshots))
+	for _, e := range tl.Snapshots {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
 // chunkIndex lists the chunks stored under one user's key; ids from another key never match.
 type chunkIndex struct {
 	KeyID  string   `json:"key_id"`

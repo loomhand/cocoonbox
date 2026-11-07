@@ -72,9 +72,7 @@ func (r *reaches) reach(box string, at time.Time) {
 		}()
 		return
 	}
-	if at.After(r.pending[box]) {
-		r.pending[box] = at
-	}
+	r.pending[box] = later(r.pending[box], at)
 }
 
 // last is when a client of any process last reached box, as the last read saw it.
@@ -117,9 +115,7 @@ func (r *reaches) flush(ctx context.Context, open []string) {
 		logger.Warnf(ctx, "write the reaches of %d boxes: %v", len(batch), err)
 		r.mu.Lock()
 		for box, at := range batch {
-			if at.After(r.pending[box]) {
-				r.pending[box] = at
-			}
+			r.pending[box] = later(r.pending[box], at)
 		}
 		r.mu.Unlock()
 	}

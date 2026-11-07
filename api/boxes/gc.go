@@ -178,10 +178,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	records, manifests, full := obsolete(p, listing, now, func(id string) bool { return retained[id] || needed[id] }, dropped, r)
 	r.kept += len(next.Snapshots)
 	r.pruned += len(dropped)
-	ids := make([]string, 0, len(next.Snapshots))
-	for _, e := range next.Snapshots {
-		ids = append(ids, e.ID)
-	}
+	ids := next.ids()
 	if opts.DryRun {
 		return ids, dropped, nil
 	}
@@ -375,11 +372,7 @@ func (l *stateLayer) snapshotIDs(ctx context.Context, p statePath) ([]string, er
 		return nil, err
 	}
 	if found {
-		ids := make([]string, 0, len(tl.Snapshots))
-		for _, e := range tl.Snapshots {
-			ids = append(ids, e.ID)
-		}
-		return ids, nil
+		return tl.ids(), nil
 	}
 	return l.recordIDs(ctx, p, nil)
 }

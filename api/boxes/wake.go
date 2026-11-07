@@ -124,7 +124,6 @@ func (s *Service) ClearWakeSchedule(ctx context.Context, ref *controlv1.BoxRef) 
 	return &controlv1.ClearWakeScheduleResponse{}, nil
 }
 
-// Reached records that a client's call goes to box, which keeps up a box the alarm woke or an agent made; the returned func records its end.
 func (s *Service) Reached(box string) func() {
 	if s.wake != nil {
 		s.wake.reach(box)

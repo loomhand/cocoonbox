@@ -43,7 +43,7 @@ var (
 	}
 )
 
-// BoxID returns the id of the first box user had before several boxes per user; its first machine carries the same id.
+// BoxID is the id of the first box users.Create adds for user; its first machine carries the same id.
 func BoxID(user string) string {
 	return idPrefix + utils.HashHex(user)[:idHexLen]
 }

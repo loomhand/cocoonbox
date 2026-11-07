@@ -466,8 +466,7 @@ func (r *operations) claim(ctx context.Context, op *operation) bool {
 
 // renew extends the leases of this process's operations until ctx ends, then ends them in the shared table.
 func (r *operations) renew(ctx context.Context) {
-	ticker := time.NewTicker(cluster.LeaseRenew)
-	defer ticker.Stop()
+	tick := time.Tick(cluster.LeaseRenew)
 	for {
 		select {
 		case <-ctx.Done():
@@ -475,7 +474,7 @@ func (r *operations) renew(ctx context.Context) {
 				r.end(ctx, op.id, "the api process running the operation stopped")
 			}
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		for _, op := range r.running() {
 			op.mu.Lock()
@@ -489,15 +488,10 @@ func (r *operations) renew(ctx context.Context) {
 }
 
 func (r *operations) running() []*operation {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var out []*operation
-	for _, op := range r.byID {
-		if _, done := op.finished(); !done && !op.remote {
-			out = append(out, op)
-		}
-	}
-	return out
+	return slices.DeleteFunc(r.all(), func(op *operation) bool {
+		_, done := op.finished()
+		return done
+	})
 }
 
 // remoteOperation is a read-only copy of rec; nothing it records leaves this process.

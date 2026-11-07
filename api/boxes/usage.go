@@ -12,15 +12,13 @@ import (
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 )
 
-var clock = time.Now
-
 type Meter interface {
 	Usage(ctx context.Context, user string, since time.Time) ([]gwkeys.Usage, error)
 	DailyCap(ctx context.Context, user string) (*int64, error)
 }
 
 func (s *Service) EnableUsage(meter Meter, defaultCap int64) {
-	s.usage = &usageMeter{meter: meter, defaultCap: defaultCap}
+	s.usage = &usageMeter{meter: meter, defaultCap: defaultCap, now: time.Now}
 }
 
 func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*controlv1.UsageResponse, error) {
@@ -31,7 +29,7 @@ func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*contro
 	if s.usage == nil {
 		return nil, status.Error(codes.FailedPrecondition, "usage is not metered")
 	}
-	now := clock().UTC()
+	now := s.usage.now().UTC()
 	day := now.Truncate(24 * time.Hour)
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	resp := &controlv1.UsageResponse{}
@@ -59,6 +57,7 @@ func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*contro
 type usageMeter struct {
 	meter      Meter
 	defaultCap int64
+	now        func() time.Time
 }
 
 func (m *usageMeter) period(ctx context.Context, user string, since time.Time) (*controlv1.UsagePeriod, error) {

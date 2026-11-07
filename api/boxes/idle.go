@@ -213,10 +213,7 @@ func (i *idling) idleAt(box string, now time.Time, after time.Duration, elsewher
 		i.last[box] = now
 		return false
 	}
-	if elsewhere.After(at) {
-		at = elsewhere
-	}
-	return now.Sub(at) >= after
+	return now.Sub(later(at, elsewhere)) >= after
 }
 
 // opened returns the boxes that open calls hold.

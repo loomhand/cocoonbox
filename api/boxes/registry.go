@@ -88,7 +88,6 @@ func (s *Service) Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (
 	return s.get(ctx, req.GetBoxId())
 }
 
-// Delete saves a running box quiesced, then removes every machine of the box and the box; the GC removes its saved state after the retention of deleted boxes.
 func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	box := ref.GetBoxId()
 	user, err := s.ownerOf(ctx, box)
