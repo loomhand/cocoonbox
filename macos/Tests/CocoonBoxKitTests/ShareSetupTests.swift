@@ -35,9 +35,7 @@ import Testing
 
     @Test func cursorSnippetIsValidJSON() throws {
         for named in [false, true] {
-            let data = Data(setup(named: named).text(.cursor).utf8)
-            let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-            let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox-share"] as? [String: Any])
+            let server = try mcpServer(setup(named: named).text(.cursor), "cocoonbox-share")
             let headers = try #require(server["headers"] as? [String: String])
             #expect(headers["Authorization"] == "Bearer \(secret)")
             #expect(headers["X-Cocoonbox-Guest-Token"] == (named ? "${env:COCOONBOX_TOKEN}" : nil))

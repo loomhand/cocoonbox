@@ -32,15 +32,13 @@ import Testing
         let linked = MCPTarget(bridge: target.bridge, box: target.box, endpoint: target.endpoint, token: target.token, socket: "/tmp/a.sock")
         let claude = LocalAgentKind.claudeCode.launch(executable: "claude", target: linked, agent: UUID())
         let config = try #require(claude.arguments.firstIndex(of: "--mcp-config").map { claude.arguments[$0 + 1] })
-        let root = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
-        #expect(((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])?["env"] as? [String: String]
+        #expect(try mcpServer(config)["env"] as? [String: String]
             == ["COCOONBOX_TOKEN": "${COCOONBOX_TOKEN}", "COCOONBOX_APP_SOCKET": "${COCOONBOX_APP_SOCKET}", "COCOONBOX_AGENT": "${COCOONBOX_AGENT}"])
         let codex = LocalAgentKind.codex.launch(executable: "codex", target: linked, agent: UUID())
         #expect(codex.arguments.contains(#"mcp_servers.cocoonbox.env_vars=["COCOONBOX_AGENT", "COCOONBOX_APP_SOCKET", "COCOONBOX_TOKEN"]"#))
         let cursor = LocalAgentKind.cursor.launch(executable: "cursor-agent", target: linked, agent: UUID())
         let text = try #require(cursor.files[".cursor/mcp.json"])
-        let file = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
-        #expect(((file["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])?["env"] as? [String: String]
+        #expect(try mcpServer(text)["env"] as? [String: String]
             == ["COCOONBOX_TOKEN": "${env:COCOONBOX_TOKEN}", "COCOONBOX_APP_SOCKET": "${env:COCOONBOX_APP_SOCKET}", "COCOONBOX_AGENT": "${env:COCOONBOX_AGENT}"])
     }
 
@@ -48,8 +46,7 @@ import Testing
         let launch = LocalAgentKind.claudeCode.launch(executable: "claude", target: target)
         #expect(launch.arguments.contains("--strict-mcp-config"))
         let config = try #require(launch.arguments.firstIndex(of: "--mcp-config").map { launch.arguments[$0 + 1] })
-        let root = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
-        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        let server = try mcpServer(config)
         #expect(server["type"] as? String == "stdio")
         #expect(server["command"] as? String == target.bridge)
         #expect(server["args"] as? [String] == ["mcp", "--box", "cb-9f86d081884c", "--endpoint", "https://box.example.com"])
@@ -67,8 +64,7 @@ import Testing
     @Test func cursorConfigIsValidJSON() throws {
         let launch = LocalAgentKind.cursor.launch(executable: "cursor-agent", target: target)
         let config = try #require(launch.files[".cursor/mcp.json"])
-        let root = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
-        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        let server = try mcpServer(config)
         #expect(server["command"] as? String == target.bridge)
         #expect(server["env"] as? [String: String] == ["COCOONBOX_TOKEN": "${env:COCOONBOX_TOKEN}"])
     }

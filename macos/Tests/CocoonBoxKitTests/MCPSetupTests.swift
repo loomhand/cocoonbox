@@ -28,9 +28,7 @@ import Testing
     }
 
     @Test func cursorSnippetIsValidJSONWithAnEnvReference() throws {
-        let data = Data(setup.text(.cursor).utf8)
-        let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        let server = try mcpServer(setup.text(.cursor))
         #expect(server["url"] as? String == setup.url)
         #expect((server["headers"] as? [String: String])?["Authorization"] == "Bearer ${env:COCOONBOX_TOKEN}")
     }
@@ -52,8 +50,7 @@ import Testing
 
     @Test func theCodexManifestWaitsForTheBridge() throws {
         let text = try #require(Plugin.files(command: "/c")["cocoonbox/.codex-plugin/plugin.json"])
-        let root = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
-        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        let server = try mcpServer(text)
         #expect(server["command"] as? String == "/c" && server["args"] as? [String] == ["mcp"] && server["required"] as? Bool == true)
     }
 
@@ -75,9 +72,7 @@ import Testing
     }
 
     @Test func everyClientRunsTheBridge() throws {
-        let data = Data(Plugin.mcpConfig(command: "/Users/me/.local/bin/cocoonbox").utf8)
-        let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        let server = try mcpServer(Plugin.mcpConfig(command: "/Users/me/.local/bin/cocoonbox"))
         #expect(server["command"] as? String == "/Users/me/.local/bin/cocoonbox")
         #expect(server["args"] as? [String] == ["mcp"])
         #expect(server.count == 2)
@@ -87,4 +82,9 @@ import Testing
         #expect(ToolCatalog.controlNames == ["box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete", "usage"])
         #expect(ToolCatalog.boxNames.count == 13)
     }
+}
+
+func mcpServer(_ json: String, _ name: String = "cocoonbox") throws -> [String: Any] {
+    let root = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    return try #require((root["mcpServers"] as? [String: Any])?[name] as? [String: Any])
 }

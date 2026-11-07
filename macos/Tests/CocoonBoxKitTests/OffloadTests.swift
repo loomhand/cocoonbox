@@ -39,7 +39,7 @@ import Testing
         #expect(try await box.offloader().status(outcome.record.repo).first?.activityMs ?? 0 >= outcome.record.startedAtMs - 1000)
         #expect(try box.sh("git rev-parse refs/cocoonbox/offload/\(outcome.record.id)^", in: repo) == box.sh("git rev-parse HEAD", in: repo))
 
-        try box.sh("echo box > e.txt && git add e.txt && git -c user.name=b -c user.email=b@b commit -qm box && echo more >> b.txt", in: copy)
+        try box.sh("echo box > e.txt && git add e.txt && git commit -qm box && echo more >> b.txt", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
         let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
         #expect(back.landing == .fastForward)
@@ -69,7 +69,7 @@ import Testing
         let repo = try box.repo("merge")
         let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
         let copy = URL(fileURLWithPath: outcome.record.dir)
-        try box.sh("echo boxline >> b.txt && git -c user.name=b -c user.email=b@b commit -qam box", in: copy)
+        try box.sh("echo boxline >> b.txt && git commit -qam box", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
         try box.sh("echo macline >> a.txt && git config diff.noprefix true && git config color.ui always", in: repo)
         let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
@@ -85,7 +85,7 @@ import Testing
         try box.sh("printf 'one\\n\\n\\n\\n\\nsix\\n' > a.txt && git commit -qam spaced", in: repo)
         let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
         let copy = URL(fileURLWithPath: outcome.record.dir)
-        try box.sh("sed -i '' 's/six/SIX/' a.txt && git -c user.name=b -c user.email=b@b commit -qam box", in: copy)
+        try box.sh("sed -i '' 's/six/SIX/' a.txt && git commit -qam box", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
         try box.sh("sed -i '' 's/one/ONE/' a.txt", in: repo)
         let before = try box.state(repo)
@@ -127,7 +127,7 @@ import Testing
         try box.sh("echo staged >> a.txt && git add a.txt", in: repo)
         let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
         let copy = URL(fileURLWithPath: outcome.record.dir)
-        try box.sh("echo box > n.txt && git add n.txt && git -c user.name=b -c user.email=b@b commit -qm box", in: copy)
+        try box.sh("echo box > n.txt && git add n.txt && git commit -qm box", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
         try box.sh("touch .git/index.lock", in: repo)
         let before = try box.sh("git rev-parse HEAD; ls; cat .git/index | shasum", in: repo)
@@ -144,7 +144,7 @@ import Testing
         let repo = try box.repo("conflict")
         let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
         let copy = URL(fileURLWithPath: outcome.record.dir)
-        try box.sh("echo box > a.txt && git -c user.name=b -c user.email=b@b commit -qam box", in: copy)
+        try box.sh("echo box > a.txt && git commit -qam box", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
         try box.sh("echo mac > a.txt && echo extra > f.txt", in: repo)
         let before = try box.state(repo)
@@ -267,7 +267,7 @@ import Testing
         try FileManager.default.createSymbolicLink(atPath: cli.path, withDestinationPath: box.cli)
         let repo = try box.repo("spaced")
         let outcome = try await box.offloader(cli: cli.path).offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
-        try box.sh("echo box > e.txt && git add e.txt && git -c user.name=b -c user.email=b@b commit -qm box", in: URL(fileURLWithPath: outcome.record.dir))
+        try box.sh("echo box > e.txt && git add e.txt && git commit -qm box", in: URL(fileURLWithPath: outcome.record.dir))
         try box.post(back: Self.handover, in: URL(fileURLWithPath: outcome.record.dir), key: outcome.record.repo)
         #expect(try await box.offloader(cli: cli.path).back(outcome.record.repo, interrupt: false).landing == .fastForward)
         #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
@@ -401,6 +401,7 @@ import Testing
 
 final class Harness: @unchecked Sendable {
     static let environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "GIT_CONFIG_NOSYSTEM": "1", "LANG": "en_US.UTF-8"]
+    static let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
     nonisolated(unsafe) private static var started: Task<Harness, any Error>?
     private static let lock = NSLock()
 
@@ -429,8 +430,7 @@ final class Harness: @unchecked Sendable {
         for dir in [macHome, boxHome, workspace, bin] { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) }
         let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         try FileManager.default.createSymbolicLink(at: bin.appendingPathComponent("cocoonbox-agent"), withDestinationURL: package.appendingPathComponent("scripts/offload-box-stub"))
-        let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
-        cli = built.appendingPathComponent("cocoonbox-cli").path
+        cli = Self.built.appendingPathComponent("cocoonbox-cli").path
         store = OffloadStore(support: macHome.appendingPathComponent("Library/Application Support/CocoonBox"))
         let (endpoint, pipe) = try await Self.mockBox(["--boot-ms", "100", "--workspace", workspace.path], log: root.appendingPathComponent("mockbox.log"),
                                                    environment: Self.environment.merging(["HOME": boxHome.path, "PATH": bin.path + ":" + Self.environment["PATH"]!]) { $1 })
@@ -447,14 +447,13 @@ final class Harness: @unchecked Sendable {
     }
 
     static func mockBox(_ arguments: [String], log: URL, environment: [String: String]) async throws -> (Endpoint, Pipe) {
-        let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         for _ in 0..<5 {
             let port = Int.random(in: 52000..<60000)
             let input = Pipe()
             let process = Process()
             try? FileManager.default.removeItem(at: log)
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", "log=$1; shift; \"$0\" \"$@\" >\"$log\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, log.path, "--port", "\(port)"] + arguments
+            process.arguments = ["-c", "log=$1; shift; \"$0\" \"$@\" >\"$log\" 2>&1 & pid=$!; read _; kill $pid", Self.built.appendingPathComponent("MockBox").path, log.path, "--port", "\(port)"] + arguments
             process.environment = environment
             process.standardInput = input
             try process.run()

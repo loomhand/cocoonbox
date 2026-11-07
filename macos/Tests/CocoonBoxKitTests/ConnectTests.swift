@@ -281,7 +281,7 @@ import Testing
         defer { client.close() }
         let started = ContinuousClock.now
         #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
-        #expect(ContinuousClock.now - started < .seconds(3) + .seconds(2), "a failing door holds the first list at most connectWait (3 s)")
+        #expect(ContinuousClock.now - started < .seconds(5), "a failing door holds the first list at most connectWait (3 s)")
         let status = try await client.tool("box_status")
         #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
 
@@ -436,7 +436,6 @@ final class BridgeClient: Sendable {
     private let input = Pipe()
     private let output = Lines()
     private let next = Mutex(1)
-    private let task: Task<Void, Never>
 
     init(_ mock: MockBoxProcess, box: String? = nil, link: AgentLinkClient? = nil, client: String = "bridge-test") async throws {
         let output = output
@@ -444,7 +443,7 @@ final class BridgeClient: Sendable {
             output.state.withLock { $0 += data.split(separator: UInt8(ascii: "\n")).map { Data($0) } }
         }
         let reader = input.fileHandleForReading
-        task = Task { await bridge.run(input: reader) }
+        Task { await bridge.run(input: reader) }
         let answer = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": client, "version": "1"]])
         let text = (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
         initialized.withLock { $0 = text }
