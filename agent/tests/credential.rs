@@ -6,6 +6,8 @@ mod chrome;
 mod common;
 #[path = "common/serve.rs"]
 mod serve;
+#[path = "common/toolhost.rs"]
+mod toolhost;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -19,12 +21,13 @@ use cocoonbox_agent::toolhost::rpc::{Call, Client};
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::task::JoinHandle;
 use tonic::Code;
 
 use chrome::{ChromeGuard, test_chrome};
 use common::authed;
+use toolhost::spawn_toolhost;
 
 const LOGIN_PAGE: &str = r#"<!doctype html><title>login</title>
 <form action="/login" method="post">
@@ -185,28 +188,15 @@ async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client, Join
     std::fs::set_permissions(&wrapper, PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::create_dir_all(dir.join("workspace")).unwrap();
     let guard = ChromeGuard(dir.join("profile"));
-    let socket = dir.join("toolhost.sock");
-    let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost-service")
-        .env("HOME", dir)
-        .env("SHUTTLE_SERVICE_SOCKET", &socket)
-        .env("SHUTTLE_SOCKET", dir.join("desk.sock"))
-        .env("CB_WORKSPACE", dir.join("workspace"))
-        .env("CHROME_BIN", &wrapper)
-        .env("CHROME_PROFILE", dir.join("profile"))
-        .env("CDP_PORT", chrome::cdp_port().to_string())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let log = capture(&mut toolhost);
-    tokio::time::timeout(serve::UP, async {
-        while !socket.exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+    let (mut toolhost, socket) = spawn_toolhost(dir, |cmd| {
+        cmd.env("CB_WORKSPACE", dir.join("workspace"))
+            .env("CHROME_BIN", &wrapper)
+            .env("CHROME_PROFILE", dir.join("profile"))
+            .env("CDP_PORT", chrome::cdp_port().to_string())
+            .stderr(Stdio::piped());
     })
-    .await
-    .expect("the toolhost did not come up");
+    .await;
+    let log = capture(&mut toolhost);
     Some((guard, toolhost, Client::new(socket), log))
 }
 

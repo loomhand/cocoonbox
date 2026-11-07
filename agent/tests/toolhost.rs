@@ -1,7 +1,9 @@
 #![cfg(test)]
 #![cfg(unix)]
 
-use std::path::{Path, PathBuf};
+#[path = "common/toolhost.rs"]
+mod toolhost;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,6 +12,8 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
 use tokio::sync::{Notify, mpsc};
+
+use toolhost::spawn_toolhost;
 
 const SCRIPT: &str = r"
 const { createConnection } = require('node:net')
@@ -44,7 +48,7 @@ async fn a_node_script_in_the_agent_shell_reaches_shuttle_at_shuttle_socket() {
             write_frame(&mut conn, &Output::text("[]")).await.unwrap();
         }
     });
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), |_| {}).await;
     std::fs::write(dir.path().join("probe.js"), SCRIPT).unwrap();
     let command = format!(
         "\"{}\" {}",
@@ -103,7 +107,7 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
             });
         }
     });
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), |_| {}).await;
     let th = Client::new(socket.clone());
     let call = |tool: &str, args: Value| Call {
         agent_id: "ag".into(),
@@ -148,25 +152,4 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
         .unwrap();
     assert_eq!(got.tool, "model_ask");
     assert!(closed, "a dropped call closes its shuttle connection");
-}
-
-async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, PathBuf) {
-    let socket = dir.join("toolhost.sock");
-    let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost-service")
-        .env("SHUTTLE_SERVICE_SOCKET", &socket)
-        .env("SHUTTLE_SOCKET", shuttle)
-        .env("CB_WORKSPACE", dir)
-        .env("HOME", dir)
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    for _ in 0..500 {
-        if socket.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(socket.exists(), "the toolhost did not come up");
-    (child, socket)
 }
