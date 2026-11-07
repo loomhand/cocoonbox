@@ -46,6 +46,7 @@ const SQLITE_SIDECARS: [&str; 2] = ["-wal", "-journal"];
 const MANIFEST_FILE: &str = "manifest";
 const HOME_ROOT: &str = "home";
 const WORKSPACE_ROOT: &str = "workspace";
+const API_ROOTS: [(&str, &str); 2] = [(HOME_ROOT, "/home/user"), (WORKSPACE_ROOT, "/workspace")];
 const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
@@ -287,9 +288,12 @@ impl StateEngine {
         let staging = restored.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
         let mut targets = Vec::new();
         let (first, last) = stage(
-            records
-                .into_iter()
-                .map(|(root, r)| (staging.join(relative(&root.path)).join(&r.entry.path), r)),
+            records.into_iter().map(|(root, r)| {
+                (
+                    staging.join(relative(api_path(root))).join(&r.entry.path),
+                    r,
+                )
+            }),
             &staging,
             &mut targets,
         );
@@ -1488,24 +1492,29 @@ fn scope_path<'a>(roots: &'a [Root], path: &str) -> Result<(&'a Root, String), S
             let rel = Path::new(trimmed).strip_prefix(&r.path).ok()?;
             Some((r, rel.to_str()?.to_owned()))
         })
-        .or_else(|| logical_path(roots, rest))
+        .or_else(|| logical_path(roots, trimmed))
         .ok_or_else(invalid)
 }
 
-/// The root and relative path of a logical path on Windows: `/workspace/x` is `x` under the workspace root, whatever its drive path.
-#[cfg(windows)]
-fn logical_path<'a>(roots: &'a [Root], rest: &str) -> Option<(&'a Root, String)> {
-    let (name, rel) = rest.split_once('/').unwrap_or((rest, ""));
-    roots
-        .iter()
-        .find(|r| r.name == name)
-        .map(|r| (r, rel.to_owned()))
+/// The root and relative path of a path in the api's layout of the roots, whatever their paths on this box.
+fn logical_path<'a>(roots: &'a [Root], path: &str) -> Option<(&'a Root, String)> {
+    API_ROOTS.iter().find_map(|(name, prefix)| {
+        let rel = path.strip_prefix(prefix)?;
+        let rel = if rel.is_empty() {
+            rel
+        } else {
+            rel.strip_prefix('/')?
+        };
+        Some((roots.iter().find(|r| r.name == *name)?, rel.to_owned()))
+    })
 }
 
-/// Unix roots are named by their own paths only.
-#[cfg(unix)]
-fn logical_path<'a>(_roots: &'a [Root], _rest: &str) -> Option<(&'a Root, String)> {
-    None
+/// The path the api names `root` by.
+fn api_path(root: &Root) -> &Path {
+    API_ROOTS
+        .iter()
+        .find(|(name, _)| *name == root.name)
+        .map_or(&root.path, |(_, p)| Path::new(p))
 }
 
 fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
@@ -1720,9 +1729,28 @@ mod tests {
             (root.name.as_str(), rel.as_str()),
             ("workspace", "gate/state.txt")
         );
-        let (root, rel) = scope_path(&roots, "/home/Documents").unwrap();
+        let (root, rel) = scope_path(&roots, "/home/user/Documents").unwrap();
         assert_eq!((root.name.as_str(), rel.as_str()), ("home", "Documents"));
+        assert!(scope_path(&roots, "/home/Documents").is_err());
         assert!(scope_path(&roots, "/elsewhere/x").is_err());
+    }
+
+    #[test]
+    fn a_scope_path_in_the_api_layout_names_its_root_whatever_the_roots_path() {
+        let roots = default_roots(Path::new("/Users/u"), Path::new("/workspace"));
+        let (root, rel) = scope_path(&roots, "/home/user/Documents/a.txt").unwrap();
+        assert_eq!(
+            (root.name.as_str(), rel.as_str()),
+            ("home", "Documents/a.txt")
+        );
+        let (root, rel) = scope_path(&roots, "/home/user/").unwrap();
+        assert_eq!((root.name.as_str(), rel.as_str()), ("home", ""));
+        let (root, rel) = scope_path(&roots, "/workspace/x").unwrap();
+        assert_eq!((root.name.as_str(), rel.as_str()), ("workspace", "x"));
+        for bad in ["/home/userx/a", "/home/Documents", "/elsewhere/x"] {
+            assert!(scope_path(&roots, bad).is_err(), "{bad}");
+        }
+        assert_eq!(relative(api_path(&roots[0])), Path::new("home/user"));
     }
 
     #[test]

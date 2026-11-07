@@ -6176,7 +6176,7 @@ async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else()
         }
     }
     let paths = vec![
-        format!("{}/Documents/", h.home.display()),
+        "/home/user/Documents/".to_owned(),
         format!("{}/app/main.go", h.workspace.display()),
     ];
     let done = restore_paths(
@@ -6192,8 +6192,7 @@ async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else()
     assert!(done.finished);
     assert_eq!(done.target, "2026-10-02T1608Z");
     let out = h.home.join("Restored/2026-10-02T1608Z");
-    let at = |p: &Path| out.join(p.strip_prefix("/").unwrap());
-    let rdocs = at(&docs);
+    let rdocs = out.join("home/user/Documents");
     assert_eq!(std::fs::read(rdocs.join("a.txt")).unwrap(), b"saved");
     assert_eq!(
         std::fs::read(rdocs.join("sub/b.bin")).unwrap(),
@@ -6220,11 +6219,11 @@ async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else()
         0o555
     );
     assert_eq!(
-        std::fs::read(at(&h.workspace).join("app/main.go")).unwrap(),
+        std::fs::read(out.join("workspace/app/main.go")).unwrap(),
         b"package main"
     );
     assert!(
-        !at(&h.workspace).join("app/other.go").exists(),
+        !out.join("workspace/app/other.go").exists(),
         "only the named paths are restored"
     );
 
@@ -6263,9 +6262,7 @@ async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else()
     assert_eq!(
         std::fs::read(
             h.home
-                .join("Restored/2026-10-02T1608Z-2")
-                .join(h.workspace.strip_prefix("/").unwrap())
-                .join("app/main.go")
+                .join("Restored/2026-10-02T1608Z-2/workspace/app/main.go")
         )
         .unwrap(),
         b"package main"
