@@ -119,9 +119,6 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 
 // wakeCredentials pushes m's secrets and keys while it wakes, without holding up the wake; provisionOnce pushes again after it.
 func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
-	if s.connect == nil && s.vault == nil {
-		return
-	}
 	if s.agentBox(m.Owner, boxOfMachine(m.ID)) {
 		return
 	}
@@ -134,10 +131,8 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 				logger.Warnf(pushCtx, "push credentials: %v", err)
 			}
 		}
-		if s.vault != nil {
-			if err := s.syncVault(pushCtx, m.ID); err != nil {
-				logger.Warnf(pushCtx, "push keys: %v", err)
-			}
+		if err := s.syncVault(pushCtx, m.ID); err != nil {
+			logger.Warnf(pushCtx, "push keys: %v", err)
 		}
 	}()
 }

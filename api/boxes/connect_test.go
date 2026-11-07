@@ -31,7 +31,10 @@ func TestProvisioningIssuesADoorKeyPerIncarnationAndPushesTheCredentials(t *test
 	if len(execs) != 2 || execs[0].connectKey != "door:"+aliceBox+":vm1" || execs[1].connectKey != "door:"+aliceBox+":vm2" {
 		t.Fatalf("deliveries = %+v, want one door key per incarnation", execs)
 	}
-	creds := fake.credCalls()
+	creds := slices.DeleteFunc(fake.credCalls(), func(c credCall) bool {
+		_, vault := c.flags[vaultFlag]
+		return vault
+	})
 	if len(creds) != 2 || creds[1].secrets["GH_GIT"] != "basic-"+alice || creds[1].flags["COCOONBOX_GH_GIT"] != "1" {
 		t.Errorf("credential pushes = %+v, want secrets and flags on each provisioned incarnation", creds)
 	}

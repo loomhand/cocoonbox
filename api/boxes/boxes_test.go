@@ -403,6 +403,7 @@ func newService(backend machines.Machines, defaults Defaults, registry Registry)
 	s.EnableUsage(&fakeMeter{}, 0)
 	s.EnableWake(&fakeWakeStore{schedules: map[string]users.WakeSchedule{}}, testWakeLimits)
 	s.EnableProvisioning(fakeSigner{})
+	s.EnableVault(&fakeVault{digests: map[string]string{}})
 	return s
 }
 

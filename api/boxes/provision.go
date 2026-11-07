@@ -92,9 +92,7 @@ func (s *Service) provisionStale(ctx context.Context) {
 		}
 	}
 	_ = g.Wait()
-	if s.vault != nil {
-		s.reconcileVault(ctx, ms)
-	}
+	s.reconcileVault(ctx, ms)
 	for _, k := range ended {
 		s.revokeMachineKey(ctx, k.Machine, k.ID)
 	}
@@ -243,7 +241,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 		creds, err := s.pushCredentials(ctx, m)
 		keep, pushErr = append(keep, secretNames(creds.Secrets)...), errors.Join(pushErr, err)
 	}
-	if s.vault != nil && owned {
+	if owned {
 		creds, err := s.pushVault(ctx, m)
 		keep, pushErr = append(keep, secretNames(creds.Secrets)...), errors.Join(pushErr, err)
 	}
