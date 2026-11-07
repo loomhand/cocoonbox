@@ -112,6 +112,12 @@ func (g Grant) Principal() string {
 	return p
 }
 
+type (
+	userKey       struct{}
+	credentialKey struct{}
+	operatorKey   struct{}
+)
+
 // Authenticator maps bearer tokens to user ids and share secrets to shares.
 type Authenticator struct {
 	identities Identities
@@ -231,14 +237,13 @@ func (a *Authenticator) authenticate(ctx context.Context) (context.Context, erro
 	return context.WithValue(WithUser(ctx, id.User), credentialKey{}, id.Credential), nil
 }
 
-type (
-	userKey       struct{}
-	credentialKey struct{}
-	operatorKey   struct{}
-)
-
 type tokens struct {
 	Users
+}
+
+// Tokens is the Identities of cocoonbox's own API and device tokens, each bound to its sha256.
+func Tokens(users Users) Identities {
+	return tokens{users}
 }
 
 func (t tokens) Resolve(ctx context.Context, token string, _ Entry) (Identity, error) {
@@ -255,6 +260,11 @@ type split struct {
 	outside Resolver
 }
 
+// Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
+func Outside(local Identities, outside Resolver) Identities {
+	return split{Identities: local, outside: outside}
+}
+
 func (s split) Resolve(ctx context.Context, token string, entry Entry) (Identity, error) {
 	if ownToken.MatchString(token) {
 		return s.Identities.Resolve(ctx, token, entry)
@@ -268,16 +278,6 @@ type authedStream struct {
 }
 
 func (s *authedStream) Context() context.Context { return s.ctx }
-
-// Tokens is the Identities of cocoonbox's own API and device tokens, each bound to its sha256.
-func Tokens(users Users) Identities {
-	return tokens{users}
-}
-
-// Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
-func Outside(local Identities, outside Resolver) Identities {
-	return split{Identities: local, outside: outside}
-}
 
 // ShareSecret returns the share secret an Authorization header carries.
 func ShareSecret(header string) (string, bool) {

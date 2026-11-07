@@ -153,19 +153,19 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 	)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var (
-			grantID, owner string
-			spent          bool
-			expiresAt      time.Time
+			grantID, client string
+			spent           bool
+			expiresAt       time.Time
 		)
 		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, EXISTS (SELECT 1 FROM oauth_connectors n WHERE n.grant_id = g.id)
 			FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.sha256 = $1 AND t.refresh FOR UPDATE OF g, t`, refreshSHA256).Scan(
-			&grantID, &owner, &spent, &expiresAt, &connectors)
+			&grantID, &client, &spent, &expiresAt, &connectors)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return errInvalidGrant
 		case err != nil:
 			return fmt.Errorf("read refresh token: %w", err)
-		case owner != clientID:
+		case client != clientID:
 			return errInvalidGrant
 		case spent:
 			replayed = grantID

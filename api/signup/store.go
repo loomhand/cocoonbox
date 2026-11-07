@@ -21,8 +21,7 @@ const (
 	takenUser
 
 	settingsColumns = "enabled, invite_only, seats, allow_domains, allow_emails, daily_cap_micros, max_agent_boxes, hourly_accounts"
-	// before orders the waiting entries: the earliest sort key, then the id.
-	before = "(q.sort_key, q.id) < (e.sort_key, e.id)"
+	before          = "(q.sort_key, q.id) < (e.sort_key, e.id)"
 )
 
 var (

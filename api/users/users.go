@@ -150,6 +150,38 @@ type Options struct {
 	FirstBoxID func(user string) string
 }
 
+// record is a user row with the values the console never sees.
+type record struct {
+	User
+	tokenSHA256 string
+	devices     []deviceToken
+	gwAKID      string
+	gwKey       []byte
+	tenantToken []byte
+	stateKeyID  string
+	stateKey    []byte
+}
+
+type life struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+type credLife struct {
+	life
+	refs int
+}
+
+// tokenOwner is the user a token serves and, for a device token, its device id.
+type tokenOwner struct {
+	user   string
+	device string
+}
+
+type grantOwner func(credential string) bool
+
+type liveGrants func(ctx context.Context, ids []string) (map[string]bool, error)
+
 // Service owns the users, boxes and shares tables and an in-memory index that serves every token, box and share check.
 type Service struct {
 	store        *store
@@ -1065,38 +1097,6 @@ func (s *Service) records() []record {
 	defer s.mu.RUnlock()
 	return slices.SortedFunc(maps.Values(s.byID), func(a, b record) int { return strings.Compare(a.Name, b.Name) })
 }
-
-// record is a user row with the values the console never sees.
-type record struct {
-	User
-	tokenSHA256 string
-	devices     []deviceToken
-	gwAKID      string
-	gwKey       []byte
-	tenantToken []byte
-	stateKeyID  string
-	stateKey    []byte
-}
-
-type life struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-type credLife struct {
-	life
-	refs int
-}
-
-// tokenOwner is the user a token serves and, for a device token, its device id.
-type tokenOwner struct {
-	user   string
-	device string
-}
-
-type grantOwner func(credential string) bool
-
-type liveGrants func(ctx context.Context, ids []string) (map[string]bool, error)
 
 // outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
 func outsideUser(idp, id string) error {
