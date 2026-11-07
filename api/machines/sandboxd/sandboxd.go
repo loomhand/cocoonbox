@@ -738,8 +738,9 @@ func (b *Backend) reread(ctx context.Context, id, from, addr, sandbox string) er
 	}
 	token := r.Token
 	r.Token = ""
+	applied := false
 	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-		if e == nil || (e.row != nil && e.ownerAddr != from) {
+		if applied = e != nil && (e.row == nil || e.ownerAddr == from); !applied {
 			return e, false
 		}
 		e.row, e.ownerAddr = &r, addr
@@ -747,7 +748,9 @@ func (b *Backend) reread(ctx context.Context, id, from, addr, sandbox string) er
 	}); err != nil {
 		return err
 	}
-	b.keepToken(id, sandbox, token)
+	if applied {
+		b.keepToken(id, sandbox, token)
+	}
 	return nil
 }
 
@@ -1039,11 +1042,17 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 			}
 		}
 		if reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
-			b.keepToken(id, r.ID, token)
+			if token == "" || token == b.token(id, r.ID) {
+				continue
+			}
+			if cur, readErr := b.stored(ctx, id); readErr == nil && cur.sandbox() == r.ID && cur.ownerAddr == addr {
+				b.keepToken(id, r.ID, token)
+			}
 			continue
 		}
+		applied := false
 		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-			if !placed(e, r.ID) {
+			if applied = placed(e, r.ID); !applied {
 				return e, false
 			}
 			cur := r
@@ -1058,7 +1067,9 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 			continue
 		}
 		known[id] = next
-		b.keepToken(id, r.ID, token)
+		if applied {
+			b.keepToken(id, r.ID, token)
+		}
 	}
 	return nil
 }
@@ -1083,12 +1094,12 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 		}
 	}
 	b.mu.Unlock()
-	for id, sandbox := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
-		if listed[sandbox] {
-			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, but no agreed owner took it; the machine stays", sandbox)
+	for id, at := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
+		if listed[at.sandbox] {
+			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, but no agreed owner took it; the machine stays", at.sandbox)
 			continue
 		}
-		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox })
+		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.sandbox() == at.sandbox && e.ownerAddr == at.addr })
 		if err != nil {
 			return err
 		}
@@ -1100,9 +1111,9 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 }
 
 // unadopted returns the machines of missing that no node at addrs answers for, and rereads the others on the node that does.
-func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[string]placement) map[string]string {
+func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[string]placement) map[string]placement {
 	var mu sync.Mutex
-	out := map[string]string{}
+	out := map[string]placement{}
 	var g errgroup.Group
 	g.SetLimit(probeFanout)
 	for id, at := range missing {
@@ -1112,7 +1123,7 @@ func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[str
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			out[id] = at.sandbox
+			out[id] = at
 			return nil
 		})
 	}

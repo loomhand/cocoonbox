@@ -290,16 +290,24 @@ func TestAStaleAnswerFromTheFormerNodeLeavesAMovedMachineMoved(t *testing.T) {
 	if _, err := b.mutate(t.Context(), boxID, func(e *entry) (*entry, bool) { e.ownerAddr = front.addr(); return e, true }); err != nil {
 		t.Fatalf("move: %v", err)
 	}
+	token := b.token(boxID, "sb_1")
 	forged := *stale.row
-	forged.EnvMissing = true
+	forged.EnvMissing, forged.Token = true, "forged"
 	if err := b.index(t.Context(), peer.addr(), []row{forged}, map[string]*entry{boxID: stale}, stale.ownerAddr); err != nil {
 		t.Fatalf("index: %v", err)
 	}
+	peer.mutate(func(sb *fakeSandbox) { sb.token = "forged" })
 	if err := b.reread(t.Context(), boxID, peer.addr(), peer.addr(), "sb_1"); err != nil {
 		t.Fatalf("reread: %v", err)
 	}
-	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != front.addr() || e.row.EnvMissing {
-		t.Errorf("machine after stale answers from %s = %+v, %v; want it left on %s", peer.addr(), e, err, front.addr())
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != front.addr() || e.row.EnvMissing || b.token(boxID, "sb_1") != token {
+		t.Errorf("machine after stale answers from %s = %+v, %v, token %q; want it left on %s with its token", peer.addr(), e, err, b.token(boxID, "sb_1"), front.addr())
+	}
+	if err := b.dropUnlisted(t.Context(), map[string][]row{peer.addr(): {}}, map[string]*entry{boxID: stale}); err != nil {
+		t.Fatalf("dropUnlisted: %v", err)
+	}
+	if _, err := b.stored(t.Context(), boxID); err != nil {
+		t.Errorf("a refresh that saw the former placement deleted the moved machine: %v", err)
 	}
 }
 
