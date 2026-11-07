@@ -2,8 +2,6 @@ package oauth
 
 import (
 	"cmp"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -158,6 +156,5 @@ func verifies(verifier, challenge string) bool {
 	if len(verifier) < minVerifierLen || len(verifier) > maxVerifierLen {
 		return false
 	}
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:]) == challenge
+	return utils.Challenge(verifier) == challenge
 }

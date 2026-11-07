@@ -3,8 +3,6 @@ package signup
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -201,9 +199,4 @@ func lowered(list []string) []string {
 		}
 	}
 	return out
-}
-
-func challenge(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
 }

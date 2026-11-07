@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -1271,7 +1269,7 @@ func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 
 func connectQuery(clientID, verifier, scope string) url.Values {
 	return url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(verifier)},
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {utils.Challenge(verifier)},
 		"code_challenge_method": {"S256"}, "state": {"st"}, "scope": {scope},
 	}
 }
@@ -1284,11 +1282,6 @@ func readEvent(t *testing.T, stream io.Reader) string {
 		t.Fatalf("read the stream: %v", err)
 	}
 	return string(buf[:n])
-}
-
-func challenge(verifier string) string {
-	sum := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func lifetime(us *users.Service, id, credential string) context.Context {

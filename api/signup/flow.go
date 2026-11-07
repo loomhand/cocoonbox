@@ -69,7 +69,7 @@ func (s *Service) Begin(ctx context.Context, req BeginRequest) (Started, error) 
 	if err := s.store.addFlow(ctx, utils.HashHex(nonce), f, time.Now().Add(flowTTL)); err != nil {
 		return Started{}, err
 	}
-	return Started{URL: s.github.authorize(f.state, challenge(f.verifier), s.callback), Nonce: nonce}, nil
+	return Started{URL: s.github.authorize(f.state, utils.Challenge(f.verifier), s.callback), Nonce: nonce}, nil
 }
 
 // Complete finishes the sign-in that nonce began: it links the GitHub account, signs its user in, or runs signup for a new one.

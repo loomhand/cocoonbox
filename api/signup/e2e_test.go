@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
@@ -470,10 +468,9 @@ func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) 
 	var made madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 1, "days": 1}, &made)
 	verifier := strings.Repeat("v", 43)
-	sum := sha256.Sum256([]byte(verifier))
 	authorize := url.Values{
 		"response_type": {"code"}, "client_id": {oauth.CLIClient}, "redirect_uri": {"http://127.0.0.1:50123/callback"}, "scope": {oauth.AccountScope},
-		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}, "state": {"st"}, "device_name": {"bob-mac"},
+		"code_challenge": {utils.Challenge(verifier)}, "code_challenge_method": {"S256"}, "state": {"st"}, "device_name": {"bob-mac"},
 	}
 	if loc := e.browser(t).githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"return_to": "/cb/oauth/authorize?" + authorize.Encode()}); loc != "/cb/?login_error=invite_required" {
 		t.Fatalf("the consent page's sign-in without an invite ends at %q", loc)

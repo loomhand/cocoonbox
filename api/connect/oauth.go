@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -19,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/mcpwire"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -358,8 +358,7 @@ func issuerOf(as *url.URL, claimed string) string {
 
 func pkce() (string, string) {
 	verifier := randomToken()
-	sum := sha256.Sum256([]byte(verifier))
-	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
+	return verifier, utils.Challenge(verifier)
 }
 
 func randomToken() string {

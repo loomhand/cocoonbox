@@ -11,6 +11,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 func TestCLISignsInWithADeviceTokenThatOutlivesThePersonalToken(t *testing.T) {
@@ -125,7 +126,7 @@ func TestAFirstPartyCodeOfADisabledUserGetsNoDeviceToken(t *testing.T) {
 
 func accountQuery(clientID, verifier string) url.Values {
 	return url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1:50123/callback"}, "code_challenge": {challenge(verifier)},
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {"http://127.0.0.1:50123/callback"}, "code_challenge": {utils.Challenge(verifier)},
 		"code_challenge_method": {"S256"}, "state": {"st"}, "scope": {oauth.AccountScope}, "device_name": {"alice-mbp"},
 	}
 }
