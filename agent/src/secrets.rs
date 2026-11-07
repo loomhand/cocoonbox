@@ -20,8 +20,7 @@ pub struct Secrets {
 }
 
 impl Secrets {
-    /// An empty registry.
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             values: RwLock::new(Registry {
                 numbers: Vec::new(),
@@ -84,12 +83,6 @@ impl Secrets {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .replace(text, prose);
-    }
-}
-
-impl Default for Secrets {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

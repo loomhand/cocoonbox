@@ -2,9 +2,13 @@
 
 use std::collections::{HashSet, VecDeque};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
 
-use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, stream_error};
+use super::{
+    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, image_mime, index_of, stream_error,
+};
 
 /// Tracks which tool-call indexes already started.
 #[derive(Default)]
@@ -55,10 +59,7 @@ impl Parser {
     }
 
     fn tool_call(&mut self, call: &Value, out: &mut VecDeque<Delta>) {
-        let index = call["index"]
-            .as_u64()
-            .and_then(|i| usize::try_from(i).ok())
-            .unwrap_or(0);
+        let index = index_of(call);
         let func = &call["function"];
         if self.started.insert(index) {
             out.push_back(Delta::ToolStart {
@@ -192,9 +193,10 @@ fn user(parts: &[Part], vision: bool) -> Value {
         .map(|p| match p {
             Part::Text(t) => json!({"type": "text", "text": t}),
             Part::Image(img) if vision => {
+                let mut url = format!("data:{};base64,", image_mime(img));
+                B64.encode_string(img, &mut url);
                 let mut part = json!({"type": "image_url", "image_url": {}});
-                part["image_url"]["url"] =
-                    format!("data:{};base64,{}", image_mime(img), b64(img)).into();
+                part["image_url"]["url"] = url.into();
                 part
             }
             Part::Image(_) => json!({"type": "text", "text": IMAGE_OMITTED}),

@@ -108,7 +108,7 @@ pub struct ServeConfig {
     /// How long a quiesce waits for running turns and MCP calls before it interrupts the share calls.
     pub quiesce_wait: Duration,
     pub state_roots: Vec<Root>,
-    pub desktop_unit: Option<String>,
+    pub desktop_unit: Option<&'static str>,
     /// The Connect box door; without it the loop offers no connector tools.
     pub connect_url: Option<String>,
     /// The box's desktop automation, which adds GUI plans, a script tool and its guide to MCP.
@@ -156,7 +156,7 @@ impl ServeConfig {
                 Path::new(&optional("CB_HOME", DEFAULT_HOME)),
                 Path::new(&workspace),
             ),
-            desktop_unit: DESKTOP_UNIT.map(str::to_owned),
+            desktop_unit: DESKTOP_UNIT,
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
             automation: Automation::detect(),
             plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
@@ -213,7 +213,7 @@ impl ToolhostConfig {
 }
 
 /// The `*.md` files in `dir` in file-name order, each trimmed at its end; none without any.
-pub fn routing_extra(dir: &Path) -> Vec<String> {
+fn routing_extra(dir: &Path) -> Vec<String> {
     let mut parts = Vec::new();
     for file in plugins::sorted_files(dir, "md") {
         match std::fs::read_to_string(&file) {

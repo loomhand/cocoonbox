@@ -4,7 +4,9 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
-use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, stream_error};
+use super::{
+    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, index_of, stream_error,
+};
 
 /// Accumulates usage across `message_start` and `message_delta`.
 #[derive(Default)]
@@ -188,13 +190,6 @@ fn image_part(img: &[u8], vision: bool) -> Value {
     });
     block["source"]["data"] = b64(img).into();
     block
-}
-
-fn index_of(v: &Value) -> usize {
-    v["index"]
-        .as_u64()
-        .and_then(|i| usize::try_from(i).ok())
-        .unwrap_or(0)
 }
 
 fn push_str(out: &mut VecDeque<Delta>, make: fn(String) -> Delta, v: &Value) {

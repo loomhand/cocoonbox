@@ -171,7 +171,6 @@ impl Harness {
         let session_save = dir.path().join("session-save");
         write_script(&session_save, "echo saved >> \"$0.log\"");
         let tools_dir = dir.path().join("tools.d");
-        let routing_dir = dir.path().join("routing.d");
         if plugin {
             let plugin_bin = dir.path().join("demo-bin");
             write_script(&plugin_bin, "exit 0");
@@ -181,8 +180,6 @@ impl Harness {
             let spec = json!({"name": "demo_run", "description": "Run a demo script.", "bin": plugin_bin,
                 "resources": [{"uri": "cocoonbox://demo/DEMO.md", "path": guide, "mime": "text/markdown", "description": "The demo guide"}]});
             std::fs::write(tools_dir.join("demo.json"), spec.to_string()).unwrap();
-            std::fs::create_dir_all(&routing_dir).unwrap();
-            std::fs::write(routing_dir.join("demo.md"), DEMO_ROUTING).unwrap();
         }
         let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
@@ -233,7 +230,10 @@ impl Harness {
             connect_url,
             automation,
             plugins,
-            routing_extra: cocoonbox_agent::config::routing_extra(&routing_dir),
+            routing_extra: plugin
+                .then(|| DEMO_ROUTING.to_owned())
+                .into_iter()
+                .collect(),
             shuttle_socket,
             workspace: workspace.clone(),
             state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),

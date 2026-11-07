@@ -126,7 +126,7 @@ pub struct StateEngine {
     excludes: Excludes,
     work: PathBuf,
     pause: Pause,
-    desktop_unit: Option<String>,
+    desktop_unit: Option<&'static str>,
     save_required: bool,
     http: reqwest::Client,
     pinned: Mutex<Option<Pinned>>,
@@ -140,7 +140,7 @@ impl StateEngine {
         roots: Vec<Root>,
         work: PathBuf,
         pause: Pause,
-        desktop_unit: Option<String>,
+        desktop_unit: Option<&'static str>,
         save_required: bool,
     ) -> Result<Self, String> {
         if let Ok(mut dir) = tokio::fs::read_dir(&work).await {
@@ -668,11 +668,11 @@ impl StateEngine {
 
     /// Stops or starts the desktop session unit (the contract grants cbagent exactly this).
     async fn desktop(&self, verb: &str) -> Result<(), String> {
-        let Some(unit) = &self.desktop_unit else {
+        let Some(unit) = self.desktop_unit else {
             return Ok(());
         };
         let status = tokio::process::Command::new("systemctl")
-            .args([verb, unit.as_str()])
+            .args([verb, unit])
             .status()
             .await
             .map_err(|e| format!("systemctl {verb} {unit}: {e}"))?;

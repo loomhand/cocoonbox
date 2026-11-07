@@ -352,6 +352,13 @@ pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
 }
 
+fn index_of(v: &Value) -> usize {
+    v["index"]
+        .as_u64()
+        .and_then(|i| usize::try_from(i).ok())
+        .unwrap_or(0)
+}
+
 /// Runs `attempt` until it passes or fails for good, waiting [`RETRY_WAITS`] between tries that start within [`RETRY_WINDOW`] of the first.
 async fn retry<T, F, Fut>(mut attempt: F) -> Result<T, String>
 where
@@ -380,7 +387,7 @@ where
     }
 }
 
-/// Whether a stream that failed before its first delta may pass when tried again: a broken body, the gw's model error for an upstream fault, or an overloaded model.
+/// Whether a stream that failed before its first delta may pass when tried again.
 fn early_transient(message: &str) -> bool {
     message.starts_with(READ_FAILED)
         || message

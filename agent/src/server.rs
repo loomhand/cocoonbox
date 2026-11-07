@@ -487,7 +487,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
             guests: Arc::clone(&rt.guests),
             wait: rt.cfg.quiesce_wait,
         },
-        rt.cfg.desktop_unit.clone(),
+        rt.cfg.desktop_unit,
         rt.cfg.automation == Automation::Android,
     )
     .await?;
