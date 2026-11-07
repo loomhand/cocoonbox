@@ -422,6 +422,29 @@ async fn read_wait_returns_on_post() {
 }
 
 #[tokio::test]
+async fn read_wait_returns_stopped_once_the_cli_tmux_is_gone() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    let socket = b.layout.socket.clone();
+    let reader = tokio::spawn(async move {
+        offload::request(
+            &socket,
+            &json!({"op": "read", "repo": REPO, "since": 1, "wait_ms": 30_000}),
+        )
+        .await
+        .unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::remove_file(b.fake.join(format!("sessions/cb-off-{REPO}-claude"))).unwrap();
+    let got = tokio::time::timeout(Duration::from_secs(10), reader)
+        .await
+        .expect("read waited past the CLI's end")
+        .unwrap();
+    assert_eq!(got["status"], "stopped", "{got}");
+    assert_eq!(got["entries"], json!([]));
+}
+
+#[tokio::test]
 async fn begin_refuses_an_unreturned_copy() {
     let b = TestBox::start(true).await;
     let before = std::fs::read(b.layout.state.join("index.json")).unwrap();

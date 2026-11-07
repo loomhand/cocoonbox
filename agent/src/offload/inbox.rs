@@ -568,15 +568,22 @@ impl Inbox {
         loop {
             let (entries, status) = {
                 let recs = self.records.lock().await;
-                let status = recs.get(repo).map_or(Status::Stopped, |r| r.status);
+                let status = match recs.get(repo) {
+                    Some(r) if r.status != Status::Stopped && self.alive(&r.tmux()).await => {
+                        r.status
+                    }
+                    _ => Status::Stopped,
+                };
                 (read_entries(&path, since).await?, status)
             };
-            if !entries.is_empty() || tokio::time::Instant::now() >= deadline {
+            let now = tokio::time::Instant::now();
+            if !entries.is_empty() || status == Status::Stopped || now >= deadline {
                 return Ok(json!({"ok": true, "entries": entries, "status": status}));
             }
+            let wake = deadline.min(now + IDLE_POLL);
             loop {
-                match tokio::time::timeout_at(deadline, changes.recv()).await {
-                    Ok(Ok(c)) if c.repo != repo || c.entry.is_none() => {}
+                match tokio::time::timeout_at(wake, changes.recv()).await {
+                    Ok(Ok(c)) if c.repo != repo => {}
                     Ok(Err(broadcast::error::RecvError::Closed)) | Err(_) => break,
                     Ok(_) => break,
                 }
