@@ -130,11 +130,17 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, response{JSONRPC: mcpwire.Version, Error: &mcpwire.Error{Code: mcpwire.CodeInvalidRequest, Message: "expected one JSON-RPC message"}})
 		return
 	}
-	if len(req.ID) == 0 {
+	session := r.Header.Get(mcpwire.SessionHeader)
+	client, known := d.client(session)
+	switch {
+	case session != "" && !known && req.Method != methodInitialize:
+		w.WriteHeader(http.StatusNotFound)
+		return
+	case len(req.ID) == 0:
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(mcpwire.SessionHeader)))}
+	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, client)}
 	var (
 		call struct {
 			Name      string         `json:"name"`
@@ -215,13 +221,11 @@ func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[stri
 	}
 }
 
-func (d *Door) client(id string) string {
+func (d *Door) client(id string) (string, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if s, ok := d.clients[id]; ok {
-		return s.client
-	}
-	return "unknown"
+	s, ok := d.clients[id]
+	return cmp.Or(s.client, "unknown"), ok
 }
 
 func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {

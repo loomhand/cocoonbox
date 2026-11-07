@@ -1083,8 +1083,31 @@ func TestDoorKeepsAShortClientName(t *testing.T) {
 	srv := httptest.NewServer(door)
 	t.Cleanup(srv.Close)
 	resp := post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"`+strings.Repeat("é", 4096)+`"}}}`)
-	if got := door.client(resp.Header.Get(mcpwire.SessionHeader)); len(got) > maxClientName+len("…") || !utf8.ValidString(got) {
+	if got, _ := door.client(resp.Header.Get(mcpwire.SessionHeader)); len(got) > maxClientName+len("…") || !utf8.ValidString(got) {
 		t.Errorf("kept client name of %d bytes, valid UTF-8 %t", len(got), utf8.ValidString(got))
+	}
+}
+
+func TestDoorAnswers404ToASessionItDoesNotKnow(t *testing.T) {
+	srv := httptest.NewServer((&Service{}).NewDoor(fakeAuthn{}, DoorMCP))
+	t.Cleanup(srv.Close)
+	ping := func(session string) int {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+		req.Header.Set("Authorization", "Bearer alice")
+		req.Header.Set(mcpwire.SessionHeader, session)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("ping: %v", err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := ping("from-before-a-restart"); code != http.StatusNotFound {
+		t.Errorf("ping of an unknown session = %d, want 404 so the client initializes again", code)
+	}
+	session := post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"bridge"}}}`).Header.Get(mcpwire.SessionHeader)
+	if code := ping(session); code != http.StatusOK {
+		t.Errorf("ping of the new session = %d", code)
 	}
 }
 
