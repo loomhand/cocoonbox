@@ -235,6 +235,20 @@ func TestAlarmKeepsTheWakeFloor(t *testing.T) {
 	}
 }
 
+func TestAnHourlyWakeHappensWhenTheNextPassRunsEarlier(t *testing.T) {
+	e := newWakeEnv(t)
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	nine := e.schedule(t, "0 * * * *", 15*time.Minute)
+	e.alarm(t, nine.Add(-wakeLead+time.Second))
+	e.running(t)
+	e.alarm(t, nine.Add(15*time.Minute))
+	e.fake.setState(aliceBox, machines.StateHibernated)
+	e.alarm(t, nine.Add(time.Hour-wakeLead))
+	if e.fake.state(aliceBox) != machines.StateStarting || e.fake.specCount() != 2 {
+		t.Errorf("box is %v after %d Ensure calls, want the 10:00 wake of an hourly cron", e.fake.state(aliceBox), e.fake.specCount())
+	}
+}
+
 func TestAlarmWakesOnceForTimesMissedWhileDown(t *testing.T) {
 	e := newWakeEnv(t)
 	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})

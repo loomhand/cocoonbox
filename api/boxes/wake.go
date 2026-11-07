@@ -197,7 +197,7 @@ func (s *Service) wakeFor(ctx context.Context, w users.WakeSchedule, sched cron.
 			w.SleepAt = later(w.SleepAt, later(now, at).Add(w.AwakeFor))
 		}
 		logger.Infof(ctx, "box is up for %s; nothing to wake", at.Format(time.RFC3339))
-	case now.Sub(w.LastWakeAt) < s.wake.limits.Floor:
+	case later(now, at).Sub(w.LastWakeAt) < s.wake.limits.Floor:
 		logger.Warnf(ctx, "skip the wake for %s: the box woke at %s, under the %s floor", at.Format(time.RFC3339), w.LastWakeAt.Format(time.RFC3339), s.wake.limits.Floor)
 	default:
 		woke := w
