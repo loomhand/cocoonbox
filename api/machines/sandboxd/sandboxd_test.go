@@ -1228,36 +1228,48 @@ func TestAClaimWhosePeerFailsRunsOnTheEntryWithoutARedirect(t *testing.T) {
 }
 
 func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
-	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
-	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
-	b := newTestBackend(t, entry)
-	claimRunning(t, b)
-	peer.setDown(true)
-	if err := b.refresh(t.Context()); err != nil {
-		t.Fatalf("refresh with the peer down: %v", err)
-	}
-	if _, err := rowOf(t, b, boxID); err != nil {
-		t.Fatalf("the machine of a peer that does not answer went at once: %v", err)
-	}
-	entry.mu.Lock()
-	entry.peers = nil
-	entry.mu.Unlock()
-	if err := b.refresh(t.Context()); err != nil {
-		t.Fatalf("refresh after the peer left: %v", err)
-	}
-	if _, err := rowOf(t, b, boxID); err != nil {
-		t.Fatalf("the machine went before its node stayed away: %v", err)
-	}
-	b.mu.Lock()
-	for addr, since := range b.away {
-		b.away[addr] = since.Add(-nodeLostAfter)
-	}
-	b.mu.Unlock()
-	if err := b.refresh(t.Context()); err != nil {
-		t.Fatalf("refresh after the peer stayed away: %v", err)
-	}
-	if _, err := rowOf(t, b, boxID); !errors.Is(err, machines.ErrNotFound) {
-		t.Errorf("the machine of a node away for good = %v, want it gone", err)
+	for _, listed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "any node", true: "a configured node"}[listed], func(t *testing.T) {
+			entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+			entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+			opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)}
+			if listed {
+				opts.Nodes = []string{peer.addr()}
+			}
+			b, err := New(t.Context(), opts)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			go b.Run(t.Context())
+			claimRunning(t, b)
+			peer.setDown(true)
+			if err := b.refresh(t.Context()); err != nil {
+				t.Fatalf("refresh with the peer down: %v", err)
+			}
+			if _, err := rowOf(t, b, boxID); err != nil {
+				t.Fatalf("the machine of a peer that does not answer went at once: %v", err)
+			}
+			entry.mu.Lock()
+			entry.peers = nil
+			entry.mu.Unlock()
+			if err := b.refresh(t.Context()); err != nil {
+				t.Fatalf("refresh after the peer left: %v", err)
+			}
+			if _, err := rowOf(t, b, boxID); err != nil {
+				t.Fatalf("the machine went before its node stayed away: %v", err)
+			}
+			b.mu.Lock()
+			for addr, since := range b.away {
+				b.away[addr] = since.Add(-nodeLostAfter)
+			}
+			b.mu.Unlock()
+			if err := b.refresh(t.Context()); err != nil {
+				t.Fatalf("refresh after the peer stayed away: %v", err)
+			}
+			if _, err := rowOf(t, b, boxID); !errors.Is(err, machines.ErrNotFound) {
+				t.Errorf("the machine of a node away for good = %v, want it gone", err)
+			}
+		})
 	}
 }
 

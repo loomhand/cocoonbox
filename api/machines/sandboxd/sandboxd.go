@@ -1196,11 +1196,8 @@ func (b *Backend) readRoom(ctx context.Context) error {
 	return nil
 }
 
-// mesh returns the entry node and opts.Nodes or, without them, its peers, the peers it last named when it does not answer.
+// mesh returns the entry node and the peers it names that opts.Nodes allows, the peers it last named when it does not answer.
 func (b *Backend) mesh(ctx context.Context) []string {
-	if len(b.opts.Nodes) > 0 {
-		return slices.Concat([]string{b.entryAddr}, b.opts.Nodes)
-	}
 	peers, err := b.api.peers(ctx)
 	b.nodeMu.Lock()
 	defer b.nodeMu.Unlock()
@@ -1208,8 +1205,8 @@ func (b *Backend) mesh(ctx context.Context) []string {
 		log.WithFunc("sandboxd.Backend.mesh").Warnf(ctx, "list the peers: %v", err)
 		peers = b.peers
 	}
-	b.peers = peers
-	return slices.Concat([]string{b.entryAddr}, peers)
+	b.peers = slices.DeleteFunc(peers, func(addr string) bool { return !b.allowed(addr) })
+	return slices.Concat([]string{b.entryAddr}, b.peers)
 }
 
 // trackAway notes when a node that the claims of known name stopped being in the mesh and answering the list, and forgets nodes no claim names.
