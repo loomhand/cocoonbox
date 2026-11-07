@@ -832,7 +832,7 @@ func (b *Backend) token(id, sandbox string) string {
 	return ""
 }
 
-// lookup refreshes id's row from sandboxd, finding it by metadata when the row names no node, and returns the row.
+// lookup refreshes id's row from the node that holds its claim and returns the entry.
 func (b *Backend) lookup(ctx context.Context, id string) (*entry, error) {
 	e, err := b.stored(ctx, id)
 	if err != nil {
@@ -1052,18 +1052,18 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 
 // dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
-	type claimAt struct{ addr, sandbox string }
-	present := map[claimAt]bool{}
+	type claimKey struct{ addr, sandbox string }
+	present := map[claimKey]bool{}
 	for addr, rows := range lists {
 		for _, r := range rows {
-			present[claimAt{addr, r.ID}] = true
+			present[claimKey{addr, r.ID}] = true
 		}
 	}
 	now := time.Now()
 	b.mu.Lock()
 	missing := map[string]string{}
 	for id, e := range known {
-		if e.busy(now) || e.row == nil || present[claimAt{e.ownerAddr, e.row.ID}] {
+		if e.busy(now) || e.row == nil || present[claimKey{e.ownerAddr, e.row.ID}] {
 			continue
 		}
 		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
@@ -1114,7 +1114,7 @@ func (b *Backend) listMesh(ctx context.Context, addrs []string) (map[string][]ro
 		wg.Go(func() {
 			node, err := b.node(addr)
 			if err == nil {
-				lists[i], err = node.sandboxes(ctx, nil)
+				lists[i], err = node.sandboxes(ctx)
 			}
 			errs[i] = err
 		})

@@ -190,11 +190,11 @@ func (c *client) owner(ctx context.Context, id, token string) (string, error) {
 	return resp.OwnerAddr, err
 }
 
-func (c *client) sandboxes(ctx context.Context, query url.Values) ([]row, error) {
+func (c *client) sandboxes(ctx context.Context) ([]row, error) {
 	var resp struct {
 		Sandboxes []row `json:"sandboxes"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", query, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", nil, nil, &resp)
 	return resp.Sandboxes, err
 }
 

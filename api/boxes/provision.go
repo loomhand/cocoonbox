@@ -170,7 +170,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if s.accounts != nil {
 		key, id, err := s.accounts.IssueMachineKey(ctx, m.Owner, m.ID, m.Incarnation)
 		if err != nil {
-			return "", fmt.Errorf("gw key: %w", err)
+			return "", fmt.Errorf("issue gw key: %w", err)
 		}
 		keys[gwKeyEnv], issued = &machines.Secret{Value: "Bearer " + key}, id
 	}
@@ -186,7 +186,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	logger := log.WithFunc("boxes.Service.provisionWith").WithField("machine", m.ID)
 	p := s.provision
 	if err := s.syncExit(ctx, m, m.EnvMissing); err != nil {
-		return "", fmt.Errorf("exit: %w", err)
+		return "", fmt.Errorf("sync exit: %w", err)
 	}
 	wake := wakeOf(m)
 	box := boxOfMachine(m.ID)

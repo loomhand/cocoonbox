@@ -75,7 +75,7 @@ func (s *Service) recordPushes(ctx context.Context, m machines.Machine, kinds ..
 		return nil
 	}
 	if err := s.accounts.RecordPushes(ctx, m.ID, m.Owner, m.Node, kinds); err != nil {
-		return fmt.Errorf("record the pushes: %w", err)
+		return fmt.Errorf("record pushes: %w", err)
 	}
 	return nil
 }

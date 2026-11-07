@@ -1,8 +1,6 @@
 package users
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestMachineKeysAreIssuedPerIncarnationRevokedAndGoWithTheUser(t *testing.T) {
 	svc, gw, _, _ := newTestService(t)

@@ -694,13 +694,6 @@ func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.C
 	return nil
 }
 
-func (f *fakeMachines) filled(id string) {
-	if m, ok := f.machines[id]; ok && !f.keepMissing {
-		m.EnvMissing = false
-		f.machines[id] = m
-	}
-}
-
 func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -723,6 +716,13 @@ func (f *fakeMachines) Delete(_ context.Context, id string) error {
 	delete(f.machines, id)
 	f.deleted = append(f.deleted, id)
 	return nil
+}
+
+func (f *fakeMachines) filled(id string) {
+	if m, ok := f.machines[id]; ok && !f.keepMissing {
+		m.EnvMissing = false
+		f.machines[id] = m
+	}
 }
 
 func (f *fakeMachines) execCalls() []execCall {

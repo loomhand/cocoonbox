@@ -37,11 +37,7 @@ func (s *Service) MachineKeys(ctx context.Context, machine string) ([]MachineKey
 	if err != nil {
 		return nil, fmt.Errorf("list machine keys: %w", err)
 	}
-	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (MachineKey, error) {
-		var k MachineKey
-		err := row.Scan(&k.ID, &k.Machine, &k.Incarnation)
-		return k, err
-	})
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[MachineKey])
 }
 
 // RevokeMachineKey revokes the gw key with ak_id id and forgets it.
