@@ -144,6 +144,7 @@ type screenOnly struct {
 	session *rfbSession
 	stage   int
 	buf     []byte
+	out     []byte
 	// rects counts the rects left in the current FramebufferUpdate.
 	rects int
 	// pass and skip count body bytes still to forward or to drop.
@@ -154,7 +155,7 @@ type screenOnly struct {
 // feed takes the next bytes from the server and returns those to forward to the viewer.
 func (f *screenOnly) feed(in []byte) ([]byte, error) {
 	f.buf = append(f.buf, in...)
-	out := make([]byte, 0, len(in))
+	out := f.out[:0]
 	pos := 0
 	for {
 		n := min(f.pass, len(f.buf)-pos)
@@ -183,6 +184,7 @@ func (f *screenOnly) feed(in []byte) ([]byte, error) {
 		pos += head
 	}
 	f.buf = append(f.buf[:0], f.buf[pos:]...)
+	f.out = out
 	return out, nil
 }
 

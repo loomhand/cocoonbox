@@ -6,7 +6,7 @@ import (
 )
 
 type frame struct {
-	payload []byte
+	data mem.BufferSlice
 }
 
 // Codec passes proxied frames through as raw bytes and delegates every other message to the proto codec.
@@ -21,14 +21,15 @@ func NewCodec() Codec {
 
 func (c Codec) Marshal(v any) (mem.BufferSlice, error) {
 	if f, ok := v.(*frame); ok {
-		return mem.BufferSlice{mem.SliceBuffer(f.payload)}, nil
+		return f.data, nil
 	}
 	return c.proto.Marshal(v)
 }
 
 func (c Codec) Unmarshal(data mem.BufferSlice, v any) error {
 	if f, ok := v.(*frame); ok {
-		f.payload = data.Materialize()
+		data.Ref()
+		f.data = data
 		return nil
 	}
 	return c.proto.Unmarshal(data, v)
