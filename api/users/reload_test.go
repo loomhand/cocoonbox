@@ -2,6 +2,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -81,7 +82,7 @@ func TestAnUpdateCannotRestoreATokenRevokedWhileItWaited(t *testing.T) {
 func TestAnIssuedDeviceCannotOutliveASignOutWhileItWaited(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "alice"})
-	gate := gateQuery(t, svc, dsn, "SELECT pg_notify")
+	gate := gateQuery(t, svc, dsn, "FROM users ORDER BY")
 	done := make(chan error, 1)
 	var token string
 	go func() {
@@ -124,7 +125,9 @@ func TestAListenerReadsANewUserWithoutAFullReload(t *testing.T) {
 	if n := loads.n.Load(); n != 1 {
 		t.Errorf("the listener reloaded fully %d times for the create, want none", n-1)
 	}
-	creator.published(t.Context(), "a later write")
+	if err := pgx.BeginFunc(t.Context(), creator.store.pool, func(tx pgx.Tx) error { return notifyIn(t.Context(), tx, "") }); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
 	clustertest.WaitFor(t, "the creator's listener reloads on the later write", func() bool { return creatorSyncs.n.Load() == 2 })
 	if m := creatorLoads.n.Load(); m != 2 {
 		t.Errorf("the creator reloaded fully %d times for its own create, want none", m-2)
@@ -257,6 +260,174 @@ func TestAFullLoadDoesNotBringBackAUserDeletedWhileItRead(t *testing.T) {
 	}
 }
 
+func TestARevokeAndADisableReachAListenerWhenNoNotifyCanFollowTheWrite(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	go svc.Listen(t.Context())
+	other := openTestService(t, dsn, gw, tenants)
+	u := mustCreate(t, other, NewUser{Name: "qa1"})
+	token, err := other.RegenerateToken(t.Context(), u.ID)
+	if err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
+	clustertest.WaitFor(t, "the listener knows the token", func() bool { _, ok := svc.indexedToken(sum(token)); return ok })
+	tokenLife, life := lifetime(svc, u.ID, sum(token)), lifetime(svc, u.ID, "")
+	trace(t, other, dsn, lateNotifyFails{})
+	if err := other.RevokeToken(t.Context(), u.ID); err != nil {
+		t.Fatalf("RevokeToken: %v", err)
+	}
+	clustertest.WaitFor(t, "the listener ends the revoked token's calls", func() bool { return tokenLife.Err() != nil })
+	if _, err := other.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	clustertest.WaitFor(t, "the listener ends the disabled user's lifetime", func() bool { return life.Err() != nil })
+}
+
+func TestEveryUsersWriteReachesAListenerWhenNoNotifyCanFollowIt(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(t *testing.T, a *Service, u User, in signIns) string
+		seen  func(b *Service, u User, in signIns, got string) bool
+	}{
+		{
+			name: "box add",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				b, err := a.AddBox(t.Context(), Box{ID: "cb-agent", Owner: u.ID, Name: "agent", Agent: true})
+				if err != nil {
+					t.Fatalf("AddBox: %v", err)
+				}
+				return b.ID
+			},
+			seen: func(b *Service, u User, _ signIns, got string) bool { return b.HasBox(u.ID, got) },
+		},
+		{
+			name: "box rename",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if _, err := a.RenameBox(t.Context(), u.ID, firstBoxID(u.ID), "renamed"); err != nil {
+					t.Fatalf("RenameBox: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, u User, _ signIns, _ string) bool {
+				boxes := b.Boxes(u.ID)
+				return len(boxes) == 1 && boxes[0].Name == "renamed"
+			},
+		},
+		{
+			name: "device issue",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				token, err := a.IssueDevice(t.Context(), u.ID, "app", "phone")
+				if err != nil {
+					t.Fatalf("IssueDevice: %v", err)
+				}
+				return token
+			},
+			seen: func(b *Service, _ User, _ signIns, got string) bool { _, ok := b.indexedToken(sum(got)); return ok },
+		},
+		{
+			name: "device revoke",
+			write: func(t *testing.T, a *Service, u User, in signIns) string {
+				if err := a.RevokeDevice(t.Context(), u.ID, in.deviceID); err != nil {
+					t.Fatalf("RevokeDevice: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, _ User, in signIns, _ string) bool {
+				_, ok := b.indexedToken(sum(in.device))
+				return !ok
+			},
+		},
+		{
+			name: "user delete",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if err := a.Delete(t.Context(), u.ID); err != nil {
+					t.Fatalf("Delete: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, u User, _ signIns, _ string) bool {
+				_, err := b.Get(u.ID)
+				return errors.Is(err, ErrNotFound)
+			},
+		},
+		{
+			name: "user disable",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if _, err := a.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
+					t.Fatalf("Update: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, u User, _ signIns, _ string) bool {
+				got, err := b.Get(u.ID)
+				return err == nil && got.Disabled
+			},
+		},
+		{
+			name: "token set",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				token, err := a.RegenerateToken(t.Context(), u.ID)
+				if err != nil {
+					t.Fatalf("RegenerateToken: %v", err)
+				}
+				return token
+			},
+			seen: func(b *Service, _ User, _ signIns, got string) bool { _, ok := b.indexedToken(sum(got)); return ok },
+		},
+		{
+			name: "token revoke",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if err := a.RevokeToken(t.Context(), u.ID); err != nil {
+					t.Fatalf("RevokeToken: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, _ User, in signIns, _ string) bool {
+				_, ok := b.indexedToken(sum(in.token))
+				return !ok
+			},
+		},
+		{
+			name: "sign out everywhere",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if err := a.SignOut(t.Context(), u.ID); err != nil {
+					t.Fatalf("SignOut: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, _ User, in signIns, _ string) bool {
+				_, token := b.indexedToken(sum(in.token))
+				_, device := b.indexedToken(sum(in.device))
+				return !token && !device
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b, gw, tenants, dsn := newTestService(t)
+			go b.Listen(t.Context())
+			a := openTestService(t, dsn, gw, tenants)
+			u := mustCreate(t, a, NewUser{Name: "qa1"})
+			token, err := a.RegenerateToken(t.Context(), u.ID)
+			if err != nil {
+				t.Fatalf("RegenerateToken: %v", err)
+			}
+			device, err := a.IssueDevice(t.Context(), u.ID, "app", "laptop")
+			if err != nil {
+				t.Fatalf("IssueDevice: %v", err)
+			}
+			in := signIns{token: token, device: device, deviceID: a.TokenDevice(sum(device))}
+			clustertest.WaitFor(t, "the listener knows the sign-ins", func() bool {
+				_, tokenKnown := b.indexedToken(sum(token))
+				_, deviceKnown := b.indexedToken(sum(device))
+				return tokenKnown && deviceKnown
+			})
+			trace(t, a, dsn, lateNotifyFails{})
+			got := tt.write(t, a, u, in)
+			clustertest.WaitFor(t, "the listener sees the "+tt.name, func() bool { return tt.seen(b, u, in, got) })
+		})
+	}
+}
+
 type reloadGate struct {
 	sql     string
 	entered chan struct{}
@@ -344,3 +515,20 @@ func (g *deleteRaceGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data 
 }
 
 func (*deleteRaceGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+type signIns struct {
+	token, device, deviceID string
+}
+
+type lateNotifyFails struct{}
+
+func (lateNotifyFails) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "pg_notify") && conn.PgConn().TxStatus() == 'I' {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		return canceled
+	}
+	return ctx
+}
+
+func (lateNotifyFails) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}

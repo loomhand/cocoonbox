@@ -475,7 +475,6 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.remove(ctx, id); err != nil {
 		return err
 	}
-	s.published(ctx, "deleted user "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.byID[id]; ok {
@@ -547,7 +546,6 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	if err := s.store.update(ctx, r, set); err != nil {
 		return User{}, err
 	}
-	defer s.published(ctx, "updated user "+id)
 	if r.Disabled && !old.Disabled {
 		if err := s.store.removeSessions(ctx, id); err != nil {
 			return User{}, err
@@ -597,7 +595,6 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	if r.tokenSHA256 != sum {
 		s.EndCredential(ctx, r.tokenSHA256)
 	}
-	s.published(ctx, "set the token of "+id)
 	return s.Load(ctx)
 }
 
@@ -620,7 +617,6 @@ func (s *Service) RevokeToken(ctx context.Context, id string) error {
 		return err
 	}
 	s.EndCredential(ctx, r.tokenSHA256)
-	s.published(ctx, "revoked the token of "+id)
 	return s.Load(ctx)
 }
 
@@ -646,7 +642,6 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 	}
 	s.end(id)
 	s.mu.Unlock()
-	s.published(ctx, "signed "+id+" out everywhere")
 	return nil
 }
 
@@ -892,9 +887,6 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil))
 	}
-	if err := s.store.notify(ctx, createdPayload+id); err != nil {
-		log.WithFunc("users.Service.create").Warnf(ctx, "created user %s; other apis read it on their next notify: %v", r.Name, err)
-	}
 	if err := s.loadUser(ctx, id); err != nil {
 		return User{}, err
 	}
@@ -1065,13 +1057,6 @@ func (s *Service) endGoneGrants(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// published tells every api to reload after a write; a failed notify reaches them with the next one.
-func (s *Service) published(ctx context.Context, what string) {
-	if err := s.store.notify(ctx, ""); err != nil {
-		log.WithFunc("users.Service.published").Warnf(ctx, "%s; other apis reload on their next notify: %v", what, err)
-	}
 }
 
 func (s *Service) record(id string) (record, error) {

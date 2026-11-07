@@ -45,7 +45,6 @@ func (s *Service) IssueDevice(ctx context.Context, id, client, label string) (st
 	if err := s.store.insertDevice(ctx, id, d, client, label); err != nil {
 		return "", err
 	}
-	s.published(ctx, "issued device "+d.id)
 	if err := s.Load(ctx); err != nil {
 		return "", err
 	}
@@ -69,7 +68,7 @@ func (s *Service) RevokeDevice(ctx context.Context, id, device string) error {
 	if err != nil {
 		return err
 	}
-	s.dropDevice(ctx, id, device, sum)
+	s.dropDevice(id, device, sum)
 	return nil
 }
 
@@ -79,12 +78,12 @@ func (s *Service) RevokeDeviceSHA256(ctx context.Context, sum string) error {
 	if err != nil || device == "" {
 		return err
 	}
-	s.dropDevice(ctx, id, device, sum)
+	s.dropDevice(id, device, sum)
 	return nil
 }
 
-// dropDevice takes a revoked device token out of the index and tells the other apis to reload theirs.
-func (s *Service) dropDevice(ctx context.Context, id, device, sum string) {
+// dropDevice takes a revoked device token out of the index; the delete's own notify reloads the other apis.
+func (s *Service) dropDevice(id, device, sum string) {
 	s.mu.Lock()
 	s.indexGen++
 	delete(s.byToken, sum)
@@ -95,7 +94,6 @@ func (s *Service) dropDevice(ctx context.Context, id, device, sum string) {
 	s.endCredential(sum)
 	s.mu.Unlock()
 	s.deviceUse.Delete(device)
-	s.published(ctx, "revoked device "+device)
 }
 
 func (s *Service) touchDevice(ctx context.Context, device string) {
