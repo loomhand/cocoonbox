@@ -1150,7 +1150,9 @@ func newStateEnv(t *testing.T) *stateEnv {
 
 func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
 	t.Helper()
-	return e.saveBox(t, aliceBox)
+	events := e.saveBox(t, aliceBox)
+	time.Sleep(time.Millisecond)
+	return events
 }
 
 func (e *stateEnv) saveEach(t *testing.T, chunks ...[]string) {
