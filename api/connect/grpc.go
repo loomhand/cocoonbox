@@ -15,10 +15,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
-const (
-	defaultActivity = 50
-	maxActivity     = 500
-)
+const activityPage = 50
 
 var (
 	policies = map[controlv1.Policy]string{
@@ -131,11 +128,7 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 	if err != nil {
 		return nil, err
 	}
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		limit = defaultActivity
-	}
-	records, err := s.store.activity(ctx, user, req.GetConnectorId(), min(limit, maxActivity))
+	records, err := s.store.activity(ctx, user, req.GetConnectorId(), activityPage)
 	if err != nil {
 		return nil, grantStatus(ctx, err, "read the activity")
 	}
@@ -144,8 +137,7 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 		out.Entries = append(out.Entries, &controlv1.ActivityEntry{
 			AtMs: r.at.UnixMilli(), ConnectorId: r.connector, Tool: r.tool, Door: r.door, Caller: r.caller, Decision: r.decision,
 			UpstreamStatus: int32(r.status), //nolint:gosec // an HTTP status
-			LatencyMs:      r.latency.Milliseconds(), RequestBytes: r.reqBytes, ResponseBytes: r.respBytes,
-			ArgsHash: r.argsSHA256, Outcome: r.outcome,
+			LatencyMs:      r.latency.Milliseconds(), Outcome: r.outcome,
 		})
 	}
 	return out, nil

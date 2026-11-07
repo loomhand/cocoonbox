@@ -731,9 +731,7 @@ func (*ApproveResponse) Descriptor() ([]byte, []int) {
 type ActivityRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Empty for every connector.
-	ConnectorId string `protobuf:"bytes,1,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
-	// 0 selects 50; at most 500.
-	Limit         int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	ConnectorId   string `protobuf:"bytes,1,opt,name=connector_id,json=connectorId,proto3" json:"connector_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -773,13 +771,6 @@ func (x *ActivityRequest) GetConnectorId() string {
 		return x.ConnectorId
 	}
 	return ""
-}
-
-func (x *ActivityRequest) GetLimit() int32 {
-	if x != nil {
-		return x.Limit
-	}
-	return 0
 }
 
 type ActivityResponse struct {
@@ -839,10 +830,6 @@ type ActivityEntry struct {
 	// The upstream HTTP status, 0 when no request was sent or no answer came.
 	UpstreamStatus int32 `protobuf:"varint,7,opt,name=upstream_status,json=upstreamStatus,proto3" json:"upstream_status,omitempty"`
 	LatencyMs      int64 `protobuf:"varint,8,opt,name=latency_ms,json=latencyMs,proto3" json:"latency_ms,omitempty"`
-	RequestBytes   int64 `protobuf:"varint,9,opt,name=request_bytes,json=requestBytes,proto3" json:"request_bytes,omitempty"`
-	ResponseBytes  int64 `protobuf:"varint,10,opt,name=response_bytes,json=responseBytes,proto3" json:"response_bytes,omitempty"`
-	// Hex SHA-256 of the canonical JSON of the arguments; never the arguments.
-	ArgsHash string `protobuf:"bytes,11,opt,name=args_hash,json=argsHash,proto3" json:"args_hash,omitempty"`
 	// `ok`, `error` or `outcome_unknown`.
 	Outcome       string `protobuf:"bytes,12,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -935,27 +922,6 @@ func (x *ActivityEntry) GetLatencyMs() int64 {
 	return 0
 }
 
-func (x *ActivityEntry) GetRequestBytes() int64 {
-	if x != nil {
-		return x.RequestBytes
-	}
-	return 0
-}
-
-func (x *ActivityEntry) GetResponseBytes() int64 {
-	if x != nil {
-		return x.ResponseBytes
-	}
-	return 0
-}
-
-func (x *ActivityEntry) GetArgsHash() string {
-	if x != nil {
-		return x.ArgsHash
-	}
-	return ""
-}
-
 func (x *ActivityEntry) GetOutcome() string {
 	if x != nil {
 		return x.Outcome
@@ -1014,12 +980,11 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\vapproval_id\x18\x01 \x01(\tR\n" +
 	"approvalId\x12B\n" +
 	"\bdecision\x18\x02 \x01(\x0e2&.cocoonbox.control.v1.ApprovalDecisionR\bdecision\"\x11\n" +
-	"\x0fApproveResponse\"J\n" +
+	"\x0fApproveResponse\"A\n" +
 	"\x0fActivityRequest\x12!\n" +
-	"\fconnector_id\x18\x01 \x01(\tR\vconnectorId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\"Q\n" +
+	"\fconnector_id\x18\x01 \x01(\tR\vconnectorIdJ\x04\b\x02\x10\x03R\x05limit\"Q\n" +
 	"\x10ActivityResponse\x12=\n" +
-	"\aentries\x18\x01 \x03(\v2#.cocoonbox.control.v1.ActivityEntryR\aentries\"\xee\x02\n" +
+	"\aentries\x18\x01 \x03(\v2#.cocoonbox.control.v1.ActivityEntryR\aentries\"\xb5\x02\n" +
 	"\rActivityEntry\x12\x13\n" +
 	"\x05at_ms\x18\x01 \x01(\x03R\x04atMs\x12!\n" +
 	"\fconnector_id\x18\x02 \x01(\tR\vconnectorId\x12\x12\n" +
@@ -1029,12 +994,8 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\bdecision\x18\x06 \x01(\tR\bdecision\x12'\n" +
 	"\x0fupstream_status\x18\a \x01(\x05R\x0eupstreamStatus\x12\x1d\n" +
 	"\n" +
-	"latency_ms\x18\b \x01(\x03R\tlatencyMs\x12#\n" +
-	"\rrequest_bytes\x18\t \x01(\x03R\frequestBytes\x12%\n" +
-	"\x0eresponse_bytes\x18\n" +
-	" \x01(\x03R\rresponseBytes\x12\x1b\n" +
-	"\targs_hash\x18\v \x01(\tR\bargsHash\x12\x18\n" +
-	"\aoutcome\x18\f \x01(\tR\aoutcome*R\n" +
+	"latency_ms\x18\b \x01(\x03R\tlatencyMs\x12\x18\n" +
+	"\aoutcome\x18\f \x01(\tR\aoutcomeJ\x04\b\t\x10\fR\rrequest_bytesR\x0eresponse_bytesR\targs_hash*R\n" +
 	"\x06Policy\x12\x16\n" +
 	"\x12POLICY_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fPOLICY_ALLOW\x10\x01\x12\x0e\n" +

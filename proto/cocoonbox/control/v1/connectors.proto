@@ -116,10 +116,10 @@ message ApproveRequest {
 message ApproveResponse {}
 
 message ActivityRequest {
+  reserved 2;
+  reserved "limit";
   // Empty for every connector.
   string connector_id = 1;
-  // 0 selects 50; at most 500.
-  int32 limit = 2;
 }
 
 message ActivityResponse {
@@ -127,6 +127,8 @@ message ActivityResponse {
 }
 
 message ActivityEntry {
+  reserved 9 to 11;
+  reserved "request_bytes", "response_bytes", "args_hash";
   int64 at_ms = 1;
   string connector_id = 2;
   string tool = 3;
@@ -138,10 +140,6 @@ message ActivityEntry {
   // The upstream HTTP status, 0 when no request was sent or no answer came.
   int32 upstream_status = 7;
   int64 latency_ms = 8;
-  int64 request_bytes = 9;
-  int64 response_bytes = 10;
-  // Hex SHA-256 of the canonical JSON of the arguments; never the arguments.
-  string args_hash = 11;
   // `ok`, `error` or `outcome_unknown`.
   string outcome = 12;
 }

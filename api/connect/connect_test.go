@@ -454,18 +454,19 @@ func TestBoxDoorAsksAndAnApprovalCoversOneCallWithTheSameArguments(t *testing.T)
 	}
 	upstream := 0
 	for _, e := range activity.GetEntries() {
-		if len(e.GetArgsHash()) != 64 || strings.Contains(e.String(), "Fix it") {
+		if strings.Contains(e.String(), "Fix it") {
 			t.Errorf("audit entry = %v", e)
 		}
 		if e.GetUpstreamStatus() == http.StatusOK {
 			upstream++
-			if e.GetRequestBytes() == 0 || e.GetResponseBytes() == 0 {
-				t.Errorf("upstream entry lacks byte counts: %v", e)
-			}
 		}
 	}
 	if upstream == 0 {
 		t.Errorf("no audit entry reached the vendor: %v", activity.GetEntries())
+	}
+	var bad int
+	if err := env.row(t, "SELECT count(*) FROM connect_audit WHERE length(args_sha256) <> 64 OR (upstream_status = 200 AND (req_bytes = 0 OR resp_bytes = 0))").Scan(&bad); err != nil || bad != 0 {
+		t.Errorf("audit rows without an args hash or byte counts = %d, %v", bad, err)
 	}
 }
 

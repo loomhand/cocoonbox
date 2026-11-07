@@ -290,9 +290,6 @@ public nonisolated struct Cocoonbox_Control_V1_ActivityRequest: Sendable {
   /// Empty for every connector.
   public var connectorID: String = String()
 
-  /// 0 selects 50; at most 500.
-  public var limit: Int32 = 0
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -333,13 +330,6 @@ public nonisolated struct Cocoonbox_Control_V1_ActivityEntry: Sendable {
   public var upstreamStatus: Int32 = 0
 
   public var latencyMs: Int64 = 0
-
-  public var requestBytes: Int64 = 0
-
-  public var responseBytes: Int64 = 0
-
-  /// Hex SHA-256 of the canonical JSON of the arguments; never the arguments.
-  public var argsHash: String = String()
 
   /// `ok`, `error` or `outcome_unknown`.
   public var outcome: String = String()
@@ -741,7 +731,7 @@ nonisolated extension Cocoonbox_Control_V1_ApproveResponse: SwiftProtobuf.Messag
 
 nonisolated extension Cocoonbox_Control_V1_ActivityRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ActivityRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}connector_id\0\u{1}limit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}connector_id\0\u{b}limit\0\u{c}\u{2}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -750,7 +740,6 @@ nonisolated extension Cocoonbox_Control_V1_ActivityRequest: SwiftProtobuf.Messag
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.connectorID) }()
-      case 2: try { try decoder.decodeSingularInt32Field(value: &self.limit) }()
       default: break
       }
     }
@@ -760,15 +749,11 @@ nonisolated extension Cocoonbox_Control_V1_ActivityRequest: SwiftProtobuf.Messag
     if !self.connectorID.isEmpty {
       try visitor.visitSingularStringField(value: self.connectorID, fieldNumber: 1)
     }
-    if self.limit != 0 {
-      try visitor.visitSingularInt32Field(value: self.limit, fieldNumber: 2)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Control_V1_ActivityRequest, rhs: Cocoonbox_Control_V1_ActivityRequest) -> Bool {
     if lhs.connectorID != rhs.connectorID {return false}
-    if lhs.limit != rhs.limit {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -806,7 +791,7 @@ nonisolated extension Cocoonbox_Control_V1_ActivityResponse: SwiftProtobuf.Messa
 
 nonisolated extension Cocoonbox_Control_V1_ActivityEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ActivityEntry"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}at_ms\0\u{3}connector_id\0\u{1}tool\0\u{1}door\0\u{1}caller\0\u{1}decision\0\u{3}upstream_status\0\u{3}latency_ms\0\u{3}request_bytes\0\u{3}response_bytes\0\u{3}args_hash\0\u{1}outcome\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}at_ms\0\u{3}connector_id\0\u{1}tool\0\u{1}door\0\u{1}caller\0\u{1}decision\0\u{3}upstream_status\0\u{3}latency_ms\0\u{2}\u{4}outcome\0\u{b}request_bytes\0\u{b}response_bytes\0\u{b}args_hash\0\u{c}\u{9}\u{3}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -822,9 +807,6 @@ nonisolated extension Cocoonbox_Control_V1_ActivityEntry: SwiftProtobuf.Message,
       case 6: try { try decoder.decodeSingularStringField(value: &self.decision) }()
       case 7: try { try decoder.decodeSingularInt32Field(value: &self.upstreamStatus) }()
       case 8: try { try decoder.decodeSingularInt64Field(value: &self.latencyMs) }()
-      case 9: try { try decoder.decodeSingularInt64Field(value: &self.requestBytes) }()
-      case 10: try { try decoder.decodeSingularInt64Field(value: &self.responseBytes) }()
-      case 11: try { try decoder.decodeSingularStringField(value: &self.argsHash) }()
       case 12: try { try decoder.decodeSingularStringField(value: &self.outcome) }()
       default: break
       }
@@ -856,15 +838,6 @@ nonisolated extension Cocoonbox_Control_V1_ActivityEntry: SwiftProtobuf.Message,
     if self.latencyMs != 0 {
       try visitor.visitSingularInt64Field(value: self.latencyMs, fieldNumber: 8)
     }
-    if self.requestBytes != 0 {
-      try visitor.visitSingularInt64Field(value: self.requestBytes, fieldNumber: 9)
-    }
-    if self.responseBytes != 0 {
-      try visitor.visitSingularInt64Field(value: self.responseBytes, fieldNumber: 10)
-    }
-    if !self.argsHash.isEmpty {
-      try visitor.visitSingularStringField(value: self.argsHash, fieldNumber: 11)
-    }
     if !self.outcome.isEmpty {
       try visitor.visitSingularStringField(value: self.outcome, fieldNumber: 12)
     }
@@ -880,9 +853,6 @@ nonisolated extension Cocoonbox_Control_V1_ActivityEntry: SwiftProtobuf.Message,
     if lhs.decision != rhs.decision {return false}
     if lhs.upstreamStatus != rhs.upstreamStatus {return false}
     if lhs.latencyMs != rhs.latencyMs {return false}
-    if lhs.requestBytes != rhs.requestBytes {return false}
-    if lhs.responseBytes != rhs.responseBytes {return false}
-    if lhs.argsHash != rhs.argsHash {return false}
     if lhs.outcome != rhs.outcome {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

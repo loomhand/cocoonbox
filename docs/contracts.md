@@ -572,7 +572,7 @@ The api's broker (`api/connect`) holds the user's grants on external accounts an
 - `List{with_tools}`: the caller's connectors. `status` is `active` or `needs_reconnect`. `with_tools` lists each active connector's tools from its MCP server, with the user's `policy` (`POLICY_UNSPECIFIED` = the default). When the server refuses the list, `tools_error` carries its answer (status and at most 300 bytes of its body), such as a Workspace MCP server that does not admit the account.
 - `SetPolicy{connector_id, tool, policy}`: `tool` is the upstream name. The default is `allow` for a tool with `readOnlyHint`, `ask` for every other tool.
 - `Approve{approval_id, decision}`: `ONCE`, `ALWAYS` (also sets the tool to `allow`) or `DENY`. An unknown, answered, expired or other user's approval is `NOT_FOUND`.
-- `Activity{connector_id, limit}`: audit records, newest first, 50 by default and at most 500.
+- `Activity{connector_id}`: the 50 newest audit records, newest first.
 
 **Console flow** (replaces the loopback of design §16.2):
 1. The signed-in page calls `POST /cb/api/connect/{connector}/begin` (JSON, console session). For `custom` the body carries `name` (the connector id, `^[a-z][a-z0-9-]{0,23}$`, not a catalog id), `url` (https), and optionally `header` (default `Authorization`) and `key`.

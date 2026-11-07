@@ -359,7 +359,7 @@ func (s *store) audit(ctx context.Context, r *record) error {
 }
 
 func (s *store) activity(ctx context.Context, user, connector string, limit int) ([]*record, error) {
-	rows, err := s.pool.Query(ctx, `SELECT at, connector, tool, door, caller, decision, outcome, upstream_status, latency_ms, req_bytes, resp_bytes, args_sha256
+	rows, err := s.pool.Query(ctx, `SELECT at, connector, tool, door, caller, decision, outcome, upstream_status, latency_ms
 		FROM connect_audit WHERE user_id = $1 AND ($2 = '' OR connector = $2) ORDER BY at DESC, id DESC LIMIT $3`, user, connector, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read activity: %w", err)
@@ -367,7 +367,7 @@ func (s *store) activity(ctx context.Context, user, connector string, limit int)
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (*record, error) {
 		r := &record{user: user}
 		var ms int64
-		err := row.Scan(&r.at, &r.connector, &r.tool, &r.door, &r.caller, &r.decision, &r.outcome, &r.status, &ms, &r.reqBytes, &r.respBytes, &r.argsSHA256)
+		err := row.Scan(&r.at, &r.connector, &r.tool, &r.door, &r.caller, &r.decision, &r.outcome, &r.status, &ms)
 		r.latency = time.Duration(ms) * time.Millisecond
 		return r, err
 	})
