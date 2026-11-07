@@ -176,22 +176,6 @@ public nonisolated struct Cocoonbox_Agent_V1_ListAgentsResponse: Sendable {
   public init() {}
 }
 
-public nonisolated struct Cocoonbox_Agent_V1_Attachment: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var name: String = String()
-
-  public var mimeType: String = String()
-
-  public var data: Data = Data()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
 public nonisolated struct Cocoonbox_Agent_V1_SendRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -200,8 +184,6 @@ public nonisolated struct Cocoonbox_Agent_V1_SendRequest: Sendable {
   public var agentID: String = String()
 
   public var text: String = String()
-
-  public var attachments: [Cocoonbox_Agent_V1_Attachment] = []
 
   public var clientNonce: String = String()
 
@@ -781,49 +763,9 @@ nonisolated extension Cocoonbox_Agent_V1_ListAgentsResponse: SwiftProtobuf.Messa
   }
 }
 
-nonisolated extension Cocoonbox_Agent_V1_Attachment: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".Attachment"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{3}mime_type\0\u{1}data\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.mimeType) }()
-      case 3: try { try decoder.decodeSingularBytesField(value: &self.data) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.name.isEmpty {
-      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
-    }
-    if !self.mimeType.isEmpty {
-      try visitor.visitSingularStringField(value: self.mimeType, fieldNumber: 2)
-    }
-    if !self.data.isEmpty {
-      try visitor.visitSingularBytesField(value: self.data, fieldNumber: 3)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Cocoonbox_Agent_V1_Attachment, rhs: Cocoonbox_Agent_V1_Attachment) -> Bool {
-    if lhs.name != rhs.name {return false}
-    if lhs.mimeType != rhs.mimeType {return false}
-    if lhs.data != rhs.data {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
 nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".SendRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{1}text\0\u{1}attachments\0\u{3}client_nonce\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{1}text\0\u{4}\u{2}client_nonce\0\u{b}attachments\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -833,7 +775,6 @@ nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, Swi
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.agentID) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.text) }()
-      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.attachments) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.clientNonce) }()
       default: break
       }
@@ -847,9 +788,6 @@ nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, Swi
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 2)
     }
-    if !self.attachments.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.attachments, fieldNumber: 3)
-    }
     if !self.clientNonce.isEmpty {
       try visitor.visitSingularStringField(value: self.clientNonce, fieldNumber: 4)
     }
@@ -859,7 +797,6 @@ nonisolated extension Cocoonbox_Agent_V1_SendRequest: SwiftProtobuf.Message, Swi
   public static func ==(lhs: Cocoonbox_Agent_V1_SendRequest, rhs: Cocoonbox_Agent_V1_SendRequest) -> Bool {
     if lhs.agentID != rhs.agentID {return false}
     if lhs.text != rhs.text {return false}
-    if lhs.attachments != rhs.attachments {return false}
     if lhs.clientNonce != rhs.clientNonce {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

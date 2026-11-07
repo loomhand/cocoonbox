@@ -290,7 +290,7 @@ pub fn reads(name: &str, args: &Value) -> bool {
 pub fn writes(name: &str) -> bool {
     matches!(
         name,
-        "gui_plan" | "script_run" | "write_file" | "edit_file" | "shell" | "upload"
+        "gui_plan" | "script_run" | "write_file" | "edit_file" | "shell"
     )
 }
 

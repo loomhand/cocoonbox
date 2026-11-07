@@ -781,7 +781,6 @@ async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
         .send(edge.signed(pb::SendRequest {
             agent_id: agent.id.clone(),
             text,
-            attachments: Vec::new(),
             client_nonce: uuid::Uuid::new_v4().to_string(),
         })?)
         .await

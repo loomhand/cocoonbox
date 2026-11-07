@@ -221,13 +221,6 @@ impl Dispatcher {
         self.tools.run(owner, "browser_end", json!({})).await
     }
 
-    /// Writes `data` to `path` in the workspace and returns the absolute path.
-    pub async fn put_file(&self, owner: &str, path: &str, data: &[u8]) -> ToolOutput {
-        let mut args = json!({"path": path});
-        args["data_b64"] = B64.encode(data).into();
-        self.tools.run(owner, "upload", args).await
-    }
-
     fn announce(&self, agent_id: &str, args: &Value) {
         let coord = |k: &str| match args[k].as_f64() {
             Some(v) if !self.scaled => v.round() as i32,

@@ -680,7 +680,6 @@ mod tests {
             agent_id: agent.id.clone(),
             text: "hello".into(),
             client_nonce: "cancelled-send".into(),
-            attachments: Vec::new(),
         };
         let connection = rusqlite::Connection::open(dir.path().join("agent.db")).unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();

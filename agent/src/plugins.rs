@@ -185,7 +185,6 @@ mod tests {
             "gui_flows",
             "run_screenshot",
             "shell_close",
-            "upload",
             "browser_end",
             "browser_close",
             "browser_start",

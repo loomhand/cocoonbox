@@ -478,7 +478,6 @@ async fn send(
             agent_id: agent_id.into(),
             text: text.into(),
             client_nonce: nonce.into(),
-            ..Default::default()
         }))
         .await
         .unwrap()

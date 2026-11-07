@@ -190,28 +190,10 @@ impl Runtime {
     /// Queues a user turn and returns its id; duplicate nonces return the first turn.
     pub async fn send(self: &Arc<Self>, req: pb::SendRequest) -> Result<String, Status> {
         let title = title(&req.text);
-        let mut text = req.text;
-        for a in req.attachments {
-            let path = format!("uploads/{}", sanitize(&a.name));
-            let out = self
-                .dispatcher
-                .put_file(&req.agent_id, &path, &a.data)
-                .await;
-            if out.is_error {
-                return Err(Status::internal(out.text));
-            }
-            let _ = write!(
-                text,
-                "\n[attached file: {} ({}, {} bytes)]",
-                out.text,
-                a.mime_type,
-                a.data.len()
-            );
-        }
         let queued = self
             .journal
             .store
-            .queue_turn(req.agent_id.clone(), text, req.client_nonce)
+            .queue_turn(req.agent_id.clone(), req.text, req.client_nonce)
             .await
             .map_err(Status::internal)?
             .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))?;
@@ -1301,25 +1283,6 @@ fn title(text: &str) -> Option<String> {
     (!cut.is_empty()).then(|| cut.to_owned())
 }
 
-fn sanitize(name: &str) -> String {
-    let base = name.rsplit('/').next().unwrap_or(name);
-    let clean: String = base
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || "._-".contains(c) {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if clean.is_empty() || clean.starts_with('.') {
-        format!("file{clean}")
-    } else {
-        clean
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1474,12 +1437,5 @@ mod tests {
         ] {
             assert_eq!(ending(reply), Ending::Answer, "{reply}");
         }
-    }
-
-    #[test]
-    fn sanitize_strips_paths_and_hidden_names() {
-        assert_eq!(sanitize("../../etc/passwd"), "passwd");
-        assert_eq!(sanitize(".bashrc"), "file.bashrc");
-        assert_eq!(sanitize("a b.png"), "a_b.png");
     }
 }

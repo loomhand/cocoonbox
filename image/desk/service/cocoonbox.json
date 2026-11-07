@@ -40,6 +40,5 @@
   {"name": "state_swap", "description": "The box toolhost's state_swap call.", "input_schema": {"type": "object"}, "mcp": false},
   {"name": "state_walk", "description": "The box toolhost's state_walk call.", "input_schema": {"type": "object"}, "mcp": false},
   {"name": "state_write", "description": "The box toolhost's state_write call.", "input_schema": {"type": "object"}, "mcp": false},
-  {"name": "upload", "description": "The box toolhost's upload call.", "input_schema": {"type": "object"}, "mcp": false},
   {"name": "write_file", "description": "The box toolhost's write_file call.", "input_schema": {"type": "object"}, "mcp": false}
 ]}

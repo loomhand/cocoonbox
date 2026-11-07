@@ -22,8 +22,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 #[cfg(windows)]
@@ -152,7 +150,6 @@ impl Host {
             "list_dir" => files::list(&self.workspace, self.hidden.as_deref(), call.args)
                 .await
                 .map(Output::text),
-            "upload" => self.upload(call.args).await.map(Output::text),
             "state_apply" => state::apply(call.args).await.map(Output::text),
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "state_place" => state::place(call.args).await.map(Output::text),
@@ -298,18 +295,6 @@ impl Host {
                 String::from_utf8_lossy(&out.stderr).trim()
             ))
         }
-    }
-
-    async fn upload(&self, args: Value) -> Result<String, String> {
-        let path = files::resolve(
-            &self.workspace,
-            args["path"].as_str().ok_or("upload needs path")?,
-        );
-        let data = B64
-            .decode(args["data_b64"].as_str().unwrap_or_default())
-            .map_err(|e| format!("decode upload: {e}"))?;
-        files::write_bytes(&path, &data).await?;
-        Ok(path.display().to_string())
     }
 }
 
