@@ -204,7 +204,7 @@ func TestDeleteSavesThenRemovesEveryMachineOfTheBox(t *testing.T) {
 	if env.agent.plans() != plans+1 || env.agent.lastPlan().GetConsistency().String() != "CONSISTENCY_QUIESCED" {
 		t.Errorf("delete planned %d saves, last %v, want one quiesced", env.agent.plans()-plans, env.agent.lastPlan())
 	}
-	if got := env.fake.deletedIDs(); !strings.Contains(got, aliceBox) || !strings.Contains(got, aliceBox+"-rold") || strings.Contains(got, "cb-000000000000") {
+	if got := strings.Split(env.fake.deletedIDs(), ","); !slices.Contains(got, aliceBox) || !slices.Contains(got, aliceBox+"-rold") || slices.Contains(got, "cb-000000000000") {
 		t.Errorf("deleted machines %q, want both of the box and no other", got)
 	}
 	if !env.store.has(alice + "/boxes/" + aliceBox + "/head.json") {
