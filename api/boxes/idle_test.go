@@ -23,12 +23,12 @@ const (
 func TestAnIdleUserBoxIsSavedLiveThenHibernated(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(userIdleAfter - time.Second)
+	clock.advance(userIdleAfter - time.Second)
 	env.svc.hibernateIdle(t.Context())
 	if got := env.fake.state(aliceBox); got != machines.StateRunning {
 		t.Fatalf("state = %v under the threshold", got)
 	}
-	*clock = clock.Add(time.Second)
+	clock.advance(time.Second)
 	env.svc.hibernateIdle(t.Context())
 	waitState(t, env.fake, aliceBox, machines.StateHibernating)
 	if req := env.agent.lastPlan(); req.GetConsistency() != agentv1.Consistency_CONSISTENCY_LIVE {
@@ -40,7 +40,7 @@ func TestAnIdleBoxOnAFullNodeHibernatesAfterTheSqueezedThreshold(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.idle.squeezed = squeezedAfter
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(squeezedAfter)
+	clock.advance(squeezedAfter)
 	env.svc.hibernateIdle(t.Context())
 	if got := env.fake.state(aliceBox); got != machines.StateRunning {
 		t.Fatalf("state = %v on a node with room, want it up until the user threshold", got)
@@ -53,17 +53,17 @@ func TestAnIdleBoxOnAFullNodeHibernatesAfterTheSqueezedThreshold(t *testing.T) {
 func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	tests := []struct {
 		name  string
-		setup func(env *stateEnv, activity *fakeActivity, clock *time.Time)
+		setup func(env *stateEnv, activity *fakeActivity, clock *clockSigner)
 	}{
-		{"an agent turn or offloaded session works", func(_ *stateEnv, a *fakeActivity, _ *time.Time) { a.busy = true }},
-		{"its agent cannot answer", func(_ *stateEnv, a *fakeActivity, _ *time.Time) { a.err = errors.New("unavailable") }},
-		{"a client call is open", func(e *stateEnv, _ *fakeActivity, _ *time.Time) { e.svc.Reached(aliceBox) }},
-		{"its scheduled wake is on", func(e *stateEnv, _ *fakeActivity, clock *time.Time) {
-			store := &fakeWakeStore{schedules: map[string]users.WakeSchedule{aliceBox: {Owner: alice, Box: aliceBox, SleepAt: clock.Add(3 * userIdleAfter)}}}
+		{"an agent turn or offloaded session works", func(_ *stateEnv, a *fakeActivity, _ *clockSigner) { a.busy = true }},
+		{"its agent cannot answer", func(_ *stateEnv, a *fakeActivity, _ *clockSigner) { a.err = errors.New("unavailable") }},
+		{"a client call is open", func(e *stateEnv, _ *fakeActivity, _ *clockSigner) { e.svc.Reached(aliceBox) }},
+		{"its scheduled wake is on", func(e *stateEnv, _ *fakeActivity, clock *clockSigner) {
+			store := &fakeWakeStore{schedules: map[string]users.WakeSchedule{aliceBox: {Owner: alice, Box: aliceBox, SleepAt: clock.read().Add(3 * userIdleAfter)}}}
 			e.svc.EnableWake(store, testWakeLimits)
 		}},
-		{"user boxes never idle out", func(e *stateEnv, _ *fakeActivity, _ *time.Time) { e.svc.idle.user = 0 }},
-		{"user boxes never idle out, even on a full node", func(e *stateEnv, _ *fakeActivity, _ *time.Time) {
+		{"user boxes never idle out", func(e *stateEnv, _ *fakeActivity, _ *clockSigner) { e.svc.idle.user = 0 }},
+		{"user boxes never idle out, even on a full node", func(e *stateEnv, _ *fakeActivity, _ *clockSigner) {
 			e.svc.idle.user, e.svc.idle.squeezed = 0, squeezedAfter
 			e.fake.squeeze()
 		}},
@@ -73,7 +73,7 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 			env, clock := newUserIdleEnv(t)
 			env.svc.hibernateIdle(t.Context())
 			tt.setup(env, env.svc.activity.(*fakeActivity), clock)
-			*clock = clock.Add(2 * userIdleAfter)
+			clock.advance(2 * userIdleAfter)
 			env.svc.hibernateIdle(t.Context())
 			if got := env.fake.state(aliceBox); got != machines.StateRunning || env.svc.ops.activeFor(aliceBox) != nil {
 				t.Errorf("state = %v with operation %v, want it running with none", got, env.svc.ops.activeFor(aliceBox))
@@ -90,7 +90,7 @@ func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
 	env.svc.activity.(*fakeActivity).hang = hung
 	env.svc.idle.probe = 50 * time.Millisecond
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(userIdleAfter)
+	clock.advance(userIdleAfter)
 	env.svc.hibernateIdle(t.Context())
 	waitState(t, env.fake, next, machines.StateHibernating)
 	if got := env.fake.state(hung); got != machines.StateRunning || env.svc.ops.activeFor(hung) != nil {
@@ -101,7 +101,7 @@ func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
 func TestAClientComingBackDuringTheSaveKeepsTheBoxUp(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(userIdleAfter)
+	clock.advance(userIdleAfter)
 	env.agent.onUpload = func(machines.Endpoint) { env.svc.Reached(aliceBox)() }
 	env.svc.hibernateIdle(t.Context())
 	op := newestOperation(env.svc, aliceBox)
@@ -119,7 +119,7 @@ func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
 	env.svc.state.retryDelay = time.Millisecond
 	env.store.failNext(statePath{user: alice, box: aliceBox}.head(), 10)
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(userIdleAfter)
+	clock.advance(userIdleAfter)
 	env.svc.hibernateIdle(t.Context())
 	op := newestOperation(env.svc, aliceBox)
 	if op == nil {
@@ -135,7 +135,7 @@ func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
 func TestAnIdleHibernatedUserBoxWakesOnEnsure(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
-	*clock = clock.Add(userIdleAfter)
+	clock.advance(userIdleAfter)
 	env.svc.hibernateIdle(t.Context())
 	waitState(t, env.fake, aliceBox, machines.StateHibernating)
 	env.fake.setState(aliceBox, machines.StateHibernated)
@@ -147,15 +147,15 @@ func TestAnIdleHibernatedUserBoxWakesOnEnsure(t *testing.T) {
 	}
 }
 
-func newUserIdleEnv(t *testing.T) (*stateEnv, *time.Time) {
+func newUserIdleEnv(t *testing.T) (*stateEnv, *clockSigner) {
 	t.Helper()
 	env := newStateEnv(t)
 	env.svc.EnableIdle(0, userIdleAfter, 0)
 	env.svc.EnableActivity(&fakeActivity{})
-	clock := time.Unix(1_000_000, 0)
-	env.svc.idle.now = func() time.Time { return clock }
+	clock := &clockSigner{now: time.Unix(1_000_000, 0)}
+	env.svc.idle.now = clock.read
 	env.ctx = auth.WithUser(t.Context(), alice)
-	return env, &clock
+	return env, clock
 }
 
 // newestOperation returns the last operation begun on box, finished or not, since a fast one ends before a test looks.

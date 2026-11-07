@@ -460,7 +460,7 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	a.svc.hibernateIdle(t.Context())
 	done := b.svc.Reached(aliceBox)
 	defer done()
-	*clock = clock.Add(userIdleAfter)
+	clock.advance(userIdleAfter)
 	b.svc.reaches.flush(t.Context(), b.svc.openBoxes())
 	a.svc.hibernateIdle(t.Context())
 	if op := newestOperation(a.svc, aliceBox); op != nil || a.fake.state(aliceBox) != machines.StateRunning {
