@@ -72,7 +72,7 @@ func (s *Service) provisionStale(ctx context.Context) {
 		logger.Error(ctx, err, "list machines")
 		return
 	}
-	keyed := s.revokeEndedKeys(ctx, ms, keys)
+	keyed, ended := endedKeys(ms, keys)
 	current := serving(ms)
 	var g errgroup.Group
 	g.SetLimit(provisionFanout)
@@ -97,6 +97,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 	_ = g.Wait()
 	if s.vault != nil {
 		s.reconcileVault(ctx, ms)
+	}
+	for _, k := range ended {
+		s.revokeMachineKey(ctx, k.Machine, k.ID)
 	}
 }
 
@@ -273,28 +276,6 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	return identity.WakeID, nil
 }
 
-// revokeEndedKeys revokes the gw keys of incarnations that no longer run and the keys of a running one older than its newest installed key, and returns the running machines whose newest key is installed.
-func (s *Service) revokeEndedKeys(ctx context.Context, ms []machines.Machine, keys []users.MachineKey) map[string]bool {
-	running := map[string]string{}
-	for _, m := range ms {
-		if m.State == machines.StateRunning {
-			running[m.ID] = m.Incarnation
-		}
-	}
-	keyed, pruned := map[string]bool{}, map[string]bool{}
-	for _, k := range keys {
-		if inc, ok := running[k.Machine]; !ok || inc != k.Incarnation || pruned[k.Machine] {
-			s.revokeMachineKey(ctx, k.Machine, k.ID)
-			continue
-		}
-		if _, seen := keyed[k.Machine]; !seen {
-			keyed[k.Machine] = k.Installed
-		}
-		pruned[k.Machine] = k.Installed
-	}
-	return keyed
-}
-
 // revokeMachineKeys revokes every gw key of machine; a failure is logged, and the provisioner retries.
 func (s *Service) revokeMachineKeys(ctx context.Context, machine string) {
 	keys, err := s.accounts.MachineKeys(ctx, machine)
@@ -341,4 +322,27 @@ func wakeOf(m machines.Machine) string {
 		return ""
 	}
 	return wake
+}
+
+// endedKeys returns the running machines whose newest key is installed, and the gw keys of incarnations that no longer run and of a running one older than its newest installed key.
+func endedKeys(ms []machines.Machine, keys []users.MachineKey) (map[string]bool, []users.MachineKey) {
+	running := map[string]string{}
+	for _, m := range ms {
+		if m.State == machines.StateRunning {
+			running[m.ID] = m.Incarnation
+		}
+	}
+	keyed, pruned := map[string]bool{}, map[string]bool{}
+	var ended []users.MachineKey
+	for _, k := range keys {
+		if inc, ok := running[k.Machine]; !ok || inc != k.Incarnation || pruned[k.Machine] {
+			ended = append(ended, k)
+			continue
+		}
+		if _, seen := keyed[k.Machine]; !seen {
+			keyed[k.Machine] = k.Installed
+		}
+		pruned[k.Machine] = k.Installed
+	}
+	return keyed, ended
 }

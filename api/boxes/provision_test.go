@@ -353,14 +353,14 @@ func TestProvisioningLeavesAMachineThatStoppedRunning(t *testing.T) {
 	}
 }
 
-func TestTheProvisionerRevokesTheKeysOfEndedIncarnationsAndKeysARunningOneAgain(t *testing.T) {
+func TestTheProvisionerKeysARunningMachineAgainBeforeItRevokesTheKeysOfEndedIncarnations(t *testing.T) {
 	accounts := &fakeAccounts{keys: []users.MachineKey{{ID: "ak-old", Machine: aliceBox, Incarnation: "i1"}, {ID: "ak-asleep", Machine: aliceBox + "-2", Incarnation: "j1"}}}
 	fake, svc := newProvisionEnv(accounts,
 		machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "i2", Meta: map[string]string{metaWake: "i2|w2"}},
 		machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated, Incarnation: "j1", Meta: map[string]string{metaWake: "j1|w1"}})
 
 	svc.provisionStale(t.Context())
-	if want := "revoke ak-old;revoke ak-asleep;key " + aliceBox + " i2"; accounts.calls() != want {
+	if want := "key " + aliceBox + " i2;revoke ak-old;revoke ak-asleep"; accounts.calls() != want {
 		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
 	}
 	if execs := fake.execCalls(); len(execs) != 0 {
