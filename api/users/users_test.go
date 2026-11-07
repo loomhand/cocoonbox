@@ -19,6 +19,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
@@ -67,33 +68,29 @@ func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
 	}
 }
 
-func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
+func TestCreateIssuesTheTenantTokenAndSealsIt(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
 	if !strings.HasPrefix(u.ID, "u-") || u.MaxBoxes != 1 || u.MaxBoxesCap != 1 || u.HasToken || u.Admin {
 		t.Errorf("user = %+v", u)
 	}
-	key, err := svc.GWKey(u.ID)
-	if err != nil || key != gw.Keys[u.ID] {
-		t.Errorf("GWKey = %q, %v, want the key gw issued for owner %s", key, err, u.ID)
-	}
 	token, err := svc.Tenant(u.ID)
 	if err != nil || token == "" || tenants.Tokens[u.ID] != token || tenants.Max[u.ID] != 2 {
 		t.Errorf("Tenant = %q, %v; sandboxd holds %v %v", token, err, tenants.Tokens, tenants.Max)
 	}
-	var sealedKey, sealedToken []byte
-	if err := userstest.Query(t, dsn, "SELECT gw_key_sealed, tenant_token_sealed FROM users WHERE id = $1", u.ID).Scan(&sealedKey, &sealedToken); err != nil {
+	var sealedToken []byte
+	if err := userstest.Query(t, dsn, "SELECT tenant_token_sealed FROM users WHERE id = $1", u.ID).Scan(&sealedToken); err != nil {
 		t.Fatalf("read row: %v", err)
 	}
-	if strings.Contains(string(sealedKey), key) || strings.Contains(string(sealedToken), token) {
+	if strings.Contains(string(sealedToken), token) {
 		t.Error("the database holds a backing key in the clear")
 	}
 	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password}); !errors.Is(err, ErrExists) {
 		t.Errorf("Create of a taken name: %v, want ErrExists", err)
 	}
 	reopened := openTestService(t, dsn, gw, tenants)
-	if again, err := reopened.GWKey(u.ID); err != nil || again != key {
-		t.Errorf("GWKey after reopen = %q, %v", again, err)
+	if again, err := reopened.Tenant(u.ID); err != nil || again != token {
+		t.Errorf("Tenant after reopen = %q, %v", again, err)
 	}
 	reopened.tenantClaims = false
 	if token, err := reopened.Tenant(u.ID); err != nil || token != "" {
@@ -104,11 +101,11 @@ func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
 func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
 	svc, gw, tenants, _ := newTestService(t)
 	tenants.Err = errors.New("sandboxd 503")
-	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1"}); err == nil {
+	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1", DailyCapMicros: new(int64(5))}); err == nil {
 		t.Fatal("Create succeeded with sandboxd down")
 	}
-	if len(gw.Keys) != 0 || len(svc.List()) != 0 {
-		t.Errorf("after a failed Create: gw keys %v, users %v", gw.Keys, svc.List())
+	if len(gw.Caps) != 0 || len(svc.List()) != 0 {
+		t.Errorf("after a failed Create: gw caps %v, users %v", gw.Caps, svc.List())
 	}
 	for _, nu := range []NewUser{{Name: "Q"}, {Name: "qa1", Password: "short"}, {Name: "qa1", ID: "bad/id"}} {
 		if _, err := svc.Create(t.Context(), nu); !errors.Is(err, ErrInvalid) {
@@ -118,15 +115,15 @@ func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
 }
 
 func TestEnsureCreatesAnOutsideUserUnderItsOwnIDOnce(t *testing.T) {
-	svc, gw, tenants, _ := newTestService(t)
+	svc, _, tenants, _ := newTestService(t)
 	const id = outsideID
 	u, err := svc.Ensure(t.Context(), "firebase", id)
 	if err != nil || u.ID != id || u.Name != id || u.IDP != "firebase" || u.Admin {
 		t.Fatalf("Ensure = %+v, %v", u, err)
 	}
-	key := gw.Keys[u.ID]
-	if again, err := svc.Ensure(t.Context(), "firebase", id); err != nil || again.ID != u.ID || gw.Keys[u.ID] != key {
-		t.Errorf("a second Ensure = %+v, %v; gw key %q, want %q kept", again, err, gw.Keys[u.ID], key)
+	token := tenants.Tokens[u.ID]
+	if again, err := svc.Ensure(t.Context(), "firebase", id); err != nil || again.ID != u.ID || tenants.Tokens[u.ID] != token {
+		t.Errorf("a second Ensure = %+v, %v; tenant token %q, want %q kept", again, err, tenants.Tokens[u.ID], token)
 	}
 	if boxes := svc.Boxes(u.ID); len(boxes) != 1 || len(tenants.Max) != 1 {
 		t.Errorf("boxes %+v, tenants %v, want one of each", boxes, tenants.Max)
@@ -163,8 +160,8 @@ func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 
 func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	dsn := clustertest.EmptyDSN(t)
-	gw := &gatedGW{GW: userstest.NewGW(), open: make(chan struct{})}
-	svc := openTestService(t, dsn, gw, userstest.NewTenants())
+	gate := &gatedTenants{Tenants: userstest.NewTenants(), open: make(chan struct{})}
+	svc := openTestService(t, dsn, userstest.NewGW(), gate)
 	var wg sync.WaitGroup
 	for i := range 16 {
 		wg.Go(func() {
@@ -173,12 +170,12 @@ func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 			}
 		})
 	}
-	clustertest.WaitFor(t, "the first creates start", func() bool { return gw.active.Load() >= ensureLimit })
+	clustertest.WaitFor(t, "the first creates start", func() bool { return gate.active.Load() >= ensureLimit })
 	time.Sleep(200 * time.Millisecond)
-	if most := gw.most.Load(); most != ensureLimit {
+	if most := gate.most.Load(); most != ensureLimit {
 		t.Errorf("%d creates ran at once, want %d", most, ensureLimit)
 	}
-	close(gw.open)
+	close(gate.open)
 	wg.Wait()
 }
 
@@ -201,9 +198,6 @@ func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 	token, err := svc.Tenant(id)
 	if err != nil || tenants.Tokens[id] != token {
 		t.Errorf("sandboxd holds tenant %q, the row %q, %v", tenants.Tokens[id], token, err)
-	}
-	if key, err := svc.GWKey(id); err != nil || gw.Keys[id] != key {
-		t.Errorf("gw holds key %q, the row %q, %v", gw.Keys[id], key, err)
 	}
 }
 
@@ -490,8 +484,8 @@ func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
 	if err := svc.Delete(t.Context(), u.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, ok := gw.Keys[u.ID]; ok {
-		t.Error("gw key kept")
+	if !gw.Revoked[u.ID] {
+		t.Error("gw keys kept")
 	}
 	if _, ok := tenants.Max[u.ID]; ok {
 		t.Error("tenant kept")
@@ -512,15 +506,15 @@ func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	a := mustCreate(t, svc, NewUser{Name: "alice"})
 	b := mustCreate(t, svc, NewUser{Name: "bob"})
-	if err := userstest.Exec(t, dsn, "UPDATE users SET gw_key_sealed = (SELECT gw_key_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
-		t.Fatalf("copy sealed key: %v", err)
+	if err := userstest.Exec(t, dsn, "UPDATE users SET tenant_token_sealed = (SELECT tenant_token_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
+		t.Fatalf("copy sealed token: %v", err)
 	}
 	reopened := openTestService(t, dsn, gw, tenants)
-	if _, err := reopened.GWKey(b.ID); err == nil {
-		t.Error("alice's sealed gw key opened as bob's")
+	if _, err := reopened.Tenant(b.ID); err == nil {
+		t.Error("alice's sealed tenant token opened as bob's")
 	}
-	if _, err := reopened.Tenant(b.ID); err != nil {
-		t.Errorf("bob's own tenant token: %v", err)
+	if _, err := reopened.StateKey(t.Context(), b.ID); err != nil {
+		t.Errorf("bob's own state key: %v", err)
 	}
 }
 
@@ -650,19 +644,19 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	}
 }
 
-type gatedGW struct {
-	*userstest.GW
+type gatedTenants struct {
+	*userstest.Tenants
 	open         chan struct{}
 	active, most atomic.Int32
 }
 
-func (g *gatedGW) Add(ctx context.Context, owner string) (string, string, error) {
+func (g *gatedTenants) PutTenant(ctx context.Context, name, token string, maxClaims int) error {
 	n := g.active.Add(1)
 	defer g.active.Add(-1)
 	for m := g.most.Load(); n > m && !g.most.CompareAndSwap(m, n); m = g.most.Load() {
 	}
 	<-g.open
-	return g.GW.Add(ctx, owner)
+	return g.Tenants.PutTenant(ctx, name, token, maxClaims)
 }
 
 type queryCounter struct {
@@ -683,7 +677,7 @@ func newTestService(t *testing.T) (*Service, *userstest.GW, *userstest.Tenants, 
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
 }
 
-func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *userstest.Tenants) *Service {
+func openTestService(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenants) *Service {
 	t.Helper()
 	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
 	if err != nil {

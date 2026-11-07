@@ -31,37 +31,20 @@ var (
 	idFormat  = regexp.MustCompile(`^sha256:[0-9a-f]{32}$`)
 )
 
-func TestAddCreatesAGeneratedKey(t *testing.T) {
+func TestAddMachineCreatesAGeneratedKey(t *testing.T) {
 	gw, c := newFakeGW(t)
-	key, id, err := c.Add(t.Context(), owner)
+	key, id, err := c.AddMachine(t.Context(), owner, true)
 	if err != nil || !keyFormat.MatchString(key) || id != akID(key) {
-		t.Fatalf("Add = %q, %q, %v", key, id, err)
+		t.Fatalf("AddMachine = %q, %q, %v", key, id, err)
 	}
 	got := gw.key(akID(key))
 	want := map[string]any{"ak_id": akID(key), "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": owner, "qps": 40.0, "daily_token_quota": 5e6, "tokens_per_minute": 2.4e6}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("created %v, want %v", got, want)
 	}
-	second, _, err := c.Add(t.Context(), other)
+	second, _, err := c.AddMachine(t.Context(), other, true)
 	if err != nil || second == key || gw.key(akID(key)) == nil {
-		t.Errorf("Add for another owner = %v, want a different key and the first kept", err)
-	}
-}
-
-func TestAddReplacesTheOwnersKeys(t *testing.T) {
-	gw, c := newFakeGW(t)
-	gw.put("gw-k1", owner)
-	gw.put("gw-k2", owner)
-	key, _, err := c.Add(t.Context(), owner)
-	if err != nil || key == "gw-k1" || key == "gw-k2" {
-		t.Fatalf("Add = %q, %v, want a fresh key", key, err)
-	}
-	again, _, err := c.Add(t.Context(), owner)
-	if err != nil || again == key {
-		t.Fatalf("second Add = %q, %v, want a fresh key", again, err)
-	}
-	if ids := gw.idsOf(owner); !slices.Equal(ids, []string{akID(again)}) {
-		t.Errorf("keys of %s = %v, want only the last one", owner, ids)
+		t.Errorf("AddMachine for another owner = %v, want a different key and the first kept", err)
 	}
 }
 
@@ -126,17 +109,12 @@ func TestListFiltersByOwner(t *testing.T) {
 func TestErrorsNeverCarryTheKey(t *testing.T) {
 	gw, c := newFakeGW(t)
 	gw.cut = true
-	if key, _, err := c.Add(t.Context(), owner); err == nil || key != "" || strings.Contains(err.Error(), gw.last) {
-		t.Errorf("Add with the POST response cut = %q, %v", key, err)
-	}
-	gw.cut = false
-	key, _, err := c.Add(t.Context(), owner)
-	if err != nil || !slices.Equal(gw.idsOf(owner), []string{akID(key)}) {
-		t.Errorf("retried Add = %v, keys %v, want the orphan revoked", err, gw.idsOf(owner))
+	if key, _, err := c.AddMachine(t.Context(), owner, true); err == nil || key != "" || strings.Contains(err.Error(), gw.last) {
+		t.Errorf("AddMachine with the POST response cut = %q, %v", key, err)
 	}
 	bad, _ := New(gw.srv.URL, "wrong")
-	if _, _, err := bad.Add(t.Context(), owner); err == nil || !strings.Contains(err.Error(), "401") {
-		t.Errorf("Add with a wrong token: %v", err)
+	if _, _, err := bad.AddMachine(t.Context(), owner, true); err == nil || !strings.Contains(err.Error(), "401") {
+		t.Errorf("AddMachine with a wrong token: %v", err)
 	}
 }
 

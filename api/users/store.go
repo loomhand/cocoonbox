@@ -25,7 +25,7 @@ const (
 	uniqueViolation = "23505"
 
 	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), max_agent_boxes, created_at,
-		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed, image, delta, no_park, no_gc`
+		coalesce(token_sha256, ''), tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed, image, delta, no_park, no_gc`
 )
 
 //go:embed migrations/*.sql
@@ -88,7 +88,7 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
 		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
-			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.NoPark, &r.Policy.NoGC)
+			&r.tokenSHA256, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.NoPark, &r.Policy.NoGC)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
 	})
@@ -96,9 +96,9 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 
 func (s *store) insert(ctx context.Context, r record, passwordHash string, first Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO users (id, name, idp, admin, max_boxes, max_boxes_cap, max_agent_boxes, password_hash, gw_ak_id, gw_key_sealed,
-			tenant_token_sealed, state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11, $12, $13)`,
-			r.ID, r.Name, r.IDP, r.Admin, r.MaxBoxes, r.MaxBoxesCap, r.MaxAgentBoxes, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO users (id, name, idp, admin, max_boxes, max_boxes_cap, max_agent_boxes, password_hash,
+			tenant_token_sealed, state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11)`,
+			r.ID, r.Name, r.IDP, r.Admin, r.MaxBoxes, r.MaxBoxesCap, r.MaxAgentBoxes, passwordHash, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt)

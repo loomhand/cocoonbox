@@ -1,4 +1,4 @@
-// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api, their boxes and the boxes' shares.
+// Package users keeps cocoonbox users in PostgreSQL, each with one sandboxd tenant and one state key that never leave the api, their boxes and the boxes' shares.
 package users
 
 import (
@@ -40,7 +40,6 @@ const (
 	listenRetry       = 2 * time.Second
 	endedGrace        = 10 * time.Minute
 
-	columnGWKey    = "gw_key"
 	columnTenant   = "tenant_token"
 	columnStateKey = "state_key"
 
@@ -127,7 +126,6 @@ type Settings struct {
 
 // GWKeys issues, revokes and meters each user's gw keys and keeps the user's own daily cap, found by owner = user id.
 type GWKeys interface {
-	Add(ctx context.Context, owner string) (string, string, error)
 	AddMachine(ctx context.Context, owner string, enabled bool) (string, string, error)
 	Delete(ctx context.Context, id string) error
 	Revoke(ctx context.Context, owner string) error
@@ -155,8 +153,6 @@ type record struct {
 	User
 	tokenSHA256 string
 	devices     []deviceToken
-	gwAKID      string
-	gwKey       []byte
 	tenantToken []byte
 	stateKeyID  string
 	stateKey    []byte
@@ -478,7 +474,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// Update applies set to user id; the tenant's cap follows MaxBoxes, and a disabled user's gw key and open streams stop.
+// Update applies set to user id; the tenant's cap follows MaxBoxes, and a disabled user's gw keys and open streams stop.
 func (s *Service) Update(ctx context.Context, id string, set Settings) (User, error) {
 	r, err := s.record(id)
 	if err != nil {
@@ -737,15 +733,6 @@ func (s *Service) Tenant(id string) (string, error) {
 	return s.seal.open(r.tenantToken, userData(id, columnTenant))
 }
 
-// GWKey returns user id's gw key.
-func (s *Service) GWKey(id string) (string, error) {
-	r, err := s.record(id)
-	if err != nil {
-		return "", err
-	}
-	return s.seal.open(r.gwKey, userData(id, columnGWKey))
-}
-
 // StateKey returns user id's state key.
 func (s *Service) StateKey(_ context.Context, id string) (keyring.Key, error) {
 	r, err := s.record(id)
@@ -841,7 +828,7 @@ func (s *Service) OnBoxes(fn func(owner string)) {
 
 // createOnce creates outside user id under its lock unless another api created it meanwhile.
 func (s *Service) createOnce(ctx context.Context, idp, id string) (User, error) {
-	// a create that loses a race rolls back the tenant and gw key the winner holds, so creates of one id take turns
+	// a create that loses a race rolls back the tenant and daily cap the winner holds, so creates of one id take turns
 	unlock, err := s.store.lockUser(ctx, id)
 	if err != nil {
 		return User{}, err
@@ -872,10 +859,6 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 	}
 	tenantToken := utils.RandomHex(secretBytes)
 	stateKey := keyring.Generate(id)
-	key, akID, err := s.gw.Add(ctx, id)
-	if err != nil {
-		return User{}, fmt.Errorf("issue gw key: %w", err)
-	}
 	r := record{
 		ID:            id,
 		Name:          nu.Name,
@@ -885,15 +868,13 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 		MaxBoxesCap:   defaultBoxes,
 		MaxAgentBoxes: nu.MaxAgentBoxes,
 		CreatedAt:     time.Now(),
-		gwAKID:        akID,
-		gwKey:         s.seal.seal(key, userData(id, columnGWKey)),
 		tenantToken:   s.seal.seal(tenantToken, userData(id, columnTenant)),
 		stateKeyID:    stateKey.ID,
 		stateKey:      s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
 	}
 	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
 	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
-		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
+		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil))
 	}
 	s.published(ctx, "created user "+r.Name)
 	if err := s.Load(ctx); err != nil {

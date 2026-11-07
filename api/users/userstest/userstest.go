@@ -21,7 +21,7 @@ import (
 
 type GW struct {
 	mu       sync.Mutex
-	Keys     map[string]string
+	Revoked  map[string]bool
 	Caps     map[string]int64
 	Disabled map[string]bool
 	Machines map[string]bool
@@ -29,20 +29,13 @@ type GW struct {
 }
 
 func NewGW() *GW {
-	return &GW{Keys: map[string]string{}, Caps: map[string]int64{}, Disabled: map[string]bool{}, Machines: map[string]bool{}}
-}
-
-func (g *GW) Add(_ context.Context, owner string) (string, string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.Keys[owner] = "gw-" + utils.RandomHex(8)
-	return g.Keys[owner], "sha256:" + owner, nil
+	return &GW{Revoked: map[string]bool{}, Caps: map[string]int64{}, Disabled: map[string]bool{}, Machines: map[string]bool{}}
 }
 
 func (g *GW) Revoke(_ context.Context, owner string) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.Keys, owner)
+	g.Revoked[owner] = true
 	return nil
 }
 

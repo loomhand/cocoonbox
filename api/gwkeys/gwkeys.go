@@ -1,4 +1,4 @@
-// Package gwkeys issues and revokes gw keys, one per owner and one per machine incarnation, and reads their usage and sets their owners' budgets through gw's admin API.
+// Package gwkeys issues and revokes gw keys, one per machine incarnation, and reads their usage and sets their owners' budgets through gw's admin API.
 package gwkeys
 
 import (
@@ -61,14 +61,6 @@ func New(base, token string) (*Client, error) {
 		return nil, fmt.Errorf("gw admin url %q must be http(s)://host[:port]", base)
 	}
 	return &Client{base: u, token: token, http: &http.Client{Timeout: requestTimeout}}, nil
-}
-
-// Add replaces owner's gw keys with one that gw generates and returns it with its ak_id.
-func (c *Client) Add(ctx context.Context, owner string) (string, string, error) {
-	if err := c.Revoke(ctx, owner); err != nil {
-		return "", "", err
-	}
-	return c.AddMachine(ctx, owner, true)
 }
 
 // AddMachine adds a gw key of owner for one machine, expired unless enabled, and returns it with its ak_id.

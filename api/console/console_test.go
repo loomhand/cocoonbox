@@ -128,10 +128,8 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if env.boxes.listedFor != created.ID {
 		t.Errorf("boxes listed for %q, want %q", env.boxes.listedFor, created.ID)
 	}
-	for _, leak := range []string{"gw-", env.gw.Keys[created.ID]} {
-		if strings.Contains(body, leak) {
-			t.Errorf("me shows a backing key: %s", body)
-		}
+	if strings.Contains(body, "gw-") {
+		t.Errorf("me shows a backing key: %s", body)
 	}
 	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"max_boxes":2}`).Code; code != http.StatusBadRequest {
 		t.Errorf("max boxes over the cap = %d, want 400", code)

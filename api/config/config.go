@@ -158,7 +158,7 @@ type Sandboxd struct {
 	Nodes []string `json:"nodes"`
 }
 
-// Accounts names the users database and the master key that seals each user's gw key, tenant token and state key.
+// Accounts names the users database and the master key that seals each user's tenant token and state key.
 type Accounts struct {
 	// DSNFile holds the PostgreSQL connection string.
 	DSNFile       string `json:"dsn_file"`
