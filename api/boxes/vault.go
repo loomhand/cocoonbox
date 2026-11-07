@@ -22,7 +22,7 @@ func (s *Service) EnableVault(v Vault) {
 	s.vault = v
 }
 
-// ApplyVault puts user's keys on the machines of user's own boxes at once: host-only entries on all, the guest list on running ones.
+// ApplyVault puts user's keys on the running machines of user's own boxes at once; a hibernated one gets them when it wakes.
 func (s *Service) ApplyVault(ctx context.Context, user string) error {
 	if s.vault == nil || s.provision == nil {
 		return nil
@@ -33,7 +33,9 @@ func (s *Service) ApplyVault(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for _, m := range s.ownerMachines(ms) {
-		errs = append(errs, s.syncVault(ctx, m.ID))
+		if m.State == machines.StateRunning {
+			errs = append(errs, s.syncVault(ctx, m.ID))
+		}
 	}
 	return errors.Join(errs...)
 }

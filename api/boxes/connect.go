@@ -25,7 +25,7 @@ func (s *Service) EnableConnect(c Connect) {
 	s.connect = c
 }
 
-// ApplyCredentials brings the machines of user's own boxes in line with the user's credentials; flags change only on running ones.
+// ApplyCredentials brings the running machines of user's own boxes in line with the user's credentials; a hibernated one gets them when it wakes.
 func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	if s.connect == nil {
 		return nil
@@ -40,7 +40,9 @@ func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for _, m := range s.ownerMachines(ms) {
-		errs = append(errs, s.machines.SetCredentials(ctx, m.ID, creds))
+		if m.State == machines.StateRunning {
+			errs = append(errs, s.machines.SetCredentials(ctx, m.ID, creds))
+		}
 	}
 	return errors.Join(errs...)
 }

@@ -506,25 +506,26 @@ type credCall struct {
 
 // fakeMachines keeps machines in memory; each pushed event reaches exactly one live Watch.
 type fakeMachines struct {
-	mu        sync.Mutex
-	machines  map[string]machines.Machine
-	deleted   []string
-	clock     int64
-	specs     []machines.Spec
-	pending   []machines.Machine
-	pushed    chan struct{}
-	changed   chan struct{}
-	lists     int
-	revision  int64
-	ensureErr error
-	deleteErr error
-	onDeliver func()
-	addr      string
-	addrErr   error
-	execErr   error
-	execs     []execCall
-	egress    []string
-	creds     []credCall
+	mu          sync.Mutex
+	machines    map[string]machines.Machine
+	deleted     []string
+	clock       int64
+	specs       []machines.Spec
+	pending     []machines.Machine
+	pushed      chan struct{}
+	changed     chan struct{}
+	lists       int
+	revision    int64
+	ensureErr   error
+	deleteErr   error
+	onDeliver   func()
+	addr        string
+	addrErr     error
+	execErr     error
+	execs       []execCall
+	egress      []string
+	creds       []credCall
+	keepMissing bool
 }
 
 func newFakeMachines() *fakeMachines {
@@ -668,6 +669,7 @@ func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.I
 		call.connectKey = strings.TrimPrefix(k.Value, "Bearer ")
 	}
 	f.execs = append(f.execs, call)
+	f.filled(id)
 	return nil
 }
 
@@ -688,7 +690,15 @@ func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.C
 		call.flags = c.Flags
 	}
 	f.creds = append(f.creds, call)
+	f.filled(id)
 	return nil
+}
+
+func (f *fakeMachines) filled(id string) {
+	if m, ok := f.machines[id]; ok && !f.keepMissing {
+		m.EnvMissing = false
+		f.machines[id] = m
+	}
 }
 
 func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {

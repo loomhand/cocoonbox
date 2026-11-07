@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/loomhand/cocoonbox/api/credential"
@@ -25,7 +27,10 @@ const (
 
 	provisionAttempts = 5
 	provisionBackoff  = 2 * time.Second
+	provisionFanout   = 8
 )
+
+var errEnvMissing = errors.New("host-only entries stay missing after the push")
 
 // Signer issues the credentials box agents verify with the key named in their identity file.
 type Signer interface {
@@ -34,7 +39,7 @@ type Signer interface {
 	Credential(box, wake string) string
 }
 
-// provisioner writes each machine's identity file on every boot and its gw key on first boot.
+// provisioner writes each machine's identity file on every boot and its host-only keys whenever the backend lost them.
 type provisioner struct {
 	signer  Signer
 	backoff time.Duration
@@ -60,20 +65,26 @@ func (s *Service) provisionStale(ctx context.Context) {
 		return
 	}
 	current := serving(ms)
+	var g errgroup.Group
+	g.SetLimit(provisionFanout)
 	for _, m := range ms {
 		if current[boxOfMachine(m.ID)].ID != m.ID {
 			s.dropStray(ctx, m)
 			continue
 		}
-		if err := s.syncExit(ctx, m); err != nil {
+		if err := s.syncExit(ctx, m, false); err != nil {
 			logger.WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
-		if m.State == machines.StateRunning && wakeOf(m) == "" {
-			if err := s.provisionMachine(ctx, m); err != nil {
-				logger.WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
-			}
+		if m.State == machines.StateRunning && (wakeOf(m) == "" || m.EnvMissing) {
+			g.Go(func() error {
+				if err := s.provisionMachine(ctx, m); err != nil {
+					logger.WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
+				}
+				return nil
+			})
 		}
 	}
+	_ = g.Wait()
 	if s.vault != nil {
 		s.reconcileVault(ctx, ms)
 	}
@@ -99,7 +110,7 @@ func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
 	}
 }
 
-// provisionMachine provisions m unless its current incarnation already has a wake id.
+// provisionMachine provisions m unless its current incarnation already has a wake id and the backend holds all its host-only entries.
 func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) error {
 	p := s.provision
 	unlock := p.locks.Lock(m.ID)
@@ -115,7 +126,7 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 	if err != nil {
 		return err
 	}
-	if wakeOf(cur) != "" {
+	if wakeOf(cur) != "" && !cur.EnvMissing {
 		return nil
 	}
 	logger := log.WithFunc("boxes.Service.provisionMachine").WithField("machine", m.ID)
@@ -133,19 +144,24 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 			logger.Infof(ctx, "provisioned incarnation %s as wake %s", cur.Incarnation, wake)
 			return nil
 		}
+		if errors.Is(lastErr, errEnvMissing) {
+			cur.EnvMissing = true
+		}
 		logger.Warnf(ctx, "provision attempt %d: %v", attempt+1, lastErr)
 	}
 	return lastErr
 }
 
+// provisionOnce writes m's host-only keys and, unless the incarnation has a wake id, its identity; it fails while the backend still misses an entry.
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
 	logger := log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID)
 	p := s.provision
-	if err := s.syncExit(ctx, m); err != nil {
+	if err := s.syncExit(ctx, m, m.EnvMissing); err != nil {
 		return "", fmt.Errorf("exit: %w", err)
 	}
+	wake := wakeOf(m)
 	keys := map[string]*machines.Secret{}
-	if s.accounts != nil && m.Meta[metaGW] == "" {
+	if s.accounts != nil && (m.Meta[metaGW] == "" || m.EnvMissing) {
 		key, err := s.accounts.GWKey(m.Owner)
 		if err != nil {
 			return "", fmt.Errorf("gw key: %w", err)
@@ -155,7 +171,6 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		}
 	}
 	box := boxOfMachine(m.ID)
-	identity := machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
 	owned := !s.agentBox(m.Owner, box)
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
@@ -166,7 +181,13 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 			keys[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
 		}
 	}
-	if err := s.machines.Deliver(ctx, m.ID, identity, keys); err != nil {
+	var identity machines.Identity
+	if wake == "" {
+		identity = machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
+		if err := s.machines.Deliver(ctx, m.ID, identity, keys); err != nil {
+			return "", err
+		}
+	} else if err := s.machines.SetCredentials(ctx, m.ID, machines.Credentials{Secrets: keys}); err != nil {
 		return "", err
 	}
 	if s.connect != nil && owned {
@@ -177,10 +198,16 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 			logger.Warnf(ctx, "push keys: %v", err)
 		}
 	}
-	if keys[gwKeyEnv] != nil {
+	if cur, err := s.machines.Get(ctx, m.ID); err != nil || cur.EnvMissing {
+		return "", cmp.Or(err, errEnvMissing)
+	}
+	if keys[gwKeyEnv] != nil && m.Meta[metaGW] == "" {
 		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {
 			return "", err
 		}
+	}
+	if wake != "" {
+		return wake, nil
 	}
 	if err := s.machines.SetMeta(ctx, m.ID, metaWake, m.Incarnation+"|"+identity.WakeID); err != nil {
 		return "", err
@@ -200,7 +227,7 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 // ready reports whether clients may reach m: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
 	active := s.ops.activeFor(boxOfMachine(m.ID))
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !unrestored(m) &&
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "" && !m.EnvMissing) && !unrestored(m) &&
 		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
 }
 

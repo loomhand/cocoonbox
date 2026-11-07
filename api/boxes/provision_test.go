@@ -236,6 +236,60 @@ func TestTheProvisionerDeletesAMachineAnInterruptedRebaseLeftOnlyOnceNoOperation
 	}
 }
 
+func TestTheProvisionerPushesTheLostHostKeysAgainAndKeepsTheIdentity(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Routed: true, EnvMissing: true, Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w1", metaVault: "d1"}})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableAccounts(&fakeAccounts{})
+	svc.EnableProvisioning(fakeSigner{})
+	svc.EnableConnect(&fakeConnect{})
+	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
+	svc.EnableResidential("http://proxy:3128", func(string) bool { return true })
+	ctx := auth.WithUser(t.Context(), alice)
+	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Resolve of a machine that lost its keys: %v, want Unavailable", err)
+	}
+
+	svc.provisionStale(t.Context())
+	if execs := fake.execCalls(); len(execs) != 0 {
+		t.Errorf("deliveries = %+v, want the identity left alone", execs)
+	}
+	pushed := map[string]bool{}
+	for _, c := range fake.credCalls() {
+		for name := range c.secrets {
+			pushed[name] = true
+		}
+	}
+	for _, name := range []string{gwKeyEnv, connectKeyEnv, "GH_GIT", "CBV_1"} {
+		if !pushed[name] {
+			t.Errorf("pushed %v, want %s among them", pushed, name)
+		}
+	}
+	if got := fake.egressCalls(); !slices.Contains(got, aliceBox+" http://proxy:3128") {
+		t.Errorf("egress = %v, want the upstream set again", got)
+	}
+	if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err != nil || wake != "w1" {
+		t.Errorf("Resolve after the push = %q, %v, want wake w1", wake, err)
+	}
+}
+
+func TestAMachineStaysUnprovisionedWhileTheBackendStillMissesAnEntry(t *testing.T) {
+	fake := newFakeMachines()
+	fake.keepMissing = true
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", EnvMissing: true, Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableProvisioning(fakeSigner{})
+	svc.provision.backoff = time.Millisecond
+
+	m, _ := fake.Get(t.Context(), aliceBox)
+	if err := svc.provisionMachine(t.Context(), m); !errors.Is(err, errEnvMissing) {
+		t.Errorf("provisionMachine = %v, want errEnvMissing", err)
+	}
+	if _, _, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); status.Code(err) != codes.Unavailable {
+		t.Errorf("Resolve: %v, want Unavailable", err)
+	}
+}
+
 func outgoingCredential(ctx context.Context) string {
 	md, _ := metadata.FromOutgoingContext(ctx)
 	if v := md.Get(credential.Header); len(v) == 1 {

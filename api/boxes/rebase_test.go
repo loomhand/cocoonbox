@@ -25,13 +25,21 @@ const (
 
 func TestRebaseAfterCapacityRefusalsEndsRunningOnTheNewMachine(t *testing.T) {
 	node := newFakeNode(t)
-	node.add(aliceBox, "desktop:v1", time.Now().Add(-time.Hour))
-	node.refusals = 2
 	backend, err := sandboxd.New(t.Context(), sandboxd.Options{URL: node.srv.URL, Token: nodeToken, Image: "desktop:v1", Flavors: []machines.Flavor{defaultFlavor}, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)})
 	if err != nil {
 		t.Fatalf("sandboxd.New: %v", err)
 	}
 	go backend.Run(t.Context())
+	if _, _, err := backend.Ensure(t.Context(), machines.Spec{ID: aliceBox, Owner: alice, Flavor: defaultFlavor}); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	clustertest.WaitFor(t, "the old machine runs", func() bool {
+		m, err := backend.Get(t.Context(), aliceBox)
+		return err == nil && m.State == machines.StateRunning
+	})
+	node.mu.Lock()
+	node.refusals = 2
+	node.mu.Unlock()
 	st := newFakeStore()
 	agent := newFakeAgent(st)
 	agent.chunks = []string{hexID("c1")}
@@ -127,23 +135,17 @@ func newFakeNode(t *testing.T) *fakeNode {
 		row.Key.Size = req.Size
 		nodeJSON(w, http.StatusOK, map[string]string{"id": row.ID})
 	})
-	mux.HandleFunc("GET /v1/sandboxes", func(w http.ResponseWriter, r *http.Request) {
-		k, v, _ := strings.Cut(r.URL.Query().Get("metadata"), "=")
+	mux.HandleFunc("GET /v1/sandboxes", func(w http.ResponseWriter, _ *http.Request) {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		rows := []nodeRow{}
 		for _, row := range n.rows {
-			if k == "" || row.Metadata[k] == v {
-				rows = append(rows, *row)
-			}
+			rows = append(rows, *row)
 		}
 		nodeJSON(w, http.StatusOK, map[string]any{"sandboxes": rows})
 	})
 	mux.HandleFunc("GET /v1/sandboxes/{id}", n.sandbox(func(w http.ResponseWriter, _ *http.Request, row *nodeRow) {
 		nodeJSON(w, http.StatusOK, row)
-	}))
-	mux.HandleFunc("GET /v1/sandboxes/{id}/env", n.sandbox(func(w http.ResponseWriter, _ *http.Request, _ *nodeRow) {
-		nodeJSON(w, http.StatusOK, map[string]any{"env": map[string]any{}})
 	}))
 	mux.HandleFunc("POST /v1/sandboxes/{id}/{verb}", n.sandbox(func(w http.ResponseWriter, r *http.Request, row *nodeRow) {
 		if r.PathValue("verb") == "release" {
@@ -163,12 +165,6 @@ func newFakeNode(t *testing.T) *fakeNode {
 	n.srv = httptest.NewServer(mux)
 	t.Cleanup(n.srv.Close)
 	return n
-}
-
-func (n *fakeNode) add(machine, template string, claimedAt time.Time) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	n.addLocked(machine, template, claimedAt).Key.Size = "xlarge"
 }
 
 func (n *fakeNode) addLocked(machine, template string, claimedAt time.Time) *nodeRow {

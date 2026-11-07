@@ -48,7 +48,7 @@ func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T
 	}
 }
 
-func TestApplyVaultReachesHibernatedMachinesWithoutTheGuestList(t *testing.T) {
+func TestApplyVaultReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
@@ -64,8 +64,8 @@ func TestApplyVaultReachesHibernatedMachinesWithoutTheGuestList(t *testing.T) {
 	for _, c := range fake.credCalls() {
 		flags[c.machine] = c.flags != nil
 	}
-	if len(flags) != 2 || !flags[aliceBox] || flags[aliceBox+"-2"] {
-		t.Errorf("pushes = %v, want both of alice's machines and the guest list only on the running one", flags)
+	if len(flags) != 1 || !flags[aliceBox] {
+		t.Errorf("pushes = %v, want alice's running machine only", flags)
 	}
 	running, _ := fake.Get(t.Context(), aliceBox)
 	hibernated, _ := fake.Get(t.Context(), aliceBox+"-2")
