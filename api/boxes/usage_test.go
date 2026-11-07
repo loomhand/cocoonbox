@@ -34,7 +34,7 @@ func TestUsageSumsTodayAndMonthByModelUnderTheCap(t *testing.T) {
 	svc.EnableUsage(meter, 5_000_000)
 	svc.usage.now = func() time.Time { return now }
 
-	got, err := svc.Usage(auth.WithUser(t.Context(), "alice"), &controlv1.UsageRequest{})
+	got, err := svc.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{})
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestUsageSumsTodayAndMonthByModelUnderTheCap(t *testing.T) {
 
 	unknown := &Service{}
 	unknown.EnableUsage(meter, 0)
-	if got, err := unknown.Usage(auth.WithUser(t.Context(), "alice"), &controlv1.UsageRequest{}); err != nil || got.GetDailyCapMicros() != 0 || got.GetRemainingTodayMicros() != -1 {
+	if got, err := unknown.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{}); err != nil || got.GetDailyCapMicros() != 0 || got.GetRemainingTodayMicros() != -1 {
 		t.Errorf("Usage without a known default = %v, %v; want cap 0 and -1 left", got, err)
 	}
 }
@@ -69,11 +69,11 @@ func TestUsageRefusals(t *testing.T) {
 	if _, err := svc.Usage(t.Context(), &controlv1.UsageRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Usage without a user = %v, want Unauthenticated", err)
 	}
-	if _, err := svc.Usage(auth.WithUser(t.Context(), "alice"), &controlv1.UsageRequest{}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := svc.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Usage without a meter = %v, want FailedPrecondition", err)
 	}
 	svc.EnableUsage(&fakeMeter{err: errors.New("GET /admin/usage/users: 502 Bad Gateway")}, 5_000_000)
-	if _, err := svc.Usage(auth.WithUser(t.Context(), "alice"), &controlv1.UsageRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), "/admin") {
+	if _, err := svc.Usage(auth.WithUser(t.Context(), alice), &controlv1.UsageRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), "/admin") {
 		t.Errorf("Usage while gw fails = %v, want Unavailable without gw's path", err)
 	}
 }

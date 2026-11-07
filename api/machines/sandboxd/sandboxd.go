@@ -280,8 +280,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 	out := make(chan machines.Machine)
 	go func() {
 		defer close(out)
-		ticker := time.NewTicker(watchInterval)
-		defer ticker.Stop()
+		tick := time.Tick(watchInterval)
 		seen, last := false, ""
 		for {
 			changed := b.changes(id)
@@ -302,7 +301,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 				}
 			}
 			select {
-			case <-ticker.C:
+			case <-tick:
 			case <-changed:
 			case <-ctx.Done():
 				return
@@ -629,13 +628,12 @@ func (b *Backend) run(id, op string, revision int64, fn task) {
 func (b *Backend) renewOp(ctx context.Context, stop context.CancelFunc, id, op string, revision int64) {
 	logger := log.WithFunc("sandboxd.Backend.renewOp").WithField("machine", id)
 	until := time.Now().Add(b.leaseFor)
-	ticker := time.NewTicker(b.renewEvery)
-	defer ticker.Stop()
+	tick := time.Tick(b.renewEvery)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		running, next := false, time.Now().Add(b.leaseFor)
 		_, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {

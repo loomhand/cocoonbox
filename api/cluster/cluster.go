@@ -91,7 +91,6 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{pool: pool, locks: locks, longLocks: longLocks, leader: cfg.ConnConfig.Copy()}, nil
 }
 
-// Close closes the store.
 func (s *Store) Close() {
 	s.longLocks.Close()
 	s.locks.Close()

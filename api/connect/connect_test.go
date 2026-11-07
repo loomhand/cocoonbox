@@ -1647,9 +1647,9 @@ func catalogOf(t *testing.T, opts Options) map[string]*controlv1.CatalogEntry {
 	return out
 }
 
-func openStream(t *testing.T, ctx context.Context, url string) io.Reader {
+func openStream(t *testing.T, ctx context.Context, target string) io.Reader {
 	t.Helper()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	req.Header.Set("Authorization", "Bearer alice")
 	req.Header.Set("Accept", "text/event-stream")
 	resp, err := http.DefaultClient.Do(req)

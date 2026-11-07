@@ -1601,9 +1601,8 @@ func TestARefreshDropsAMachineNoNodeAnswersFor(t *testing.T) {
 func TestAFingerprintIsKeyedAndStaysTheSame(t *testing.T) {
 	v := &envVar{Value: "p&ss<word>", Guest: new(false), Inject: &inject{Hosts: []string{"api.example.com"}, Header: "Authorization", Placeholder: "Bearer <key>"}}
 	raw, _ := json.Marshal(v)
-	got := fingerprint(rootToken, v)
-	if got != fingerprint(rootToken, v) || got == fingerprint("other-token", v) || got == utils.HashHex(string(raw)) {
-		t.Errorf("fingerprint = %s, want one stable under the key, another under another key, and not the plain sha256", got)
+	if got, want := fingerprint(rootToken, v), "e712ad6b7f4add220ec81848ac3c7b6e5c5f31a4f438361c15d59ad65c0c4971"; got != want || got == fingerprint("other-token", v) || got == utils.HashHex(string(raw)) {
+		t.Errorf("fingerprint = %s, want %s under the key, another under another key, and not the plain sha256", got, want)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 const (
 	Version = "2.0"
 
-	// Latest is the newest MCP protocol version.
 	Latest           = "2025-11-25"
 	SessionHeader    = "Mcp-Session-Id"
 	EventStream      = "text/event-stream"

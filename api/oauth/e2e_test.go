@@ -187,7 +187,7 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 	e := newEnv(t)
 	clientID := e.register(t, "Agent")
 	base := func() url.Values {
-		q := connectQuery(clientID, strings.Repeat("v", 43), "boxes")
+		q := authorizeQuery(clientID, strings.Repeat("v", 43), "boxes")
 		q.Set("resource", e.resource)
 		return q
 	}
@@ -225,7 +225,7 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	e := newEnv(t)
 	clientID := e.register(t, "Agent")
-	q := connectQuery(clientID, strings.Repeat("v", 43), "boxes")
+	q := authorizeQuery(clientID, strings.Repeat("v", 43), "boxes")
 	var denied struct {
 		Redirect string `json:"redirect"`
 	}
@@ -502,7 +502,7 @@ func TestSigningInAgainShowsAndReplacesTheChosenBoxes(t *testing.T) {
 	clientID := e.register(t, "Agent")
 	main := e.users.Boxes(e.alice)[0].ID
 	e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main)
-	q := connectQuery(clientID, strings.Repeat("v", 43), "")
+	q := authorizeQuery(clientID, strings.Repeat("v", 43), "")
 	var consent struct {
 		oauth.Consent
 		Boxes []struct {
@@ -528,7 +528,7 @@ func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
 	clientID := e.register(t, "Agent")
 	first, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 	e.call(t, first, "box_create", map[string]any{"name": "agent-one"})
-	q := connectQuery(clientID, strings.Repeat("v", 43), "")
+	q := authorizeQuery(clientID, strings.Repeat("v", 43), "")
 	var consent oauth.Consent
 	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
 	if !consent.Existing {
@@ -564,17 +564,17 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 	clientID := e.register(t, "Agent")
 	main := e.users.Boxes(e.alice)[0].ID
 
-	consent := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
+	consent := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
 	if !consent.Connect || consent.Existing || fmt.Sprint(consent.Connectors) != "[{mock mock } {other other }]" || len(consent.ChosenConnectors) != 0 {
 		t.Fatalf("consent = %+v, want alice's active accounts and none ticked", consent)
 	}
-	if boxesOnly := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes")); boxesOnly.Connect || len(boxesOnly.Connectors) != 0 {
+	if boxesOnly := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes")); boxesOnly.Connect || len(boxesOnly.Connectors) != 0 {
 		t.Errorf("a request without the connect scope offers %+v", boxesOnly)
 	}
 	for _, tc := range []struct{ scope, connector string }{
 		{"boxes connect", "theirs"}, {"boxes connect", "stale"}, {"boxes connect", "nope"}, {"boxes", "mock"},
 	} {
-		q := connectQuery(clientID, strings.Repeat("v", 43), tc.scope)
+		q := authorizeQuery(clientID, strings.Repeat("v", 43), tc.scope)
 		body := map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "connectors": []string{tc.connector}}
 		if status, text := e.consoleStatus(t, http.MethodPost, "oauth/approve", body); status != http.StatusBadRequest {
 			t.Errorf("approve %s with %q: %d %s, want 400", tc.connector, tc.scope, status, text)
@@ -585,7 +585,7 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 	if scope != "boxes connect" {
 		t.Errorf("token scope = %q", scope)
 	}
-	renewal := e.connectConsent(t, connectQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
+	renewal := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
 	if !renewal.Existing || !slices.Equal(renewal.ChosenConnectors, []string{"mock"}) {
 		t.Errorf("renewal consent = %+v, want mock ticked", renewal)
 	}
@@ -767,7 +767,7 @@ func (e *env) code(t *testing.T, clientID string, caps oauth.Caps, boxes ...stri
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
 	redirect := "http://127.0.0.1:43123/callback"
-	q := connectQuery(clientID, verifier, "boxes")
+	q := authorizeQuery(clientID, verifier, "boxes")
 	q.Set("redirect_uri", redirect)
 	q.Set("resource", e.resource)
 	var consent oauth.Consent
@@ -1037,7 +1037,7 @@ func (e *env) connectConsent(t *testing.T, q url.Values) connectConsent {
 func (e *env) connectGrant(t *testing.T, clientID string, boxes []string, connectors ...string) (string, string, string) {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
-	q := connectQuery(clientID, verifier, "boxes connect")
+	q := authorizeQuery(clientID, verifier, "boxes connect")
 	var approved struct {
 		Redirect string `json:"redirect"`
 	}
@@ -1267,7 +1267,7 @@ func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	return agent
 }
 
-func connectQuery(clientID, verifier, scope string) url.Values {
+func authorizeQuery(clientID, verifier, scope string) url.Values {
 	return url.Values{
 		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {utils.Challenge(verifier)},
 		"code_challenge_method": {"S256"}, "state": {"st"}, "scope": {scope},
