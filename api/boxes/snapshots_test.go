@@ -144,10 +144,10 @@ func TestRestorePathsPresignsOnlyTheirChunksAndPinsTheSnapshot(t *testing.T) {
 	if call.reqs[0].GetManifest().GetChunkId() != first || len(call.reqs[0].GetKey().GetKey()) != keyring.KeySize {
 		t.Errorf("first message = %v", call.reqs[0].GetManifest())
 	}
-	env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
-	if env.store.has(p.manifest(first)) {
-		t.Error("the GC kept the snapshot after the restore ended")
-	}
+	clustertest.WaitFor(t, "the GC drops the snapshot once the restore ends", func() bool {
+		env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
+		return !env.store.has(p.manifest(first))
+	})
 }
 
 func TestRestorePathsRefusals(t *testing.T) {

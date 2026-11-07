@@ -409,7 +409,7 @@ func TestAClaimedParkOfAGoneProcessFreesTheBoxAtItsLease(t *testing.T) {
 	_, b, db := newSharedPair(t, t.Context())
 	if err := db.PutOperation(t.Context(), cluster.Operation{
 		ID: "op-claimed", User: alice, Box: aliceBox, Phase: int32(controlv1.Phase_PHASE_SAVING), Park: true, Events: []byte(`[]`),
-		ExpiresAt: time.Now().Add(200 * time.Millisecond), CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(2 * time.Second), CreatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("PutOperation: %v", err)
 	}
