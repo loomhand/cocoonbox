@@ -20,6 +20,13 @@ type Caller func(ctx context.Context, header string) (owner, machine string, err
 // Origins names the box and the image of an owner's machine.
 type Origins func(ctx context.Context, owner, machine string) Origin
 
+type callerKey struct{}
+
+type doorCaller struct {
+	owner   string
+	machine string
+}
+
 // Door serves the library to the boxes: each request acts for the owner of the machine whose door key it carries.
 type Door struct {
 	lib    *Library
@@ -83,13 +90,6 @@ func (d *Door) put(w http.ResponseWriter, r *http.Request) {
 	}
 	log.WithFunc("flows.Door.put").Infof(r.Context(), "machine %s of %s saved a flow of %d bytes as rev %d", c.machine, c.owner, e.Size, e.Rev)
 	writeJSON(w, e)
-}
-
-type callerKey struct{}
-
-type doorCaller struct {
-	owner   string
-	machine string
 }
 
 func callerOf(r *http.Request) doorCaller {
