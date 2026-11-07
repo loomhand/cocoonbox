@@ -67,7 +67,7 @@ const SIGKILL: i32 = 9;
 /// The longest path a wide Windows call returns, in UTF-16 units.
 const PATH_UNITS: usize = 32 << 10;
 const LIST_BUF: usize = 64 << 10;
-const TITLE_UNITS: usize = 1024;
+const TEXT_UNITS: usize = 1024;
 const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
 /// The first build of Windows 11, whose ProductName still says Windows 10.
 const WINDOWS_11_BUILD: u32 = 22_000;
@@ -360,8 +360,7 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// Whether only SYSTEM and Administrators can change the open file or directory `file`: one of them owns
-/// it, and no allow entry of its DACL gives any other account a write right.
+/// Whether only SYSTEM and Administrators own and may write the open file or directory `file`.
 pub fn admin_only(file: &File) -> Result<(), String> {
     let (mut owner, mut dacl) = (PSID::default(), std::ptr::null_mut::<ACL>());
     let mut descriptor = PSECURITY_DESCRIPTOR::default();
@@ -401,7 +400,7 @@ pub fn stderr_to(path: &Path) -> io::Result<()> {
 
 /// The title of the foreground window; none without one.
 pub fn foreground_title() -> Option<String> {
-    let mut buf = vec![0u16; TITLE_UNITS];
+    let mut buf = vec![0u16; TEXT_UNITS];
     // SAFETY: GetForegroundWindow takes nothing, and GetWindowTextW writes at most buf's length.
     let len = unsafe { GetWindowTextW(GetForegroundWindow(), &mut buf) };
     let len = usize::try_from(len).ok().filter(|l| *l > 0)?;
@@ -619,7 +618,6 @@ pub fn list_dir(dir: &File) -> io::Result<Vec<super::Listed>> {
     }
 }
 
-/// Whether `owner` is SYSTEM or Administrators and no allow entry of `dacl` that applies gives another account a write right.
 fn admin_acl(owner: PSID, dacl: *const ACL) -> Result<(), String> {
     let owner = sid_string(owner, false)?;
     if !ADMIN_SIDS.contains(&owner.as_str()) {
@@ -662,7 +660,7 @@ fn admin_acl(owner: PSID, dacl: *const ACL) -> Result<(), String> {
 
 /// The string value `name` of the CurrentVersion key.
 fn registry_string(name: &str) -> Option<String> {
-    let mut buf = vec![0u16; TITLE_UNITS];
+    let mut buf = vec![0u16; TEXT_UNITS];
     let mut size = u32::try_from(buf.len() * 2).ok()?;
     // SAFETY: both strings outlive the call, and buf holds size bytes.
     let read = unsafe {
