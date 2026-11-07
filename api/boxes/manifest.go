@@ -97,6 +97,22 @@ func (m *manifest) tree() map[string][]manifestFile {
 	return dirs
 }
 
+// openManifest reads the manifest of snapshot id of p's box, rebuilding it from a delta when needed, and decodes it with key.
+func (l *stateLayer) openManifest(ctx context.Context, p statePath, key keyring.Key, id string) (*manifest, error) {
+	plain, err := l.manifestPlain(ctx, p, key, id)
+	if err != nil {
+		return nil, err
+	}
+	var m manifest
+	if err := json.Unmarshal(plain, &m); err != nil {
+		return nil, fmt.Errorf("decode manifest %s: %w", id, err)
+	}
+	if m.Version != manifestVersion {
+		return nil, fmt.Errorf("manifest %s has version %d", id, m.Version)
+	}
+	return &m, nil
+}
+
 // manifestFile is one walked entry; Path is relative to its root.
 type manifestFile struct {
 	Root    string   `json:"root"`
@@ -129,22 +145,6 @@ func (bp boxPath) String() string {
 
 func (bp boxPath) contains(f manifestFile) bool {
 	return f.Root == bp.root.name && (bp.rel == "" || f.Path == bp.rel || strings.HasPrefix(f.Path, bp.rel+"/"))
-}
-
-// openManifest reads the manifest of snapshot id of p's box, rebuilding it from a delta when needed, and decodes it with key.
-func (l *stateLayer) openManifest(ctx context.Context, p statePath, key keyring.Key, id string) (*manifest, error) {
-	plain, err := l.manifestPlain(ctx, p, key, id)
-	if err != nil {
-		return nil, err
-	}
-	var m manifest
-	if err := json.Unmarshal(plain, &m); err != nil {
-		return nil, fmt.Errorf("decode manifest %s: %w", id, err)
-	}
-	if m.Version != manifestVersion {
-		return nil, fmt.Errorf("manifest %s has version %d", id, m.Version)
-	}
-	return &m, nil
 }
 
 // parseBoxPath accepts an absolute path under a state root without ".", ".." or empty components.
