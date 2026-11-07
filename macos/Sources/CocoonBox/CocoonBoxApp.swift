@@ -9,7 +9,7 @@ struct CocoonBoxApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("CocoonBox", id: "main") {
+        Window("CocoonBox", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: 980, minHeight: 620)
