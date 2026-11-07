@@ -18,6 +18,10 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
+#[cfg(unix)]
+const DESK_IMPORT: &str = "'/opt/desk/lib/desk.mts'";
+#[cfg(windows)]
+const DESK_IMPORT: &str = "'file:///C:/ProgramData/cocoonbox/desk/lib/desk.mts'";
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const TARGET_HINT: &str = "With action click or locate, in place of element or x,y: the element by its accessibility name in the focused window, else by a unique match of text on the screen. Returns the tier, the point in screenshot pixels and a crop around it; locate does not click. Not found returns the screenshot for x,y.";
 const DESK_OPS: [&str; 15] = [
@@ -534,9 +538,14 @@ fn with_target(parameters: &mut Value) {
 fn desk_script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),
-        description: Cow::Borrowed(
-            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls); the desk command does the same from shell. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
-        ),
+        description: Cow::Owned(format!(
+            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from {DESK_IMPORT}: windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls){}. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {{result, logs, error?: {{kind, message}}, duration_ms, exit_code, stderr, snapshot?, screenshot_path}} and a screenshot taken after the run.",
+            if cfg!(unix) {
+                "; the desk command does the same from shell"
+            } else {
+                ""
+            },
+        )),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -680,4 +689,18 @@ fn tabs_tool() -> ToolSpec {
 
 fn max_edge() -> Value {
     json!({"type": "integer", "description": "Scale the screenshot so its long edge is at most this many pixels; x,y then refer to the scaled image"})
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_windows_script_run_imports_the_desk_api_by_its_file_url() {
+        let d = desk_script_tool().description;
+        assert!(d.contains(
+            "import * as desk from 'file:///C:/ProgramData/cocoonbox/desk/lib/desk.mts'"
+        ));
+        assert!(!d.contains("desk command"));
+    }
 }
