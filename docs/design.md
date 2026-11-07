@@ -365,7 +365,7 @@ Design, 2026-10-01. It builds on the M4.5 measurements and on three upstream PRs
 
 ### 14.2 Image → template and pool
 
-- Each image release ships as a flat rootfs for `cocoon image import` into the sandboxd node, `cbdesk:vN`. `image/cut.sh` builds it from a VM booted from the previous template (docs/bench.md, New image cut).
+- Each image release ships as a flat rootfs for `cocoon image import` into the sandboxd node, `cbdesk:vN`. `image/cut.sh` builds it from a VM booted from the previous template (docs/image.md, Cut).
 - Additions to the image:
   - silkd and its unit;
   - `http(s)_proxy=127.0.0.1:3128` drop-ins on the agent, session and shuttle units (system and user) and the offload inbox;
@@ -423,7 +423,7 @@ type Endpoint struct {
 Address(ctx context.Context, id string) (Endpoint, error)
 ```
 
-- sandboxd: `Key` = `<sandbox id>.sandboxd:<agent port>`. `Dial` opens the relay with the api's root token, which gives the **passive** relay.
+- sandboxd: `Key` = `<sandbox id>.<HashHex(holding node address)[:32]>.sandboxd:<agent port>`. `Dial` opens the relay with the api's root token, which gives the **passive** relay.
   - It never wakes a hibernated box and answers 409 instead (`Unavailable`, the same as `NotRunningError` today).
   - It never stamps idle activity, so an open edge connection cannot keep a box awake. The M4.5 finding stops mattering.
   - A failed claim also answers 409.
@@ -1997,7 +1997,7 @@ Decided 2026-10-02; not built: upgrades still save and restore through the state
 
 ### 24.1 Layout
 
-- System disk: the template (`cbdesk:vN`), replaced by every upgrade. Packages installed with `apt` still come back through the package replay (§ v10).
+- System disk: the template (`cbdesk:vN`), replaced by every upgrade. Packages installed with `apt` still come back through the package replay (contracts.md, Packages).
 - Data disk (`/dev/vdb`, one per box): `/home/user` (Chrome profile, dotfiles, agent.db) and `/workspace`. Encrypted in the guest with dm-crypt; the key is the user's state key (§22.5), delivered by the api at every boot and wake and kept in memory only.
 - Upgrade: quiesce and unmount on the old machine, release it, claim the new template with the same volume, mount, start the desktop session. No store round trip; expected in the tens of seconds.
 - Warm pool: the volume is hot-attached to the claimed warm VM; the agent then mounts it and starts the session, as it restarts the session after a restore today.
@@ -2302,7 +2302,7 @@ The user is about to leave the Mac. The task a local coding agent session works 
 | D7 | Share guests: covered by §23.6 (a read share reads only `/workspace`); a write share has `shell`, and the UI warns next to "Allow write"; `box_agent_*` tools, if they ship, are owner only |
 | D9 | The app shows the box CLI through `Session.Exec` with a PTY running `tmux attach`, in a Ghostty pane |
 | D12 | One box CLI session per (repo, kind), named by both; at most one runs per repo (the guard) and 3 per box |
-| D13 | Preflight outcomes as in contracts.md: blocks for a box older than v22, missing box tools, a signed-out box CLI, unreturned work, a full box, a non-git directory and macOS-only commands; warnings for local services, VPN-only hosts, secrets, LFS and submodules |
+| D13 | Preflight outcomes as in contracts.md: blocks for a box older than v22, missing box tools, a signed-out box CLI, unreturned work, a full box, a non-git directory, macOS-only commands and LFS; warnings for local services, VPN-only hosts, secrets and submodules |
 | D15 | No push from the box until M5.2; commits come home with back |
 | D18 | The copy's git-ignored directories are left out of state saves; the box packer lists them at each offload |
 | D20 | Hibernate and upgrade stay allowed; the app and the CLI warn first while a box agent works |
@@ -2327,7 +2327,7 @@ Decided 2026-10-03. The app's own local agents (the agent CLIs it launches) driv
 
 - **`claude`:** `/cocoonbox:offload` and `/cocoonbox:back` from the cocoonbox plugin. The skill runs the CLI at the path the plugin was generated with (`~/.local/bin/cocoonbox` when it links to this binary, else the app's `Contents/Helpers/cocoonbox`) in the user's working directory, and assumes no app session. One-time install: `cocoonbox setup claude`, or the app's File menu plugin install item (also in the Offloaded section's menu), which runs it with the login shell's environment and shows its output. It is idempotent and also updates the plugin.
 - **`codex` and others:** `cocoonbox offload --handover-prompt [--kind K]` prints the request to paste: write the hand-over to this repo's hand-over path with the template, then run `cocoonbox offload --kind K` (both outside the CLI's sandbox, so it asks for approval), and report blocks and warnings. `cocoonbox offload` and `cocoonbox back` also work by hand.
-- **The app's Offloaded section** lists the offloads in flight across boxes from the Mac's records: repo, box, box CLI, status (working, idle, waiting for you, blocked, stopped, or the box's state when it is not running; a hibernated box is not woken to ask) and the time since the last activity (the newest of the last hook, the transcript's mtime and the tmux window's activity, else an event's arrival). Selecting one attaches the box CLI's terminal, with Reattach. The app only watches (decided 2026-10-04): offload and back start from the user's own TUI (`/cocoonbox:back` or `cocoonbox back`), and the app has no Bring back. A row stays until `back` or `end` removes its record, as the CLI keeps records; the pane shows one line of help, "Bring this back from your terminal: /cocoonbox:back (or cocoonbox back) in <repo path>", with a Copy button for the command. The section's menu opens "Install <CLI> in Box…" and "Sign In to <CLI> in the Box…" for any box and CLI; a CLI preflight block on the box CLI names that menu. Sign in runs the CLI's own login with `BROWSER=true NO_OPEN_BROWSER=1`, so the box's browser stays shut and the user approves on the Mac: the app opens the first https link the CLI prints on that vendor's sign-in hosts (`claude.ai`, `claude.com`, `anthropic.com`; `auth.openai.com`, `chatgpt.com`; `cursor.com`) in the Mac's browser, once, and opens no other link from the box's output. ⌘V and Edit > Paste in a box terminal paste the Mac's text, bracketed when the program asks. Notifications for a question, back and blocked are unchanged.
+- **The app's Offloaded section** lists the offloads in flight across boxes from the Mac's records: repo, box, box CLI, status (working, idle, waiting for you, blocked, stopped, or the box's state when it is not running; a hibernated box is not woken to ask) and the time since the last activity (the newest of the last hook, the transcript's mtime and the tmux window's activity, else an event's arrival). Selecting one attaches the box CLI's terminal, with Reattach. The app only watches (decided 2026-10-04): offload and back start from the user's own TUI (`/cocoonbox:back` or `cocoonbox back`), and the app has no Bring back. A row stays until `back` or `end` removes its record, as the CLI keeps records; the pane shows one line of help, "Bring this back from your terminal: /cocoonbox:back (or cocoonbox back) in <repo path>", with a Copy button for the command. The section's menu opens "Install <CLI> in Box…" and "Sign In to <CLI> in the Box…" for any box and CLI; a CLI preflight block on the box CLI names that menu. Sign in runs the CLI's own login with `BROWSER=true NO_OPEN_BROWSER=1`, so the box's browser stays shut and the user approves on the Mac: the app opens the first https link the CLI prints on that vendor's sign-in hosts (`claude.ai`, `claude.com`, `anthropic.com`; `auth.openai.com`, `chatgpt.com`) in the Mac's browser, once, and opens no other link from the box's output. ⌘V and Edit > Paste in a box terminal paste the Mac's text, bracketed when the program asks. Notifications for a question, back and blocked are unchanged.
 
 Hot path: none. The edge and the api do not change; the inbox is idle between messages; the event is one bus publish per outbox entry or status change. The Offloaded section asks each running box with a record for `offload status` (one Exec) when the app connects, comes to the front or selects a row, never on a timer.
 
@@ -2360,7 +2360,7 @@ toolhost: /workspace/flows  ◄──►  serve: Syncer ──box door──► 
   - leaves a changed local file alone, so the push sends it.
 
   For a flow the library dropped, it removes the box's unchanged copy and forgets the row. When a `.json` file changed, it rebuilds `INDEX` with `gui_plan {reindex: true}`, which reuses the executor's own index format and commits to the flows git. A pull is bounded at 3 s; on a failure the box keeps its files.
-- **Push:** runs in the background 500 ms after `gui_plan`, `script_run`, `write_file`, `edit_file`, `shell` or `upload`, and 500 ms after any other write of a flow file, which the toolhost sees through inotify on `/workspace/flows` (a desktop app's save, `rsh`), following the folder when a restore replaces it. It scans the folder and PUTs each file whose hash differs from its row. Content that the library refuses (a bad name, too large, a full library) is not sent again until it changes. The same watch sees a flow deleted or moved out, and the toolhost then drops it from `INDEX` (contracts.md "Flow library"), so `gui_plan {flows: true}` lists what is on disk.
+- **Push:** runs in the background 500 ms after `gui_plan`, `script_run`, `write_file`, `edit_file` or `shell`, and 500 ms after any other write of a flow file, which the toolhost sees through inotify on `/workspace/flows` (a desktop app's save, `rsh`), following the folder when a restore replaces it. It scans the folder and PUTs each file whose hash differs from its row. Content that the library refuses (a bad name, too large, a full library) is not sent again until it changes. The same watch sees a flow deleted or moved out, and the toolhost then drops it from `INDEX` (contracts.md "Flow library"), so `gui_plan {flows: true}` lists what is on disk.
 - **Which files:** regular files directly in `/workspace/flows` named `[A-Za-z0-9][A-Za-z0-9._-]*` (at most 96 characters) and ending in `.json` or `.mts`, at most 128 KiB each, UTF-8. `INDEX`, `.runs.jsonl`, `.pending.json` and the git folder stay local.
 
 ### 28.3 Decisions

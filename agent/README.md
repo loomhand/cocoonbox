@@ -37,7 +37,7 @@ toolhost: shell · files · CDP browser · shuttle (desk and computer verbs)
 | `runner.rs` | Per-agent turn queue, the main agent loop, take-over approvals, cancel |
 | `computer.rs` | Computer subagent: a vision model driving the desktop through `computer_state` / `computer_act` |
 | `llm/` | Streaming gw client. `openai.rs` is chat completions (SSE) and serves every model by default. `anthropic.rs` is Messages, used for `anthropic/` models only when `GW_ANTHROPIC_WIRE=messages`. `sse.rs` is the decoder |
-| `store.rs` | SQLite tables: agents, turns, transcript entries (global monotonic `seq`), client-nonce dedupe |
+| `store.rs` | SQLite tables: agents, turns, transcript entries (global monotonic `seq`), flow library sync |
 | `bus.rs` | Event fan-out. Offsets start at boot time in µs. A bounded replay ring serves `Events(from_offset)` |
 | `mcp.rs` | MCP Streamable HTTP at `/mcp` for external agents (mode B), next to gRPC on the same listener |
 | `toolhost/` | `rpc.rs` (u32-length-prefixed JSON, one call per connection), `shell.rs`, `files.rs`, `browser.rs` (Chrome over CDP), `act.rs` and `ground.rs` (`computer_act` on shuttle's computer verbs) |
