@@ -13,7 +13,7 @@ use tokio::io::AsyncBufReadExt;
 use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
 use super::{
-    Args, Copy, Fail, Layout, call, git, git_env, home_shell, is_hex, locked, read_index,
+    Args, Fail, Layout, RepoCopy, call, git, git_env, home_shell, is_hex, locked, read_index,
     snapshot_ref, tmux_session, with_index, write_atomic,
 };
 
@@ -44,7 +44,7 @@ struct Offload<'a> {
     repo: &'a str,
     kind: &'a str,
     id: &'a str,
-    copy: &'a Copy,
+    copy: &'a RepoCopy,
 }
 
 impl Offload<'_> {
@@ -422,10 +422,10 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
             let dir = workspace.join(&name);
             index.insert(
                 key.clone(),
-                Copy {
+                RepoCopy {
                     name,
                     dir,
-                    ..Copy::default()
+                    ..RepoCopy::default()
                 },
             );
         }
@@ -1213,9 +1213,9 @@ mod tests {
         let mut index = super::super::Index::new();
         index.insert(
             "aaaaaaaaaaaa".into(),
-            Copy {
+            RepoCopy {
                 name: "gron".into(),
-                ..Copy::default()
+                ..RepoCopy::default()
             },
         );
         assert_eq!(

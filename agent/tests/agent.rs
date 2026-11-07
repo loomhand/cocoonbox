@@ -5483,7 +5483,7 @@ async fn an_offload_post_reaches_session_events_without_its_body() {
     let mut index = offload::Index::new();
     index.insert(
         "0123456789ab".to_owned(),
-        offload::Copy {
+        offload::RepoCopy {
             name: "gron".into(),
             dir: h.workspace.clone(),
             offload_id: "a1b2c3d4e5f6".into(),

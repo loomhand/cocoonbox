@@ -118,7 +118,7 @@ impl From<String> for Fail {
 
 /// One repo key's entry in `index.json`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct Copy {
+pub struct RepoCopy {
     pub name: String,
     pub dir: PathBuf,
     /// The offload that holds the copy; empty when released.
@@ -130,7 +130,7 @@ pub struct Copy {
 }
 
 /// Repo key → its box copy.
-pub type Index = BTreeMap<String, Copy>;
+pub type Index = BTreeMap<String, RepoCopy>;
 
 /// Parsed flags: `--name value` pairs, bare `--flag`s, and positional words.
 #[derive(Debug, Default)]
@@ -321,7 +321,7 @@ where
 }
 
 /// The copy's state: `busy` while its session is not stopped, else `unreturned`, `mirror` or `absent`.
-pub fn copy_state(copy: Option<&Copy>, running: bool) -> &'static str {
+pub fn copy_state(copy: Option<&RepoCopy>, running: bool) -> &'static str {
     match copy {
         _ if running => "busy",
         Some(c) if c.unreturned => "unreturned",

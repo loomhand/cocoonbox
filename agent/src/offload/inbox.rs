@@ -20,7 +20,7 @@ use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY, MAX_PROMPT};
 use super::packer::ACCEPT_WAIT;
 use super::{
-    Copy, Layout, MAX_WAIT_S, read_index, snapshot_ref, tmux_session, with_index, write_atomic,
+    Layout, MAX_WAIT_S, RepoCopy, read_index, snapshot_ref, tmux_session, with_index, write_atomic,
 };
 use crate::journal::Journal;
 use crate::pb::{self, event};
@@ -338,7 +338,7 @@ impl Inbox {
         room(recs)?;
         let repo = req.repo.clone();
         let offload_id = req.offload_id.clone();
-        let copy: Copy = with_index(&self.layout, move |index| {
+        let copy: RepoCopy = with_index(&self.layout, move |index| {
             let copy = index
                 .get_mut(&repo)
                 .filter(|c| c.offload_id == offload_id && !offload_id.is_empty())

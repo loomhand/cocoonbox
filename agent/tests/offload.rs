@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use cocoonbox_agent::journal::Journal;
 use cocoonbox_agent::offload::inbox::Inbox;
-use cocoonbox_agent::offload::{self, Args, Copy, Fail, Index, Layout, handover, packer};
+use cocoonbox_agent::offload::{self, Args, Fail, Index, Layout, RepoCopy, handover, packer};
 use cocoonbox_agent::pb::{self, event};
 use cocoonbox_agent::store::Store;
 use serde_json::{Value, json};
@@ -58,7 +58,7 @@ impl TestBox {
         let mut index = Index::new();
         index.insert(
             REPO.to_owned(),
-            Copy {
+            RepoCopy {
                 name: "gron".into(),
                 dir: workspace.join("gron"),
                 offload_id: ID.into(),
