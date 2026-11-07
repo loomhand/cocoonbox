@@ -1337,13 +1337,12 @@ func (b *Backend) renew(ctx context.Context) error {
 }
 
 func (b *Backend) loop(ctx context.Context, interval time.Duration, fn task) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	tick := time.Tick(interval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		callCtx, cancel := context.WithTimeout(ctx, loopTimeout)
 		if err := fn(callCtx); err != nil {
