@@ -6,8 +6,7 @@ import Synchronization
 import UserNotifications
 
 // BusyWarning asks before a hibernate or an upgrade while a box agent works (design.md §27, D20).
-struct BusyWarning: Identifiable {
-    let id = UUID()
+struct BusyWarning {
     var title: String
     var detail: String
     var proceed: @MainActor () -> Void

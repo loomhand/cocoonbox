@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Perf.mark("did_finish_launching")
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

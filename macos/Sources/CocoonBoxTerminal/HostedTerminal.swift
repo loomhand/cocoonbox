@@ -33,7 +33,7 @@ public struct LocalAgentTerminal: NSViewRepresentable {
     }
 }
 
-// TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard and it does not take focus.
+// TerminalContainer adopts the terminal on entering a window and focuses it when it takes focus or when the window or the sidebar list holds the keyboard.
 private final class TerminalContainer: NSView {
     weak var session: (any HostedTerminal)?
     var takesFocus = false

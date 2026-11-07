@@ -216,7 +216,6 @@ struct SidebarView: View {
         }
     }
 
-    // deletable is false for no selection, a local session, or an MCP agent whose session is still open.
     private var deletable: Bool {
         guard let agent = model.selectedAgent else { return false }
         return agent.externalClient == nil || (agent.status != .running && agent.status != .waitingForUser)

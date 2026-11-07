@@ -14,9 +14,9 @@ final class ScreenController {
     }
 
     // eagerHandshakeKey enables the eager RFB handshake for a passwordless RFB 3.8 server; CB_RFB_EAGER overrides it.
-    static let eagerHandshakeKey = "rfbEagerHandshake"
-    static let clipboardLimit = 1 << 20
-    static let copyWindow: TimeInterval = 2
+    private static let eagerHandshakeKey = "rfbEagerHandshake"
+    private static let clipboardLimit = 1 << 20
+    private static let copyWindow: TimeInterval = 2
 
     var status = Status.idle
     var framebufferSize = CGSize.zero

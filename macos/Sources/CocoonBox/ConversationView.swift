@@ -142,7 +142,6 @@ struct LocalAgentPane: View {
         }
     }
 
-    // hint names the box the screen shows when it is not the agent's default.
     static func hint(screen: Box?, default box: Box?) -> String? {
         guard let screen, screen.id != box?.id else { return nil }
         return "Screen shows \(screen.name)"

@@ -213,7 +213,6 @@ final class AppModel {
         boxes.first { $0.id == session.record.boxID }
     }
 
-    // recentBoxes is the boxes session called in the last recentCall seconds.
     func recentBoxes(of session: LocalAgentSession, now: Date = Date()) -> [Box] {
         let calls = localCalls[session.id] ?? [:]
         return boxes.filter { box in calls[box.id].map { now.timeIntervalSince($0) < Self.recentCall } ?? false }
@@ -586,18 +585,17 @@ final class AppModel {
     private func connect(endpoint: Endpoint, token: String) {
         disconnect()
         do {
-            connection = try BoxConnection(endpoint: endpoint, token: token)
+            let connection = try BoxConnection(endpoint: endpoint, token: token)
+            self.connection = connection
+            Perf.mark("connect", endpoint.url)
+            boxesTask = Task {
+                await connection.watchBoxes(
+                    onBoxes: { list, offered in await self.received(boxes: list, offered: offered) },
+                    onDisconnect: { error in await self.boxesDropped(error) }
+                )
+            }
         } catch {
             lastError = "connect: \(error)"
-            return
-        }
-        Perf.mark("connect", endpoint.url)
-        guard let connection else { return }
-        boxesTask = Task {
-            await connection.watchBoxes(
-                onBoxes: { list, offered in await self.received(boxes: list, offered: offered) },
-                onDisconnect: { error in await self.boxesDropped(error) }
-            )
         }
     }
 
