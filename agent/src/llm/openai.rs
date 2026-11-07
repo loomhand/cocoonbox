@@ -1,13 +1,16 @@
 //! OpenAI chat-completions request body and SSE parser.
 
+use std::borrow::Cow;
 use std::collections::{HashSet, VecDeque};
 
-use base64::Engine;
+use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD as B64;
-use serde_json::{Value, json};
+use serde::{Serialize, Serializer};
+use serde_json::Value;
 
 use super::{
-    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, image_mime, index_of, stream_error,
+    Cached, Delta, EPHEMERAL, IMAGE_OMITTED, Message, Part, Request, Usage, image_mime, index_of,
+    stream_error,
 };
 
 /// Tracks which tool-call indexes already started.
@@ -77,15 +80,108 @@ impl Parser {
     }
 }
 
+#[derive(Serialize)]
+pub struct Body<'a> {
+    model: &'a str,
+    stream: bool,
+    stream_options: StreamOptions,
+    max_tokens: u32,
+    messages: Vec<Msg<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Tool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
+#[derive(Serialize)]
+struct Msg<'a> {
+    role: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<&'a str>,
+    content: Content<'a>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tool_calls: Vec<Call<'a>>,
+}
+
+impl<'a> Msg<'a> {
+    fn new(role: &'static str, content: Content<'a>) -> Self {
+        Self {
+            role,
+            tool_call_id: None,
+            content,
+            tool_calls: Vec::new(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Content<'a> {
+    Text(Cow<'a, str>),
+    Parts(Vec<Cached<Kind<'a>>>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Kind<'a> {
+    Text { text: Cow<'a, str> },
+    ImageUrl { image_url: ImageUrl<'a> },
+}
+
+#[derive(Serialize)]
+struct ImageUrl<'a> {
+    #[serde(serialize_with = "data_url")]
+    url: &'a [u8],
+}
+
+#[derive(Serialize)]
+struct Call<'a> {
+    id: &'a str,
+    r#type: &'static str,
+    function: Function<'a>,
+}
+
+#[derive(Serialize)]
+struct Function<'a> {
+    name: &'a str,
+    arguments: &'a str,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "function")]
+struct Tool<'a> {
+    function: Spec<'a>,
+}
+
+#[derive(Serialize)]
+struct Spec<'a> {
+    name: &'a str,
+    description: &'a str,
+    parameters: &'a Value,
+}
+
 /// Builds the chat-completions request body.
-pub fn body(req: &Request<'_>) -> Value {
+pub fn body<'a>(req: &Request<'a>) -> Body<'a> {
     let cache = req.model.starts_with("anthropic/");
-    let mut messages = vec![if cache {
-        json!({"role": "system", "content": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}]})
+    let system = if cache {
+        Content::Parts(vec![Cached {
+            kind: Kind::Text {
+                text: req.system.into(),
+            },
+            cache_control: Some(EPHEMERAL),
+        }])
     } else {
-        json!({"role": "system", "content": req.system})
-    }];
-    let mut shots: Vec<Part> = Vec::new();
+        Content::Text(req.system.into())
+    };
+    let mut messages = vec![Msg::new("system", system)];
+    let mut shots: Vec<Cached<Kind<'a>>> = Vec::new();
     for m in req.messages {
         if !matches!(m, Message::Tool { .. }) {
             flush_shots(&mut messages, &mut shots);
@@ -96,19 +192,18 @@ pub fn body(req: &Request<'_>) -> Value {
                 if text.is_empty() && calls.is_empty() {
                     continue;
                 }
-                let mut msg = json!({"role": "assistant", "content": text});
-                if !calls.is_empty() {
-                    msg["tool_calls"] = calls
-                        .iter()
-                        .map(|c| {
-                            json!({
-                                "id": c.id,
-                                "type": "function",
-                                "function": {"name": c.name, "arguments": c.arguments},
-                            })
-                        })
-                        .collect();
-                }
+                let mut msg = Msg::new("assistant", Content::Text(text.into()));
+                msg.tool_calls = calls
+                    .iter()
+                    .map(|c| Call {
+                        id: &c.id,
+                        r#type: "function",
+                        function: Function {
+                            name: &c.name,
+                            arguments: &c.arguments,
+                        },
+                    })
+                    .collect();
                 messages.push(msg);
             }
             Message::Tool {
@@ -117,101 +212,112 @@ pub fn body(req: &Request<'_>) -> Value {
                 image,
                 ..
             } => {
-                let mut content = text.clone();
-                if image.is_some() && !req.vision {
-                    content.push('\n');
-                    content.push_str(IMAGE_OMITTED);
-                }
-                let mut msg = json!({"role": "tool", "tool_call_id": call_id});
-                msg["content"] = content.into();
+                let content = if image.is_some() && !req.vision {
+                    Cow::Owned(format!("{text}\n{IMAGE_OMITTED}"))
+                } else {
+                    Cow::Borrowed(text.as_str())
+                };
+                let mut msg = Msg::new("tool", Content::Text(content));
+                msg.tool_call_id = Some(call_id);
                 messages.push(msg);
                 if let Some(img) = image.as_ref().filter(|_| req.vision) {
-                    shots.push(Part::Text(format!(
+                    shots.push(text_part(format!(
                         "Screenshot returned by tool call {call_id}:"
                     )));
-                    shots.push(Part::Image(img.clone()));
+                    shots.push(
+                        Kind::ImageUrl {
+                            image_url: ImageUrl { url: img },
+                        }
+                        .into(),
+                    );
                 }
             }
         }
     }
     flush_shots(&mut messages, &mut shots);
     if cache && let Some(last) = messages.last_mut() {
-        cache_tail(&mut last["content"]);
+        cache_tail(&mut last.content);
     }
-    let mut body = json!({
-        "model": req.model,
-        "stream": true,
-        "stream_options": {"include_usage": true},
-        "max_tokens": req.max_tokens,
-    });
-    body["messages"] = Value::Array(messages);
-    if let Some(effort) = req.effort {
-        body["reasoning_effort"] = effort.into();
+    let tools: Vec<Tool<'a>> = req
+        .tools
+        .iter()
+        .map(|t| Tool {
+            function: Spec {
+                name: &t.name,
+                description: &t.description,
+                parameters: &t.parameters,
+            },
+        })
+        .collect();
+    Body {
+        model: req.model,
+        stream: true,
+        stream_options: StreamOptions {
+            include_usage: true,
+        },
+        max_tokens: req.max_tokens,
+        messages,
+        reasoning_effort: req.effort,
+        tool_choice: (req.forbid_calls && !tools.is_empty()).then_some("none"),
+        tools,
     }
-    if !req.tools.is_empty() {
-        body["tools"] = req
-            .tools
-            .iter()
-            .map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
-                })
-            })
-            .collect();
-        if req.forbid_calls {
-            body["tool_choice"] = "none".into();
-        }
-    }
-    body
 }
 
 /// Marks the last part of `content` as a prompt-cache breakpoint; text content becomes one text part.
-fn cache_tail(content: &mut Value) {
-    if let Value::String(text) = content
+fn cache_tail(content: &mut Content<'_>) {
+    if let Content::Text(text) = content
         && !text.is_empty()
     {
-        let mut part = json!({"type": "text"});
-        part["text"] = std::mem::take(text).into();
-        *content = Value::Array(vec![part]);
+        *content = Content::Parts(vec![text_part(std::mem::take(text))]);
     }
-    if let Some(part) = content.as_array_mut().and_then(|c| c.last_mut()) {
-        part["cache_control"] = json!({"type": "ephemeral"});
+    if let Content::Parts(parts) = content
+        && let Some(part) = parts.last_mut()
+    {
+        part.cache_control = Some(EPHEMERAL);
     }
 }
 
-fn flush_shots(messages: &mut Vec<Value>, shots: &mut Vec<Part>) {
+fn flush_shots<'a>(messages: &mut Vec<Msg<'a>>, shots: &mut Vec<Cached<Kind<'a>>>) {
     if !shots.is_empty() {
-        messages.push(user(shots, true));
-        shots.clear();
+        messages.push(Msg::new("user", Content::Parts(std::mem::take(shots))));
     }
 }
 
-fn user(parts: &[Part], vision: bool) -> Value {
-    let content: Vec<Value> = parts
+fn user(parts: &[Part], vision: bool) -> Msg<'_> {
+    let content = parts
         .iter()
         .map(|p| match p {
-            Part::Text(t) => json!({"type": "text", "text": t}),
-            Part::Image(img) if vision => {
-                let mut url = format!("data:{};base64,", image_mime(img));
-                B64.encode_string(img, &mut url);
-                let mut part = json!({"type": "image_url", "image_url": {}});
-                part["image_url"]["url"] = url.into();
-                part
+            Part::Text(t) => text_part(t.as_str()),
+            Part::Image(img) if vision => Kind::ImageUrl {
+                image_url: ImageUrl { url: img },
             }
-            Part::Image(_) => json!({"type": "text", "text": IMAGE_OMITTED}),
+            .into(),
+            Part::Image(_) => text_part(IMAGE_OMITTED),
         })
         .collect();
-    let mut msg = json!({"role": "user"});
-    msg["content"] = Value::Array(content);
-    msg
+    Msg::new("user", Content::Parts(content))
+}
+
+fn text_part<'a>(text: impl Into<Cow<'a, str>>) -> Cached<Kind<'a>> {
+    Kind::Text { text: text.into() }.into()
+}
+
+fn data_url<S: Serializer>(img: &&[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_str(&format_args!(
+        "data:{};base64,{}",
+        image_mime(img),
+        Base64Display::new(img, &B64)
+    ))
 }
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
     use bytes::Bytes;
+    use serde_json::json;
 
     use super::*;
+    use crate::llm::tests::each_wire_request;
     use crate::llm::{ToolCall, ToolSpec};
 
     fn feed_all(data: &[&str]) -> Vec<Delta> {
@@ -339,7 +445,7 @@ mod tests {
             forbid_calls: false,
             effort: None,
         };
-        let text_body = body(&req);
+        let text_body = value(&req);
         let msgs = text_body["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 5);
         assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "shell");
@@ -348,19 +454,19 @@ mod tests {
         assert!(text_body.get("tool_choice").is_none());
         assert!(!text_body.to_string().contains("cache_control"));
         assert!(text_body.get("reasoning_effort").is_none());
-        let effort = body(&Request {
+        let effort = value(&Request {
             effort: Some("medium"),
             ..req
         });
         assert_eq!(effort["reasoning_effort"], "medium");
         req.forbid_calls = true;
-        let report_body = body(&req);
+        let report_body = value(&req);
         assert_eq!(report_body["tool_choice"], "none");
         assert_eq!(report_body["tools"], text_body["tools"]);
         req.forbid_calls = false;
         req.vision = true;
         req.model = "anthropic/claude-sonnet-5";
-        let vision_body = body(&req);
+        let vision_body = value(&req);
         assert_eq!(
             vision_body["messages"][0]["content"][0]["cache_control"]["type"],
             "ephemeral"
@@ -412,7 +518,7 @@ mod tests {
             forbid_calls: false,
             effort: None,
         };
-        let b = body(&req);
+        let b = value(&req);
         let msgs = b["messages"].as_array().unwrap();
         assert_eq!(
             msgs[3],
@@ -423,5 +529,153 @@ mod tests {
             json!({"role": "user", "content": [{"type": "text", "text": "go"}]})
         );
         assert_eq!(b.to_string().matches("cache_control").count(), 2);
+    }
+
+    #[test]
+    fn body_serializes_to_the_bytes_of_the_json_body() {
+        each_wire_request(|req| {
+            assert_eq!(
+                serde_json::to_vec(&body(req)).unwrap(),
+                serde_json::to_vec(&json_body(req)).unwrap(),
+                "{} vision={} effort={:?} tools={} forbid={}",
+                req.model,
+                req.vision,
+                req.effort,
+                req.tools.len(),
+                req.forbid_calls
+            );
+        });
+    }
+
+    fn value(req: &Request<'_>) -> Value {
+        serde_json::to_value(body(req)).unwrap()
+    }
+
+    fn json_body(req: &Request<'_>) -> Value {
+        let cache = req.model.starts_with("anthropic/");
+        let mut messages = vec![if cache {
+            json!({"role": "system", "content": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}]})
+        } else {
+            json!({"role": "system", "content": req.system})
+        }];
+        let mut shots: Vec<Part> = Vec::new();
+        for m in req.messages {
+            if !matches!(m, Message::Tool { .. }) {
+                flush_shots(&mut messages, &mut shots);
+            }
+            match m {
+                Message::User(parts) => messages.push(user(parts, req.vision)),
+                Message::Assistant { text, calls } => {
+                    if text.is_empty() && calls.is_empty() {
+                        continue;
+                    }
+                    let mut msg = json!({"role": "assistant", "content": text});
+                    if !calls.is_empty() {
+                        msg["tool_calls"] = calls
+                            .iter()
+                            .map(|c| {
+                                json!({
+                                    "id": c.id,
+                                    "type": "function",
+                                    "function": {"name": c.name, "arguments": c.arguments},
+                                })
+                            })
+                            .collect();
+                    }
+                    messages.push(msg);
+                }
+                Message::Tool {
+                    call_id,
+                    text,
+                    image,
+                    ..
+                } => {
+                    let mut content = text.clone();
+                    if image.is_some() && !req.vision {
+                        content.push('\n');
+                        content.push_str(IMAGE_OMITTED);
+                    }
+                    let mut msg = json!({"role": "tool", "tool_call_id": call_id});
+                    msg["content"] = content.into();
+                    messages.push(msg);
+                    if let Some(img) = image.as_ref().filter(|_| req.vision) {
+                        shots.push(Part::Text(format!(
+                            "Screenshot returned by tool call {call_id}:"
+                        )));
+                        shots.push(Part::Image(img.clone()));
+                    }
+                }
+            }
+        }
+        flush_shots(&mut messages, &mut shots);
+        if cache && let Some(last) = messages.last_mut() {
+            cache_tail(&mut last["content"]);
+        }
+        let mut body = json!({
+            "model": req.model,
+            "stream": true,
+            "stream_options": {"include_usage": true},
+            "max_tokens": req.max_tokens,
+        });
+        body["messages"] = Value::Array(messages);
+        if let Some(effort) = req.effort {
+            body["reasoning_effort"] = effort.into();
+        }
+        if !req.tools.is_empty() {
+            body["tools"] = req
+                .tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "type": "function",
+                        "function": {"name": t.name, "description": t.description, "parameters": t.parameters},
+                    })
+                })
+                .collect();
+            if req.forbid_calls {
+                body["tool_choice"] = "none".into();
+            }
+        }
+        body
+    }
+
+    fn cache_tail(content: &mut Value) {
+        if let Value::String(text) = content
+            && !text.is_empty()
+        {
+            let mut part = json!({"type": "text"});
+            part["text"] = std::mem::take(text).into();
+            *content = Value::Array(vec![part]);
+        }
+        if let Some(part) = content.as_array_mut().and_then(|c| c.last_mut()) {
+            part["cache_control"] = json!({"type": "ephemeral"});
+        }
+    }
+
+    fn flush_shots(messages: &mut Vec<Value>, shots: &mut Vec<Part>) {
+        if !shots.is_empty() {
+            messages.push(user(shots, true));
+            shots.clear();
+        }
+    }
+
+    fn user(parts: &[Part], vision: bool) -> Value {
+        let content: Vec<Value> = parts
+            .iter()
+            .map(|p| match p {
+                Part::Text(t) => json!({"type": "text", "text": t}),
+                Part::Image(img) if vision => {
+                    let mut url = format!("data:{};base64,", image_mime(img));
+                    B64.encode_string(img, &mut url);
+                    let mut part = json!({"type": "image_url", "image_url": {}});
+                    part["image_url"]["url"] = url.into();
+                    part
+                }
+                Part::Image(_) => json!({"type": "text", "text": IMAGE_OMITTED}),
+            })
+            .collect();
+        let mut msg = json!({"role": "user"});
+        msg["content"] = Value::Array(content);
+        msg
     }
 }
