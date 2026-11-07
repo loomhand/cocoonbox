@@ -1,11 +1,13 @@
 //! `computer_act` on a described target: AT-SPI first, then a unique OCR match, else the caller grounds it.
 
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use super::act::{self, ask};
@@ -292,18 +294,21 @@ async fn ocr(shuttle: &Client, owner: &str) -> Result<Vec<Word>, String> {
     })
     .await
     .map_err(|e| format!("scale the screen shot: {e}"))??;
-    let path = std::env::temp_dir().join(format!("{}.png", crate::new_id("cb-ocr")));
-    tokio::fs::write(&path, png)
-        .await
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    let run = Command::new(TESSERACT)
-        .arg(&path)
-        .args(["-", "--psm", "11", "tsv"])
+    let mut child = Command::new(TESSERACT)
+        .args(["stdin", "-", "--psm", "11", "tsv"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .output();
-    let done = tokio::time::timeout(OCR_TIMEOUT, run).await;
-    let _ = tokio::fs::remove_file(&path).await;
-    let output = done
+        .spawn()
+        .map_err(|e| format!("run {TESSERACT}: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("tesseract has no stdin")?;
+    let feed = async move {
+        let _ = stdin.write_all(&png).await;
+    };
+    let run = async { tokio::join!(feed, child.wait_with_output()).1 };
+    let output = tokio::time::timeout(OCR_TIMEOUT, run)
+        .await
         .map_err(|_| format!("tesseract took over {} s", OCR_TIMEOUT.as_secs()))?
         .map_err(|e| format!("run {TESSERACT}: {e}"))?;
     if !output.status.success() {
