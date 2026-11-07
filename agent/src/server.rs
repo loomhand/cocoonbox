@@ -32,7 +32,6 @@ use crate::shuttle::Split;
 use crate::state::{Pause, StateEngine, StateError};
 use crate::toolhost::rpc::{self, Call};
 
-const MAX_REQUEST_BYTES: usize = 64 << 20;
 // the api pages chunk URLs at 2048 a message, about 1 MB
 const MAX_STATE_MESSAGE_BYTES: usize = 16 << 20;
 const DEFAULT_PAGE: u32 = 100;
@@ -471,8 +470,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let agents = AgentsServer::new(AgentsSvc {
         rt: Arc::clone(&rt),
         mcp: Arc::clone(&mcp),
-    })
-    .max_decoding_message_size(MAX_REQUEST_BYTES);
+    });
     let session = SessionServer::new(SessionSvc {
         rt: Arc::clone(&rt),
         tools: rpc::Client::new(rt.cfg.toolhost_socket.clone()),

@@ -587,28 +587,6 @@ fn shuttle_tool(tool: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    const SHUTTLE_ANDROID: [&str; 19] = [
-        "desk_windows",
-        "desk_wait",
-        "desk_snapshot",
-        "desk_find",
-        "desk_read",
-        "desk_press",
-        "desk_act",
-        "desk_at",
-        "desk_key",
-        "desk_type",
-        "desk_click",
-        "desk_focus",
-        "desk_close",
-        "desk_launch",
-        "desk_screen",
-        "desk_shot",
-        "desk_computer_state",
-        "desk_computer_act",
-        "desk_computer_end",
-    ];
-
     pub(super) fn config(dir: &Path, automation: Automation) -> ToolhostConfig {
         ToolhostConfig {
             socket: crate::testing::endpoint(dir, "toolhost.sock"),
@@ -716,7 +694,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_android_box_sends_its_screen_and_desk_calls_to_shuttle() {
+    async fn an_android_box_sends_its_screen_and_computer_calls_to_shuttle() {
         let dir = tempfile::tempdir().unwrap();
         let desk = crate::testing::endpoint(dir.path(), "desk.sock");
         let (seen, mut tools) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -730,7 +708,7 @@ mod tests {
                         image_b64: Some("aW1n".into()),
                         ..Output::text("720x1280 screen")
                     },
-                    tool if SHUTTLE_ANDROID.contains(&tool) => Output::text("{}"),
+                    tool if tool.starts_with("desk_computer_") => Output::text("{}"),
                     tool => Output::error(format!("unknown desk tool {tool}")),
                 };
                 seen.send(call.tool).unwrap();

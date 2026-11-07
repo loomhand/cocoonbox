@@ -1227,23 +1227,14 @@ async fn run_delegate(messages_wire: bool) {
     assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
     assert!(!main_after.to_string().contains(PNG));
 
-    let mut actions = Vec::new();
     while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(500), events.message())
         .await
         .map(Result::transpose)
     {
         if let Some(event::Body::ComputerAction(a)) = ev.body {
-            assert_eq!(a.agent_id, agent_id);
-            actions.push((a.action, a.text));
+            panic!("a desk box announced {a:?}");
         }
     }
-    assert_eq!(
-        actions,
-        [
-            ("type".to_owned(), "hello".to_owned()),
-            ("key".to_owned(), "return".to_owned())
-        ]
-    );
 }
 
 async fn delegate_once(
@@ -3611,22 +3602,17 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         .into_inner();
     assert!(listed.agents.is_empty(), "{:?}", listed.agents);
 
-    let mut saw_action = false;
     while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(300), events.message())
         .await
         .map(Result::transpose)
     {
         match ev.body {
-            Some(event::Body::ComputerAction(a)) => {
-                assert_eq!((a.action.as_str(), a.x, a.y), ("click", 0, 0));
-                saw_action = true;
-            }
+            Some(event::Body::ComputerAction(a)) => panic!("a desk box announced {a:?}"),
             Some(event::Body::Transcript(e)) => panic!("an owner session recorded {e:?}"),
             Some(event::Body::Agent(a)) => panic!("an owner session made agent {a:?}"),
             _ => {}
         }
     }
-    assert!(saw_action);
 
     let discover = reqwest::Client::new()
         .post(format!("{}/mcp", h.endpoint))
@@ -4727,11 +4713,7 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
     let first = driver_calls(&h, "desk_look")[0]["session"].clone();
 
     let mut stream = mcp
-        .http
-        .get(&mcp.url)
-        .header("x-cocoonbox-credential", owner())
-        .header("mcp-session-id", &mcp.session)
-        .header("accept", "text/event-stream")
+        .authorize(mcp.http.get(&mcp.url).header("accept", "text/event-stream"))
         .send()
         .await
         .unwrap();

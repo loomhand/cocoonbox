@@ -71,7 +71,7 @@ pub struct Dispatcher {
 }
 
 impl Dispatcher {
-    /// Creates a dispatcher over `tools` that writes history to `journal` and syncs `flows` around the calls that read or write them; with `scaled`, `computer_act` takes x,y in screenshot pixels, which it does not announce.
+    /// Creates a dispatcher over `tools` that writes history to `journal` and syncs `flows` around the calls that read or write them.
     pub fn new(
         tools: Arc<dyn Tools>,
         journal: Arc<Journal>,
@@ -147,7 +147,7 @@ impl Dispatcher {
         name: &str,
         mut args: Value,
     ) -> ToolOutput {
-        if name == "computer_act" {
+        if name == "computer_act" && !self.scaled {
             match args["actions"].as_array() {
                 Some(actions) => actions.iter().for_each(|a| self.announce(owner, a)),
                 None => self.announce(owner, &args),
@@ -222,10 +222,7 @@ impl Dispatcher {
     }
 
     fn announce(&self, agent_id: &str, args: &Value) {
-        let coord = |k: &str| match args[k].as_f64() {
-            Some(v) if !self.scaled => v.round() as i32,
-            _ => 0,
-        };
+        let coord = |k: &str| args[k].as_f64().map_or(0, |v| v.round() as i32);
         let text = ["text", "key", "app"]
             .iter()
             .find_map(|k| args[*k].as_str().map(str::to_owned))

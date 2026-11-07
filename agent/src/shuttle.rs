@@ -38,10 +38,10 @@ impl Tools for Split {
     async fn run(&self, owner: &str, name: &str, args: Value) -> ToolOutput {
         let shots = ToolhostShots(&self.toolhost);
         let answer = match name {
-            n if let Some(tool) = desk_verb(n, &args) => {
+            "desk" => {
                 let call = Call {
                     agent_id: owner.to_owned(),
-                    tool,
+                    tool: format!("desk_{}", args["op"].as_str().unwrap_or_default()),
                     args,
                 };
                 self.shuttle.desk(&call, DESK_DEADLINE).await
@@ -88,15 +88,6 @@ impl Shots for ToolhostShots<'_> {
             image_b64,
             path: (!out.text.is_empty()).then(|| PathBuf::from(out.text)),
         }))
-    }
-}
-
-/// The desk verb shuttle answers for tool `name`: the verb itself, or `desk_<op>` for the `desk` tool.
-fn desk_verb(name: &str, args: &Value) -> Option<String> {
-    if name == "desk" {
-        Some(format!("desk_{}", args["op"].as_str().unwrap_or_default()))
-    } else {
-        name.starts_with("desk_").then(|| name.to_owned())
     }
 }
 

@@ -538,10 +538,8 @@ async fn a_usage_limit_after_the_last_prompt_writes_a_blocked_entry() {
 async fn a_lost_session_restarts_from_the_newest_progress_hand_over() {
     let b = TestBox::start(false).await;
     let outbox = b.layout.state.join(REPO).join("outbox.jsonl");
-    std::fs::create_dir_all(outbox.parent().unwrap()).unwrap();
     let previous = r#"{"seq":1,"kind":"progress","offload_id":"ffffffffffff","cli":"claude","time_ms":1,"body":"PREVIOUS-OFFLOAD"}
 "#;
-    std::fs::write(&outbox, previous).unwrap();
     b.start_session("FIRST").await;
     b.call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "OLD-HANDOVER"}))
         .await;
