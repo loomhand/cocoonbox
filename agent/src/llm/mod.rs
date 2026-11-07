@@ -9,10 +9,12 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use base64::Engine;
+use base64::display::Base64Display;
 use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
+use serde::{Serialize, Serializer};
 use serde_json::Value;
 
 /// Placeholder text for images sent to a text-only model.
@@ -43,6 +45,9 @@ const READ_FAILED: &str = "read model stream: ";
 const MODEL_ERROR: &str = "model error: ";
 const CREDITS_USED_UP: &str = "model credits are used up";
 const QUOTA_EXCEEDED: &str = "service_quota_exceeded_exception";
+const EPHEMERAL: Typed = Typed {
+    r#type: "ephemeral",
+};
 
 /// A tool the model may call; connector tools carry names and descriptions of their own.
 pub struct ToolSpec {
@@ -220,18 +225,18 @@ impl Client {
         {
             (
                 "messages",
-                anthropic::body(req),
+                serde_json::to_vec(&anthropic::body(req)),
                 Parser::Messages(anthropic::Parser::default()),
             )
         } else {
             (
                 "chat/completions",
-                openai::body(req),
+                serde_json::to_vec(&openai::body(req)),
                 Parser::Chat(openai::Parser::default()),
             )
         };
         let url = format!("{}/{path}", self.base_url);
-        let body = serde_json::to_vec(&body).map_err(|e| Failure {
+        let body = body.map_err(|e| Failure {
             message: format!("encode request: {e}"),
             transient: false,
         })?;
@@ -331,6 +336,28 @@ struct Failure {
     transient: bool,
 }
 
+#[derive(Serialize)]
+struct Cached<K> {
+    #[serde(flatten)]
+    kind: K,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_control: Option<Typed>,
+}
+
+impl<K> From<K> for Cached<K> {
+    fn from(kind: K) -> Self {
+        Self {
+            kind,
+            cache_control: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct Typed {
+    r#type: &'static str,
+}
+
 /// Whether a gw model slug accepts image input.
 pub fn has_vision(model: &str) -> bool {
     VISION_PREFIXES.iter().any(|p| model.starts_with(p)) || model.contains("-vl")
@@ -350,6 +377,10 @@ pub fn image_mime(data: &[u8]) -> &'static str {
 /// Encodes image bytes as base64.
 pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
+}
+
+fn base64<S: Serializer>(data: &&[u8], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_str(&Base64Display::new(data, &B64))
 }
 
 fn index_of(v: &Value) -> usize {
@@ -703,6 +734,105 @@ mod tests {
                 cached: 80
             }
         );
+    }
+
+    pub(super) fn each_wire_request(mut check: impl FnMut(&Request<'_>)) {
+        let png = |len: usize| {
+            let mut img = b"\x89PNG".to_vec();
+            img.extend((0..len).map(|i| (i * 31 % 251) as u8));
+            Bytes::from(img)
+        };
+        let jpeg = Bytes::from_static(b"\xff\xd8\xff\xe0jfif");
+        let webp = Bytes::from_static(b"RIFF\0\0\0\0WEBPVP8 ");
+        let call = |id: &str, name: &str, arguments: &str| ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
+        };
+        let tool =
+            |call_id: &str, text: &str, image: Option<Bytes>, is_error: bool| Message::Tool {
+                call_id: call_id.into(),
+                text: text.into(),
+                image,
+                is_error,
+            };
+        let go = || Message::User(vec![Part::Text("go".into())]);
+        let ask = || Message::Assistant {
+            text: String::new(),
+            calls: vec![call("c1", "shell", "{}")],
+        };
+        let histories = [
+            vec![
+                Message::User(vec![
+                    Part::Text("task \"quoted\" \u{e9} \u{4e2d} \u{1}\t\n\\ </end>".into()),
+                    Part::Image(png(16)),
+                    Part::Image(jpeg.clone()),
+                ]),
+                Message::Assistant {
+                    text: "ok".into(),
+                    calls: vec![
+                        call("t1", "computer_state", ""),
+                        call(
+                            "t2",
+                            "computer_act",
+                            r#"{"action":"click","x":1.50,"y":1e2,"s":"\u00e9 \"q\""}"#,
+                        ),
+                        call("t3", "shell", "[1]"),
+                    ],
+                },
+                tool("t1", "state", Some(png(5000)), false),
+                tool("t2", "", None, true),
+                tool("t3", "out\nline", Some(webp), false),
+                Message::Assistant {
+                    text: String::new(),
+                    calls: Vec::new(),
+                },
+                Message::User(vec![Part::Text("next".into())]),
+                Message::Assistant {
+                    text: "thinking about it".into(),
+                    calls: Vec::new(),
+                },
+                tool("t4", "late", None, false),
+                Message::User(Vec::new()),
+            ],
+            Vec::new(),
+            vec![go(), ask()],
+            vec![go(), ask(), tool("c1", "ok", None, false)],
+            vec![go(), ask(), tool("c1", "", Some(jpeg), false)],
+        ];
+        let shell = ToolSpec {
+            name: "shell".into(),
+            description: "run \"it\"\n".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {"command": {"type": "string", "description": "a \u{e9}"}}, "required": ["command"]}),
+        };
+        let act = ToolSpec {
+            name: "computer_act".into(),
+            description: "act".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        };
+        let tool_sets: [&[&ToolSpec]; 2] = [&[], &[&shell, &act]];
+        for messages in &histories {
+            for model in ["anthropic/claude-sonnet-5", "deepseek/x"] {
+                for vision in [false, true] {
+                    for effort in [None, Some("none"), Some("minimal"), Some("high")] {
+                        for tools in tool_sets {
+                            for forbid_calls in [false, true] {
+                                check(&Request {
+                                    model,
+                                    system: "sys \"s\"",
+                                    messages,
+                                    tools,
+                                    max_tokens: 64,
+                                    vision,
+                                    forbid_calls,
+                                    effort,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn probe_request() -> Request<'static> {

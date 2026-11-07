@@ -2,10 +2,12 @@
 
 use std::collections::VecDeque;
 
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::{
-    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, index_of, stream_error,
+    Cached, Delta, EPHEMERAL, IMAGE_OMITTED, Message, Part, Request, Typed, Usage, base64,
+    image_mime, index_of, stream_error,
 };
 
 /// Accumulates usage across `message_start` and `message_delta`.
@@ -81,35 +83,103 @@ impl Parser {
     }
 }
 
+#[derive(Serialize)]
+pub struct Body<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    stream: bool,
+    system: [Cached<Block<'a>>; 1],
+    messages: Vec<Turn<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<Effort<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<Tool<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Typed>,
+}
+
+#[derive(Serialize)]
+struct Turn<'a> {
+    role: &'static str,
+    content: Vec<Cached<Block<'a>>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Block<'a> {
+    Text {
+        text: &'a str,
+    },
+    Image {
+        source: Source<'a>,
+    },
+    ToolUse {
+        id: &'a str,
+        name: &'a str,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: &'a str,
+        is_error: bool,
+        content: Vec<Block<'a>>,
+    },
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "base64")]
+struct Source<'a> {
+    media_type: &'static str,
+    #[serde(serialize_with = "base64")]
+    data: &'a [u8],
+}
+
+#[derive(Serialize)]
+struct Effort<'a> {
+    effort: &'a str,
+}
+
+#[derive(Serialize)]
+struct Tool<'a> {
+    name: &'a str,
+    description: &'a str,
+    input_schema: &'a Value,
+}
+
 /// Builds the Messages request body with prompt caching on the system prompt and the tail.
-pub fn body(req: &Request<'_>) -> Value {
-    let mut messages: Vec<Value> = Vec::new();
+pub fn body<'a>(req: &Request<'a>) -> Body<'a> {
+    let mut messages: Vec<Turn<'a>> = Vec::new();
     for m in req.messages {
         match m {
             Message::User(parts) => {
-                let blocks = parts.iter().map(|p| part(p, req.vision)).collect();
+                let blocks = parts.iter().map(|p| part(p, req.vision).into()).collect();
                 push_user_blocks(&mut messages, blocks);
             }
             Message::Assistant { text, calls } => {
-                let mut content = Vec::new();
+                let mut content: Vec<Cached<Block<'a>>> = Vec::new();
                 if !text.is_empty() {
-                    content.push(json!({"type": "text", "text": text}));
+                    content.push(Block::Text { text }.into());
                 }
                 for c in calls {
                     let input: Value = serde_json::from_str(&c.arguments)
                         .ok()
                         .filter(Value::is_object)
                         .unwrap_or_else(|| json!({}));
-                    let mut block = json!({"type": "tool_use", "id": c.id, "name": c.name});
-                    block["input"] = input;
-                    content.push(block);
+                    content.push(
+                        Block::ToolUse {
+                            id: &c.id,
+                            name: &c.name,
+                            input,
+                        }
+                        .into(),
+                    );
                 }
                 if content.is_empty() {
                     continue;
                 }
-                let mut msg = json!({"role": "assistant"});
-                msg["content"] = Value::Array(content);
-                messages.push(msg);
+                messages.push(Turn {
+                    role: "assistant",
+                    content,
+                });
             }
             Message::Tool {
                 call_id,
@@ -117,79 +187,80 @@ pub fn body(req: &Request<'_>) -> Value {
                 image,
                 is_error,
             } => {
-                let mut content = vec![
-                    json!({"type": "text", "text": if text.is_empty() { "(no output)" } else { text }}),
-                ];
+                let mut content = vec![Block::Text {
+                    text: if text.is_empty() { "(no output)" } else { text },
+                }];
                 if let Some(img) = image {
                     content.push(image_part(img, req.vision));
                 }
-                let mut block =
-                    json!({"type": "tool_result", "tool_use_id": call_id, "is_error": is_error});
-                block["content"] = Value::Array(content);
-                push_user_blocks(&mut messages, vec![block]);
+                let block = Block::ToolResult {
+                    tool_use_id: call_id,
+                    is_error: *is_error,
+                    content,
+                };
+                push_user_blocks(&mut messages, vec![block.into()]);
             }
         }
     }
-    if let Some(last) = messages
-        .last_mut()
-        .and_then(|m| m["content"].as_array_mut())
-        .and_then(|c| c.last_mut())
-    {
-        last["cache_control"] = json!({"type": "ephemeral"});
+    if let Some(last) = messages.last_mut().and_then(|m| m.content.last_mut()) {
+        last.cache_control = Some(EPHEMERAL);
     }
-    let mut body = json!({
-        "model": req.model,
-        "max_tokens": req.max_tokens,
-        "stream": true,
-        "system": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}],
-    });
-    body["messages"] = Value::Array(messages);
-    if let Some(effort) = req.effort.filter(|e| *e != "none") {
-        let effort = if effort == "minimal" { "low" } else { effort };
-        body["output_config"] = json!({"effort": effort});
+    let tools: Vec<Tool<'a>> = req
+        .tools
+        .iter()
+        .map(|t| Tool {
+            name: &t.name,
+            description: &t.description,
+            input_schema: &t.parameters,
+        })
+        .collect();
+    Body {
+        model: req.model,
+        max_tokens: req.max_tokens,
+        stream: true,
+        system: [Cached {
+            kind: Block::Text { text: req.system },
+            cache_control: Some(EPHEMERAL),
+        }],
+        messages,
+        output_config: req.effort.filter(|e| *e != "none").map(|effort| Effort {
+            effort: if effort == "minimal" { "low" } else { effort },
+        }),
+        tool_choice: (req.forbid_calls && !tools.is_empty()).then_some(Typed { r#type: "none" }),
+        tools,
     }
-    if !req.tools.is_empty() {
-        body["tools"] = req
-            .tools
-            .iter()
-            .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.parameters}))
-            .collect();
-        if req.forbid_calls {
-            body["tool_choice"] = json!({"type": "none"});
-        }
-    }
-    body
 }
 
-fn push_user_blocks(messages: &mut Vec<Value>, blocks: Vec<Value>) {
-    if let Some(prev) = messages.last_mut().filter(|m| m["role"] == "user")
-        && let Some(content) = prev["content"].as_array_mut()
-    {
-        content.extend(blocks);
+fn push_user_blocks<'a>(messages: &mut Vec<Turn<'a>>, blocks: Vec<Cached<Block<'a>>>) {
+    if let Some(prev) = messages.last_mut().filter(|m| m.role == "user") {
+        prev.content.extend(blocks);
         return;
     }
-    let mut msg = json!({"role": "user"});
-    msg["content"] = Value::Array(blocks);
-    messages.push(msg);
+    messages.push(Turn {
+        role: "user",
+        content: blocks,
+    });
 }
 
-fn part(p: &Part, vision: bool) -> Value {
+fn part(p: &Part, vision: bool) -> Block<'_> {
     match p {
-        Part::Text(t) => json!({"type": "text", "text": t}),
+        Part::Text(text) => Block::Text { text },
         Part::Image(img) => image_part(img, vision),
     }
 }
 
-fn image_part(img: &[u8], vision: bool) -> Value {
+fn image_part(img: &[u8], vision: bool) -> Block<'_> {
     if !vision {
-        return json!({"type": "text", "text": IMAGE_OMITTED});
+        return Block::Text {
+            text: IMAGE_OMITTED,
+        };
     }
-    let mut block = json!({
-        "type": "image",
-        "source": {"type": "base64", "media_type": image_mime(img)},
-    });
-    block["source"]["data"] = b64(img).into();
-    block
+    Block::Image {
+        source: Source {
+            media_type: image_mime(img),
+            data: img,
+        },
+    }
 }
 
 fn push_str(out: &mut VecDeque<Delta>, make: fn(String) -> Delta, v: &Value) {
@@ -203,7 +274,8 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::llm::{ToolCall, ToolSpec};
+    use crate::llm::tests::each_wire_request;
+    use crate::llm::{ToolCall, ToolSpec, b64};
 
     #[test]
     fn parses_stream_with_tool_use_and_usage() {
@@ -322,7 +394,7 @@ mod tests {
             forbid_calls: false,
             effort: None,
         };
-        let b = body(&req);
+        let b = value(&req);
         let msgs = b["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[1]["content"][1]["input"], json!({}));
@@ -340,7 +412,7 @@ mod tests {
             ("minimal", json!({"effort": "low"})),
             ("none", Value::Null),
         ] {
-            let b = body(&Request {
+            let b = value(&Request {
                 effort: Some(effort),
                 ..req
             });
@@ -352,12 +424,141 @@ mod tests {
             parameters: json!({"type": "object"}),
         };
         let tools = [&shell];
-        let report = body(&Request {
+        let report = value(&Request {
             tools: &tools,
             forbid_calls: true,
             ..req
         });
         assert_eq!(report["tool_choice"], json!({"type": "none"}));
         assert_eq!(report["tools"][0]["name"], "shell");
+    }
+
+    #[test]
+    fn body_serializes_to_the_bytes_of_the_json_body() {
+        each_wire_request(|req| {
+            assert_eq!(
+                serde_json::to_vec(&body(req)).unwrap(),
+                serde_json::to_vec(&json_body(req)).unwrap(),
+                "{} vision={} effort={:?} tools={} forbid={}",
+                req.model,
+                req.vision,
+                req.effort,
+                req.tools.len(),
+                req.forbid_calls
+            );
+        });
+    }
+
+    fn value(req: &Request<'_>) -> Value {
+        serde_json::to_value(body(req)).unwrap()
+    }
+
+    fn json_body(req: &Request<'_>) -> Value {
+        let mut messages: Vec<Value> = Vec::new();
+        for m in req.messages {
+            match m {
+                Message::User(parts) => {
+                    let blocks = parts.iter().map(|p| part(p, req.vision)).collect();
+                    push_user_blocks(&mut messages, blocks);
+                }
+                Message::Assistant { text, calls } => {
+                    let mut content = Vec::new();
+                    if !text.is_empty() {
+                        content.push(json!({"type": "text", "text": text}));
+                    }
+                    for c in calls {
+                        let input: Value = serde_json::from_str(&c.arguments)
+                            .ok()
+                            .filter(Value::is_object)
+                            .unwrap_or_else(|| json!({}));
+                        let mut block = json!({"type": "tool_use", "id": c.id, "name": c.name});
+                        block["input"] = input;
+                        content.push(block);
+                    }
+                    if content.is_empty() {
+                        continue;
+                    }
+                    let mut msg = json!({"role": "assistant"});
+                    msg["content"] = Value::Array(content);
+                    messages.push(msg);
+                }
+                Message::Tool {
+                    call_id,
+                    text,
+                    image,
+                    is_error,
+                } => {
+                    let mut content = vec![
+                        json!({"type": "text", "text": if text.is_empty() { "(no output)" } else { text }}),
+                    ];
+                    if let Some(img) = image {
+                        content.push(image_part(img, req.vision));
+                    }
+                    let mut block = json!({"type": "tool_result", "tool_use_id": call_id, "is_error": is_error});
+                    block["content"] = Value::Array(content);
+                    push_user_blocks(&mut messages, vec![block]);
+                }
+            }
+        }
+        if let Some(last) = messages
+            .last_mut()
+            .and_then(|m| m["content"].as_array_mut())
+            .and_then(|c| c.last_mut())
+        {
+            last["cache_control"] = json!({"type": "ephemeral"});
+        }
+        let mut body = json!({
+            "model": req.model,
+            "max_tokens": req.max_tokens,
+            "stream": true,
+            "system": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}],
+        });
+        body["messages"] = Value::Array(messages);
+        if let Some(effort) = req.effort.filter(|e| *e != "none") {
+            let effort = if effort == "minimal" { "low" } else { effort };
+            body["output_config"] = json!({"effort": effort});
+        }
+        if !req.tools.is_empty() {
+            body["tools"] = req
+                .tools
+                .iter()
+                .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.parameters}))
+                .collect();
+            if req.forbid_calls {
+                body["tool_choice"] = json!({"type": "none"});
+            }
+        }
+        body
+    }
+
+    fn push_user_blocks(messages: &mut Vec<Value>, blocks: Vec<Value>) {
+        if let Some(prev) = messages.last_mut().filter(|m| m["role"] == "user")
+            && let Some(content) = prev["content"].as_array_mut()
+        {
+            content.extend(blocks);
+            return;
+        }
+        let mut msg = json!({"role": "user"});
+        msg["content"] = Value::Array(blocks);
+        messages.push(msg);
+    }
+
+    fn part(p: &Part, vision: bool) -> Value {
+        match p {
+            Part::Text(t) => json!({"type": "text", "text": t}),
+            Part::Image(img) => image_part(img, vision),
+        }
+    }
+
+    fn image_part(img: &[u8], vision: bool) -> Value {
+        if !vision {
+            return json!({"type": "text", "text": IMAGE_OMITTED});
+        }
+        let mut block = json!({
+            "type": "image",
+            "source": {"type": "base64", "media_type": image_mime(img)},
+        });
+        block["source"]["data"] = b64(img).into();
+        block
     }
 }
