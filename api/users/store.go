@@ -57,15 +57,6 @@ func (s *store) close() {
 	s.pool.Close()
 }
 
-func (s *store) notify(ctx context.Context, payload string) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
-	defer cancel()
-	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
-		return fmt.Errorf("notify %s: %w", notifyChannel, err)
-	}
-	return nil
-}
-
 // listen takes a connection out of the pool and listens on notifyChannel and endedChannel with it; the caller closes it.
 func (s *store) listen(ctx context.Context) (*pgx.Conn, error) {
 	pooled, err := s.pool.Acquire(ctx)
@@ -130,8 +121,10 @@ func (s *store) insert(ctx context.Context, r record, passwordHash string, first
 			r.ID, r.Name, r.IDP, r.Admin, r.MaxBoxes, r.MaxBoxesCap, r.MaxAgentBoxes, passwordHash, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt)
-		return err
+		if _, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx, createdPayload+r.ID)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return ErrExists
@@ -170,8 +163,10 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 		case b.Agent && maxAgentBoxes != nil && boxes >= *maxAgentBoxes:
 			return fmt.Errorf("%w: %d agent boxes is the most this user's agents may hold together", ErrQuota, *maxAgentBoxes)
 		}
-		_, err = tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt)
-		return err
+		if _, err = tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx, "")
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: a box is already named %q", ErrExists, b.Name)
@@ -183,17 +178,23 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 }
 
 func (s *store) renameBox(ctx context.Context, owner, id, name string) error {
-	tag, err := s.pool.Exec(ctx, "UPDATE boxes SET name = $3 WHERE id = $1 AND owner = $2", id, owner, name)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "UPDATE boxes SET name = $3 WHERE id = $1 AND owner = $2", id, owner, name)
+		switch {
+		case err != nil:
+			return err
+		case tag.RowsAffected() == 0:
+			return ErrNotFound
+		}
+		return notifyIn(ctx, tx, "")
+	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: a box is already named %q", ErrExists, name)
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("rename box: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return err
 }
 
 // removeBox deletes owner's box id, revokes its live share and tells every api in one transaction.
@@ -209,12 +210,12 @@ func (s *store) removeBox(ctx context.Context, owner, id string) error {
 		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
 			return fmt.Errorf("revoke the box's share: %w", err)
 		}
-		return notifyIn(ctx, tx)
+		return notifyIn(ctx, tx, "")
 	})
 }
 
 func (s *store) remove(ctx context.Context, id string) error {
-	return s.exec(ctx, "DELETE FROM users WHERE id = $1", id)
+	return s.execNotified(ctx, "DELETE FROM users WHERE id = $1", id)
 }
 
 func (s *store) update(ctx context.Context, r record, set Settings) error {
@@ -260,7 +261,7 @@ func (s *store) update(ctx context.Context, r record, set Settings) error {
 	if len(cols) == 0 {
 		return nil
 	}
-	return s.exec(ctx, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
+	return s.execNotified(ctx, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
 }
 
 func (s *store) setPassword(ctx context.Context, id, hash string) error {
@@ -268,7 +269,7 @@ func (s *store) setPassword(ctx context.Context, id, hash string) error {
 }
 
 func (s *store) setToken(ctx context.Context, id, sha string) error {
-	err := s.exec(ctx, "UPDATE users SET token_sha256 = $2 WHERE id = $1", id, sha)
+	err := s.execNotified(ctx, "UPDATE users SET token_sha256 = $2 WHERE id = $1", id, sha)
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return ErrExists
 	}
@@ -276,7 +277,7 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 }
 
 func (s *store) clearToken(ctx context.Context, id string) error {
-	return s.exec(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
+	return s.execNotified(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
 }
 
 // lockUser holds an advisory lock on user id in every api until the returned func runs, in a transaction on the lock pool so waiters cannot exhaust the pool the holder needs.
@@ -328,7 +329,7 @@ func (s *store) allDevices(ctx context.Context) (map[string][]deviceToken, error
 }
 
 func (s *store) insertDevice(ctx context.Context, user string, d deviceToken, client, label string) error {
-	return s.exec(ctx, "INSERT INTO user_tokens (id, user_id, sha256, client, label) VALUES ($1, $2, $3, $4, $5)", d.id, user, d.sha256, client, label)
+	return s.execNotified(ctx, "INSERT INTO user_tokens (id, user_id, sha256, client, label) VALUES ($1, $2, $3, $4, $5)", d.id, user, d.sha256, client, label)
 }
 
 func (s *store) devices(ctx context.Context, user string) ([]Device, error) {
@@ -346,7 +347,12 @@ func (s *store) devices(ctx context.Context, user string) ([]Device, error) {
 // removeDevice deletes user's device id and returns its token's sha256.
 func (s *store) removeDevice(ctx context.Context, user, id string) (string, error) {
 	var sum string
-	err := s.pool.QueryRow(ctx, "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2 RETURNING sha256", id, user).Scan(&sum)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2 RETURNING sha256", id, user).Scan(&sum); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx, "")
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -359,7 +365,12 @@ func (s *store) removeDevice(ctx context.Context, user, id string) (string, erro
 // removeDeviceBySHA256 deletes the device token that hashes to sum and returns its user and device id, both empty when none does.
 func (s *store) removeDeviceBySHA256(ctx context.Context, sum string) (string, string, error) {
 	var user, id string
-	err := s.pool.QueryRow(ctx, "DELETE FROM user_tokens WHERE sha256 = $1 RETURNING user_id, id", sum).Scan(&user, &id)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "DELETE FROM user_tokens WHERE sha256 = $1 RETURNING user_id, id", sum).Scan(&user, &id); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx, "")
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
 	}
@@ -376,7 +387,7 @@ func (s *store) signOut(ctx context.Context, user string) error {
 				return fmt.Errorf("sign out: %w", err)
 			}
 		}
-		return nil
+		return notifyIn(ctx, tx, "")
 	})
 }
 
@@ -430,7 +441,7 @@ func (s *store) insertShare(ctx context.Context, rec *shareRecord, sealed []byte
 			rec.id, rec.box, rec.owner, rec.secretSHA256, sealed, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx)
+		return notifyIn(ctx, tx, "")
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: the box is already shared", ErrExists)
@@ -586,7 +597,7 @@ func (s *store) execShare(ctx context.Context, sql string, args ...any) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		return notifyIn(ctx, tx)
+		return notifyIn(ctx, tx, "")
 	})
 }
 
@@ -597,8 +608,22 @@ func (s *store) exec(ctx context.Context, sql string, args ...any) error {
 	return nil
 }
 
-func notifyIn(ctx context.Context, tx pgx.Tx) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, '')", notifyChannel); err != nil {
+// execNotified runs sql and the users notify in one transaction, so other apis hear of the write exactly when it commits.
+func (s *store) execNotified(ctx context.Context, sql string, args ...any) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, sql, args...); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx, "")
+	})
+	if err != nil {
+		return fmt.Errorf("%s: %w", strings.ToLower(strings.Fields(sql)[0]), err)
+	}
+	return nil
+}
+
+func notifyIn(ctx context.Context, tx pgx.Tx, payload string) error {
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
 		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
 	return nil

@@ -58,7 +58,6 @@ func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 	if err := s.store.insertBox(ctx, b); err != nil {
 		return Box{}, err
 	}
-	s.published(ctx, "added box "+b.ID)
 	s.mu.Lock()
 	s.putBox(b)
 	s.mu.Unlock()
@@ -82,7 +81,6 @@ func (s *Service) RenameBox(ctx context.Context, owner, id, name string) (Box, e
 	if err := s.store.renameBox(ctx, owner, id, name); err != nil {
 		return Box{}, err
 	}
-	s.published(ctx, "renamed box "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := slices.IndexFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
