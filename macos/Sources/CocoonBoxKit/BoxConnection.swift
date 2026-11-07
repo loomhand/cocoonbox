@@ -298,7 +298,7 @@ public final class BoxConnection: Sendable {
         try await session.hello(Cocoonbox_Agent_V1_HelloRequest())
     }
 
-    // followEvents runs Session.Events until cancelled; see EventFollower.
+    // followEvents runs Session.Events until cancelled.
     public func followEvents(
         onEvent: @escaping @Sendable (Cocoonbox_Agent_V1_Event) async -> Void,
         onResync: @escaping @Sendable () async -> Void,

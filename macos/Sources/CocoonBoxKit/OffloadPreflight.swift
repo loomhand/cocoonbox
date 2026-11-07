@@ -10,7 +10,7 @@ enum Preflight {
     static let commonNames: Set = ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "PWD", "LANG", "LC_ALL", "CI", "DEBUG", "EDITOR", "TZ",
                                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"]
 
-    // image blocks a box on an image older than cbdesk:v22; an image name of another form passes to begin's own checks.
+    // image blocks a box on a cbdesk image older than minimumImage; an image name of another form passes to begin's own checks.
     static func image(_ image: String) -> Finding? {
         guard image.hasPrefix("cbdesk:"), let tag = image.split(separator: ":").last, tag.hasPrefix("v"), let version = Int(tag.dropFirst().prefix { $0.isNumber }),
               version < minimumImage
