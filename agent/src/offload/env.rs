@@ -11,11 +11,11 @@ use tokio::io::AsyncWriteExt;
 
 use super::Layout;
 
-const STATE_FILE: &str = "env-state.json";
-pub(super) const SPEC_FILE: &str = "env.json";
-const LOG_FILE: &str = "env.log";
 /// How long `offload env` waits for the step.
 pub const WAIT_LIMIT: Duration = Duration::from_secs(900);
+pub(super) const SPEC_FILE: &str = "env.json";
+const STATE_FILE: &str = "env-state.json";
+const LOG_FILE: &str = "env.log";
 const MISE_FILES: [&str; 3] = [".mise.toml", "mise.toml", ".tool-versions"];
 const HINT_FILES: [&str; 3] = [".devcontainer/devcontainer.json", "flake.nix", "shell.nix"];
 const FETCHES: [(&str, &str); 6] = [
