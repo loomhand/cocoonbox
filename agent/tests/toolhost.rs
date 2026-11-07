@@ -73,7 +73,7 @@ async fn a_node_script_in_the_agent_shell_reaches_shuttle_at_shuttle_socket() {
 }
 
 #[tokio::test]
-async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dropped() {
+async fn the_toolhost_sends_screen_tools_to_shuttle_and_drops_a_call_its_caller_dropped() {
     let dir = tempfile::tempdir().unwrap();
     let desk = dir.path().join("desk.sock");
     let (seen, mut calls) = mpsc::unbounded_channel::<(Call, bool)>();
@@ -87,7 +87,7 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
             tokio::spawn(async move {
                 let call: Call = read_frame(&mut conn).await.unwrap();
                 let out = match call.tool.as_str() {
-                    "desk_windows" => Output {
+                    "desk_computer_state" => Output {
                         text: "[]".into(),
                         is_error: false,
                         image_b64: Some("aW1n".into()),
@@ -115,7 +115,10 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
         args,
     };
 
-    let out = th.call(&call("desk_windows", json!({}))).await.unwrap();
+    let out = th
+        .call(&call("computer_state", json!({"session": "cu"})))
+        .await
+        .unwrap();
     assert_eq!(
         (out.text.as_str(), out.image_b64.as_deref(), out.secrets),
         ("[]", Some("aW1n"), vec![("number".into(), "4242".into())])
@@ -123,24 +126,10 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
     let (got, _) = calls.recv().await.unwrap();
     assert_eq!(
         (got.agent_id.as_str(), got.tool.as_str()),
-        ("ag", "desk_windows")
+        ("ag", "desk_computer_state")
     );
 
-    th.call(&call("desk", json!({"op": "click", "x": 1, "y": 2})))
-        .await
-        .unwrap();
-    let (got, _) = calls.recv().await.unwrap();
-    assert_eq!(
-        (got.tool.as_str(), &got.args["x"]),
-        ("desk_click", &json!(1))
-    );
-
-    th.call(&call("model_ask", json!({"prompt": "p"})))
-        .await
-        .unwrap();
-    assert_eq!(calls.recv().await.unwrap().0.tool, "model_ask");
-
-    let held = call("model_ask", json!({"hold": true}));
+    let held = call("computer_end", json!({"hold": true}));
     let pending = tokio::spawn(async move { Client::new(socket).call(&held).await });
     tokio::time::timeout(Duration::from_secs(5), arrived.notified())
         .await
@@ -150,6 +139,6 @@ async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dr
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(got.tool, "model_ask");
+    assert_eq!(got.tool, "desk_computer_end");
     assert!(closed, "a dropped call closes its shuttle connection");
 }

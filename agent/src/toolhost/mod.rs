@@ -121,10 +121,6 @@ impl Host {
             Ok(result) => return result.unwrap_or_else(Output::error),
             Err(call) => call,
         };
-        let call = match self.relay(call).await {
-            Ok(out) => return out,
-            Err(call) => call,
-        };
         let result = match call.tool.as_str() {
             "shell" => {
                 let command = call.args["command"].as_str().unwrap_or_default();
@@ -197,7 +193,7 @@ impl Host {
         result.unwrap_or_else(Output::error)
     }
 
-    /// Runs `run_screenshot` and a desk box's `computer_act`; every other call comes back, its screen tools under shuttle's names.
+    /// Runs `run_screenshot` and a desk box's `computer_act`, sends the other screen tools to shuttle under its names; every other call comes back.
     async fn shuttle_call(&self, mut call: Call) -> Result<Result<Output, String>, Call> {
         let shuttle = &self.shuttle;
         let target = call.args.get("target").is_some_and(|t| !t.is_null());
@@ -210,10 +206,11 @@ impl Host {
             }
             "run_screenshot" => self.run_screenshot(&call.args).await,
             _ => {
-                if let Some(tool) = shuttle_tool(&call.tool) {
-                    call.tool = tool;
-                }
-                return Err(call);
+                let Some(tool) = shuttle_tool(&call.tool) else {
+                    return Err(call);
+                };
+                call.tool = tool;
+                shuttle.desk(&call, rpc::DESK_DEADLINE).await
             }
         })
     }
@@ -230,20 +227,6 @@ impl Host {
             image_b64: Some(s.image_b64),
             ..Output::default()
         }))
-    }
-
-    /// Sends a desk verb or model call as it came to shuttle; every other call comes back.
-    async fn relay(&self, mut call: Call) -> Result<Output, Call> {
-        match crate::shuttle::desk_verb(&call.tool, &call.args) {
-            Some(verb) => call.tool = verb,
-            None if call.tool.starts_with("model_") => {}
-            None => return Err(call),
-        }
-        Ok(self
-            .shuttle
-            .desk(&call, rpc::DESK_DEADLINE)
-            .await
-            .unwrap_or_else(Output::error))
     }
 
     async fn shell(&self, agent_id: &str, args: &Value) -> Result<Output, String> {
@@ -606,10 +589,10 @@ async fn window_titles(shuttle: &Client) -> Vec<String> {
         .collect()
 }
 
-/// shuttle's name for a screen tool: `screenshot` and `computer_screenshot` are `desk_look`, `computer_X` is `desk_computer_X`.
+/// shuttle's name for a screen tool: `computer_screenshot` is `desk_look`, `computer_X` is `desk_computer_X`.
 fn shuttle_tool(tool: &str) -> Option<String> {
     match tool {
-        "screenshot" | "computer_screenshot" => Some("desk_look".to_owned()),
+        "computer_screenshot" => Some("desk_look".to_owned()),
         "computer_state" | "computer_act" | "computer_end" => Some(format!("desk_{tool}")),
         _ => None,
     }
@@ -775,7 +758,6 @@ mod tests {
         crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);
         let calls = [
-            ("screenshot", json!({})),
             ("computer_state", json!({"session": "cu"})),
             (
                 "computer_act",
@@ -784,8 +766,6 @@ mod tests {
             ("computer_end", json!({"session": "cu"})),
             ("computer_screenshot", json!({})),
             ("run_screenshot", json!({})),
-            ("desk_type", json!({"text": "你好"})),
-            ("desk", json!({"op": "windows"})),
         ];
         for (tool, args) in calls {
             let out = toolhost
@@ -805,14 +785,11 @@ mod tests {
         assert_eq!(
             got,
             [
-                "desk_look",
                 "desk_computer_state",
                 "desk_computer_act",
                 "desk_computer_end",
                 "desk_look",
                 "desk_look",
-                "desk_type",
-                "desk_windows"
             ]
         );
     }
@@ -852,10 +829,8 @@ mod tests {
                 json!({"session": "cu", "action": "click", "x": 1, "y": 2}),
             ),
             ("computer_end", json!({"session": "cu"})),
-            ("screenshot", json!({"max_edge": 512})),
-            ("computer_screenshot", json!({})),
+            ("computer_screenshot", json!({"max_edge": 512})),
             ("run_screenshot", json!({"max_edge": 640})),
-            ("desk", json!({"op": "windows"})),
         ];
         for (tool, args) in calls {
             let out = toolhost
@@ -896,9 +871,7 @@ mod tests {
                 "desk_computer_end",
                 "desk_look",
                 "desk_look",
-                "desk_look",
                 "desk_windows",
-                "desk_windows"
             ]
         );
         assert_eq!(
@@ -906,7 +879,7 @@ mod tests {
             json!({"session": "cu", "action": "click", "x": 1, "y": 2})
         );
         assert_eq!(got[3].1["max_edge"], 512);
-        assert_eq!(got[5].1["max_edge"], 640);
+        assert_eq!(got[4].1["max_edge"], 640);
     }
 
     #[tokio::test]

@@ -92,7 +92,7 @@ impl Shots for ToolhostShots<'_> {
 }
 
 /// The desk verb shuttle answers for tool `name`: the verb itself, or `desk_<op>` for the `desk` tool.
-pub fn desk_verb(name: &str, args: &Value) -> Option<String> {
+fn desk_verb(name: &str, args: &Value) -> Option<String> {
     if name == "desk" {
         Some(format!("desk_{}", args["op"].as_str().unwrap_or_default()))
     } else {
