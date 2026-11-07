@@ -678,7 +678,7 @@ func (b *Backend) claim(ctx context.Context, spec machines.Spec, template, size 
 		if e == nil || e.row != nil {
 			return e, false
 		}
-		e.row, e.ownerAddr = &row{ID: sandbox, Key: poolKey{Template: template, Net: netNone, Size: size}, Metadata: metadata}, node
+		e.row, e.ownerAddr = &row{ID: sandbox, Key: poolKey{Template: template, Net: netNone, Size: size}, Metadata: metadata, ClaimedAt: e.created}, node
 		return e, true
 	}); err != nil {
 		return err

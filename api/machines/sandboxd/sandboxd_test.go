@@ -95,6 +95,9 @@ func TestAClaimWhoseReadFailsIsKeptAndNotClaimedAgain(t *testing.T) {
 		e, err := b.stored(t.Context(), boxID)
 		return err == nil && !e.busy(time.Now())
 	})
+	if e, err := b.stored(t.Context(), boxID); err != nil || b.machine(e).CreatedAt.IsZero() {
+		t.Errorf("the recorded claim = %v, want its claim time so it does not count as older than a running machine", err)
+	}
 	fake.mu.Lock()
 	fake.getStatus = 0
 	fake.mu.Unlock()
