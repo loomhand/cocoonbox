@@ -145,7 +145,7 @@ type Options struct {
 	TenantClaims bool
 	// FirstBoxID names the box Create gives each new user.
 	FirstBoxID func(user string) string
-	// EnsureLimit bounds the creates Ensure runs at once and sizes the user lock pool each holds a connection of.
+	// EnsureLimit sizes the user lock pool, which bounds the creates Ensure runs at once.
 	EnsureLimit int32
 }
 
@@ -213,8 +213,6 @@ type Service struct {
 	tombs      map[string]time.Time
 	grantsOwn  grantOwner
 	grantsLive liveGrants
-
-	ensuring chan struct{}
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -235,7 +233,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
-		creds: map[string]*credLife{}, tombs: map[string]time.Time{}, ensuring: make(chan struct{}, opts.EnsureLimit),
+		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -442,12 +440,6 @@ func (s *Service) Ensure(ctx context.Context, idp, id string) (User, error) {
 	if u, err := s.Get(id); err == nil {
 		return u.from(idp)
 	}
-	select {
-	case s.ensuring <- struct{}{}:
-	case <-ctx.Done():
-		return User{}, ctx.Err()
-	}
-	defer func() { <-s.ensuring }()
 	return s.createOnce(ctx, idp, id)
 }
 
