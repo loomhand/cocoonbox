@@ -1059,7 +1059,7 @@ final class AppModel {
         let remaining: [LiveBlock]
         switch entry.body {
         case .text(let text):
-            remaining = blocks.filter { !($0.turnID == entry.turnID && $0.block == text.block && !$0.reasoning) }
+            remaining = blocks.filter { !($0.turnID == entry.turnID && $0.block <= text.block && !$0.reasoning) }
         case .reasoning(let reasoning):
             remaining = blocks.filter { !($0.turnID == entry.turnID && $0.block == reasoning.block && $0.reasoning) }
         case .turnEnd:
