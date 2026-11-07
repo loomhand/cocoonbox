@@ -33,15 +33,6 @@ import Testing
         #expect(!log.contains("mcp POST /cocoonbox."))
     }
 
-    @Test func aServerWithoutProtectedResourcesKeepsTheDefaultMCPRoot() async throws {
-        let mock = try await MockBoxProcess(discovery: "old")
-        defer { mock.stop() }
-        let routes = try await ServerRoutes.discover(mock.endpoint)
-        #expect(routes.token == mock.endpoint.url + "/oauth/token" && routes.mcp == mock.endpoint.url + "/cocoonbox.mcp")
-        try await Self.signInAndRevoke(mock)
-        #expect(mock.log().contains("mcp POST /oauth/token"))
-    }
-
     @Test func aServerWithOAuthOffServesTheDefaultRoutes() async throws {
         let mock = try await MockBoxProcess(discovery: "off")
         defer { mock.stop() }

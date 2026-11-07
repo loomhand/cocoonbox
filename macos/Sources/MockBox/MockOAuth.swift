@@ -8,7 +8,6 @@ final class MockOAuth: Sendable {
     enum Discovery: String {
         case full
         case renamed
-        case old
         case off
         case broken
     }
@@ -44,7 +43,6 @@ final class MockOAuth: Sendable {
         switch discovery {
         case .full, .off, .broken: return path
         case .renamed: moved.append(("/mcp/", MCPServer.prefix))
-        case .old: break
         }
         for (new, old) in moved {
             if path.hasPrefix(old) { return nil }
@@ -73,14 +71,13 @@ final class MockOAuth: Sendable {
     }
 
     private func metadata() -> HTTPResponse? {
-        let oauth = discovery == .renamed || discovery == .old ? "/oauth" : "/cocoonbox.oauth"
+        let oauth = discovery == .renamed ? "/oauth" : "/cocoonbox.oauth"
         var fields: [String: Any] = ["issuer": issuer, "token_endpoint": issuer + oauth + "/token", "revocation_endpoint": issuer + oauth + "/revoke"]
         switch discovery {
         case .off: return nil
         case .broken: return HTTPResponse(status: 500, reason: "Internal Server Error")
         case .full: fields["protected_resources"] = [issuer + "/cocoonbox.mcp"]
         case .renamed: fields["protected_resources"] = [issuer + "/mcp"]
-        case .old: break
         }
         return .json(200, fields)
     }

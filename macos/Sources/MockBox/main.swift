@@ -8,7 +8,7 @@ import GRPCNIOTransportHTTP2TransportServices
 // --external-ms starts one scripted guest MCP session through the share (agent mcp:claude-code@<share id>) MS after the box runs.
 // --external-history 1 adds idle guest sessions from earlier hours.
 // --restore-on-wake 1 wakes the box as the api does a box without a machine: restored into a new one.
-// --discovery full|renamed|old|off|broken sets the sign-in metadata: renamed moves MCP to /mcp and token and revoke to /oauth, old moves only those two and omits protected_resources, off serves no metadata, broken answers it with a 500.
+// --discovery full|renamed|off|broken sets the sign-in metadata: renamed moves MCP to /mcp and token and revoke to /oauth, off serves no metadata, broken answers it with a 500.
 // --workspace DIR is where Session.Exec runs commands, on this Mac (default: the temporary directory).
 
 setvbuf(stdout, nil, _IOLBF, 0)
