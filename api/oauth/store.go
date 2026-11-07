@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/loomhand/cocoonbox/api/migrate"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (
@@ -169,8 +170,10 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 			return errInvalidGrant
 		case spent:
 			replayed = grantID
-			_, err = tx.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1", grantID)
-			return err
+			if _, err = tx.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1", grantID); err != nil {
+				return err
+			}
+			return endedIn(ctx, tx, []string{grantID})
 		case !time.Now().Before(expiresAt):
 			return errInvalidGrant
 		}
@@ -238,28 +241,45 @@ func (s *store) grants(ctx context.Context, user string) ([]Grant, error) {
 }
 
 func (s *store) revoke(ctx context.Context, user, id string) error {
-	tag, err := s.pool.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1 AND user_id = $2", id, user)
-	if err != nil {
-		return fmt.Errorf("revoke grant: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1 AND user_id = $2", id, user)
+		switch {
+		case err != nil:
+			return fmt.Errorf("revoke grant: %w", err)
+		case tag.RowsAffected() == 0:
+			return ErrNotFound
+		}
+		return endedIn(ctx, tx, []string{id})
+	})
 }
 
 func (s *store) revokeAll(ctx context.Context, user string) ([]string, error) {
-	rows, err := s.pool.Query(ctx, "DELETE FROM oauth_grants WHERE user_id = $1 RETURNING id", user)
+	var ids []string
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, "DELETE FROM oauth_grants WHERE user_id = $1 RETURNING id", user)
+		if err != nil {
+			return err
+		}
+		if ids, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
+			return err
+		}
+		return endedIn(ctx, tx, ids)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("revoke grants: %w", err)
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
+	return ids, nil
 }
 
 func (s *store) revokeByToken(ctx context.Context, sum, clientID string) (string, error) {
 	var id string
-	err := s.pool.QueryRow(ctx, `DELETE FROM oauth_grants g USING oauth_tokens t WHERE t.grant_id = g.id AND t.sha256 = $1 AND g.client_id = $2
-		RETURNING g.id`, sum, clientID).Scan(&id)
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `DELETE FROM oauth_grants g USING oauth_tokens t WHERE t.grant_id = g.id AND t.sha256 = $1 AND g.client_id = $2
+			RETURNING g.id`, sum, clientID).Scan(&id); err != nil {
+			return err
+		}
+		return endedIn(ctx, tx, []string{id})
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -346,6 +366,13 @@ func chooseConnectors(ctx context.Context, tx pgx.Tx, id string, connectors []st
 	}
 	if _, err := tx.Exec(ctx, "INSERT INTO oauth_connectors (grant_id, connect_grant) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING", id, connectors); err != nil {
 		return fmt.Errorf("choose connectors: %w", err)
+	}
+	return nil
+}
+
+func endedIn(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, id) FROM unnest($2::text[]) AS id", users.EndedChannel, ids); err != nil {
+		return fmt.Errorf("notify %s: %w", users.EndedChannel, err)
 	}
 	return nil
 }

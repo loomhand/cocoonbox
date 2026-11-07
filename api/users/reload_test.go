@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/multitracer"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 func TestLoadCannotRestoreRevokedTokens(t *testing.T) {
@@ -273,7 +274,7 @@ func TestARevokeAndADisableReachAListenerWhenNoNotifyCanFollowTheWrite(t *testin
 	}
 	clustertest.WaitFor(t, "the listener knows the token", func() bool { _, ok := svc.indexedToken(sum(token)); return ok })
 	tokenLife, life := lifetime(svc, u.ID, sum(token)), lifetime(svc, u.ID, "")
-	trace(t, other, dsn, lateNotifyFails{})
+	trace(t, other, dsn, userstest.LateNotifyFails{})
 	if err := other.RevokeToken(t.Context(), u.ID); err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
@@ -423,7 +424,7 @@ func TestEveryUsersWriteReachesAListenerWhenNoNotifyCanFollowIt(t *testing.T) {
 				_, deviceKnown := b.indexedToken(sum(device))
 				return tokenKnown && deviceKnown
 			})
-			trace(t, a, dsn, lateNotifyFails{})
+			trace(t, a, dsn, userstest.LateNotifyFails{})
 			got := tt.write(t, a, u, in)
 			clustertest.WaitFor(t, "the listener sees the "+tt.name, func() bool { return tt.seen(b, u, in, got) })
 		})
@@ -501,16 +502,3 @@ func (*creationNotifyGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQu
 type signIns struct {
 	token, device, deviceID string
 }
-
-type lateNotifyFails struct{}
-
-func (lateNotifyFails) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if strings.Contains(data.SQL, "pg_notify") && conn.PgConn().TxStatus() == 'I' {
-		canceled, cancel := context.WithCancel(ctx)
-		cancel()
-		return canceled
-	}
-	return ctx
-}
-
-func (lateNotifyFails) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}

@@ -25,7 +25,8 @@ import (
 
 const (
 	// TokenPrefix starts every API token and device token.
-	TokenPrefix = "cb_"
+	TokenPrefix  = "cb_"
+	EndedChannel = "cocoonbox_ended"
 
 	idPrefix     = "u-"
 	idBytes      = 6
@@ -805,15 +806,9 @@ func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 	return c.ctx, func() { s.release(credential, c) }
 }
 
-// EndCredential ends the calls bound to credential, a token's sha256 or a grant id, in every api; an ended grant id stays ended.
-func (s *Service) EndCredential(ctx context.Context, credential string) {
+// EndCredential ends the calls bound to credential, a token's sha256 or a grant id, in this api; the write that ended it tells the others, and an ended grant id stays ended.
+func (s *Service) EndCredential(_ context.Context, credential string) {
 	s.endLocally(credential)
-	if credential == "" || hexSHA256.MatchString(credential) {
-		return
-	}
-	if err := s.store.notifyEnded(ctx, credential); err != nil {
-		log.WithFunc("users.Service.EndCredential").Warnf(ctx, "other apis keep the open calls of ended credential %s: %v", credential, err)
-	}
 }
 
 // KeepGrants registers live, which reports which of the grant ids owns names still exist, so a reconnecting listener ends the calls of the rest.
@@ -978,9 +973,9 @@ func (s *Service) listen(ctx context.Context) error {
 			return err
 		}
 		id, created := strings.CutPrefix(n.Payload, createdPayload)
-		reload = n.Channel != endedChannel && !created
+		reload = n.Channel != EndedChannel && !created
 		switch {
-		case n.Channel == endedChannel:
+		case n.Channel == EndedChannel:
 			s.endLocally(n.Payload)
 		case created:
 			if err := s.loadUser(ctx, id); err != nil {
