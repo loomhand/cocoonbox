@@ -1259,15 +1259,7 @@ func (e *stateEnv) finalEvent(t *testing.T, op *controlv1.Operation) *controlv1.
 
 func (e *stateEnv) timelineIDs(t *testing.T, p statePath) []string {
 	t.Helper()
-	var tl timeline
-	if err := getJSON(e.ctx, e.store, p.timeline(), &tl); err != nil {
-		t.Fatalf("timeline: %v", err)
-	}
-	var ids []string
-	for _, s := range tl.Snapshots {
-		ids = append(ids, s.ID)
-	}
-	return ids
+	return timeline{Snapshots: e.timelineEntries(t, p)}.ids()
 }
 
 func (e *stateEnv) timelineEntries(t *testing.T, p statePath) []timelineEntry {

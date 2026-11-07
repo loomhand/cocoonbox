@@ -308,11 +308,7 @@ func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 func TestALeaderWhoseLinkGoesSilentStopsAndAnotherTakesOver(t *testing.T) {
 	st, dsn := clustertest.OpenDSN(t)
 	link := newFreezer(t, dsn)
-	silent, err := cluster.Open(t.Context(), link.dsn)
-	if err != nil {
-		t.Fatalf("Open through the link: %v", err)
-	}
-	t.Cleanup(silent.Close)
+	silent := clustertest.OpenReplica(t, link.dsn)
 	l := &leaders{t: t, leading: map[string]bool{}}
 	stopped := make(chan time.Time, 1)
 	go silent.Lead(t.Context(), func(ctx context.Context) {

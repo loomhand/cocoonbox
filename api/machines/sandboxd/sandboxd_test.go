@@ -1129,11 +1129,7 @@ func TestAWatchOnAnotherBackendSeesAMachineRecreatedUnderItsID(t *testing.T) {
 
 func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	db, err := cluster.Open(t.Context(), clustertest.EmptyDSN(t))
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(db.Close)
+	db := clustertest.Open(t)
 	b := newSharedBackend(t, fake, db)
 	b.leaseFor, b.renewEvery = 400*time.Millisecond, 20*time.Millisecond
 	m := claimRunning(t, b)
@@ -1184,12 +1180,7 @@ func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 
 func TestARefreshEndsALapsedOpAndWakesItsOwner(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	dsn := clustertest.EmptyDSN(t)
-	db, err := cluster.Open(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	t.Cleanup(db.Close)
+	db, dsn := clustertest.OpenDSN(t)
 	b := openSharedBackend(t, fake, db)
 	claimRunning(t, b)
 	if _, err := db.UpdateMachine(t.Context(), boxID, func(m *cluster.Machine, _ bool) (bool, error) {

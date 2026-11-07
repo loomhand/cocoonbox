@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -466,15 +465,4 @@ func capOf(gw *userstest.GW, owner string) string {
 		return strconv.FormatInt(micros, 10)
 	}
 	return "inherit"
-}
-
-func exec(t *testing.T, dsn, sql string) error {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	_, err = conn.Exec(t.Context(), sql)
-	return err
 }
