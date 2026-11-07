@@ -481,25 +481,23 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
 /// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.
 async fn desktop_info(shuttle: &Client) -> String {
     let mut info = json!({});
-    if let Some(os) = std::fs::read_to_string(OS_RELEASE)
-        .ok()
-        .and_then(|r| os_name(&r))
-        .or_else(|| {
-            std::fs::read_to_string(SYSTEM_VERSION)
-                .ok()
-                .and_then(|v| product_name(&v))
-        })
-        .or_else(crate::sys::os_name)
-    {
+    let (os, desktop) = tokio::task::spawn_blocking(|| {
+        let os = std::fs::read_to_string(OS_RELEASE)
+            .ok()
+            .and_then(|r| os_name(&r))
+            .or_else(|| {
+                std::fs::read_to_string(SYSTEM_VERSION)
+                    .ok()
+                    .and_then(|v| product_name(&v))
+            })
+            .or_else(crate::sys::os_name);
+        (os, std::env::var(DESKTOP_VAR).ok().or_else(session_desktop))
+    })
+    .await
+    .unwrap_or_default();
+    if let Some(os) = os {
         info["os"] = os.into();
     }
-    let desktop = match std::env::var(DESKTOP_VAR) {
-        Ok(d) => Some(d),
-        Err(_) => tokio::task::spawn_blocking(session_desktop)
-            .await
-            .ok()
-            .flatten(),
-    };
     if let Some(desktop) = desktop.as_deref().and_then(desktop_name) {
         info["desktop"] = desktop.into();
     }
