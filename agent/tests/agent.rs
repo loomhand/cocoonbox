@@ -6,7 +6,7 @@ mod chrome;
 mod common;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -20,6 +20,7 @@ use cocoonbox_agent::pb::{
 };
 use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::rpc::{Call, Output, read_frame, write_frame};
+use cocoonbox_agent::tools::{READ_ONLY, annotate, computer_tools, main_tools, remote_tools};
 use cocoonbox_agent::{offload, server, toolhost};
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
@@ -27,8 +28,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream, UnixListener};
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tonic::{Code, Request};
 
@@ -217,7 +219,7 @@ impl Harness {
             model_main: model_main.into(),
             model_computer: "anthropic/claude-sonnet-5".into(),
             identity_path: identity.clone(),
-            identity_owner: std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()),
+            identity_owner: dir.path().metadata().unwrap().uid(),
             listen: "127.0.0.1:0".parse().unwrap(),
             state_dir: dir.path().join("state"),
             toolhost_socket: toolhost_socket.clone(),
@@ -334,6 +336,13 @@ async fn send(
         .turn_id
 }
 
+async fn ask(agents: &mut AgentsClient<Channel>, text: &str) -> (String, Vec<pb::TranscriptEntry>) {
+    let agent_id = create_agent(agents).await;
+    send(agents, &agent_id, text, "").await;
+    let entries = wait_turn_end(agents, &agent_id).await;
+    (agent_id, entries)
+}
+
 async fn wait_turn_end(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
@@ -346,6 +355,26 @@ fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
         Some(Body::TurnEnd(end)) => end,
         last => panic!("want turn end, got {last:?}"),
     }
+}
+
+fn texts(entries: &[pb::TranscriptEntry], role: Option<pb::Role>) -> Vec<&str> {
+    entries
+        .iter()
+        .filter(|e| role.is_none_or(|r| e.role == i32::from(r)))
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn offered(chat: &Value) -> Vec<&str> {
+    chat["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect()
 }
 
 fn mcp_text(out: &Value) -> &str {
@@ -526,11 +555,7 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
     addr
 }
 
-async fn mock_door(
-    log: Log,
-    events: tokio::sync::broadcast::Sender<String>,
-    refused: usize,
-) -> String {
+async fn mock_door(log: Log, events: broadcast::Sender<String>, refused: usize) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let added = Arc::new(AtomicBool::new(false));
@@ -965,30 +990,6 @@ async fn credential_guards_every_surface() {
 }
 
 #[tokio::test]
-async fn credential_is_required() {
-    let h = Harness::start(Vec::new()).await;
-    let mut agents = h.agents().await;
-    let mut wrong = Request::new(pb::ListAgentsRequest {});
-    wrong.metadata_mut().insert(
-        "x-cocoonbox-credential",
-        MetadataValue::from_static("v1.YQ.YQ"),
-    );
-    assert_eq!(
-        agents.list(wrong).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-    let hello = h
-        .session()
-        .await
-        .hello(authed(pb::HelloRequest::default()))
-        .await
-        .unwrap()
-        .into_inner();
-    assert_eq!((hello.screen_width, hello.screen_height), (1280, 800));
-    assert!(agents.list(authed(pb::ListAgentsRequest {})).await.is_ok());
-}
-
-#[tokio::test]
 async fn shell_tool_loop_streams_into_transcript_and_events() {
     let h = Harness::start(vec![
         (
@@ -1106,13 +1107,7 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
         })
         .collect();
     assert_eq!(blocks, [(1, "Let me check."), (2, "Wrote ok.txt.")]);
-    assert!(
-        !chats[0]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["function"]["name"] == "screenshot")
-    );
+    assert!(!offered(&chats[0]).contains(&"screenshot"));
 
     let mut replay = session
         .events(authed(pb::EventsRequest {
@@ -1346,9 +1341,7 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
             Harness::start(script).await
         };
         let mut agents = h.agents().await;
-        let agent_id = create_agent(&mut agents).await;
-        send(&mut agents, &agent_id, "list forever", "").await;
-        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        let (_, entries) = ask(&mut agents, "list forever").await;
         let end = turn_end(&entries);
         assert!(!end.ok);
         assert_eq!(
@@ -1356,13 +1349,10 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
             format!("stopped at the {cap}-step cap; the last reply reports the progress")
         );
         assert_eq!(end.usage.as_ref().unwrap().output_tokens, cap * 10 + 5);
-        let last_text = entries.iter().rev().find_map(|e| match &e.body {
-            Some(Body::Text(t)) if e.role == i32::from(pb::Role::Assistant) => {
-                Some(t.text.as_str())
-            }
-            _ => None,
-        });
-        assert_eq!(last_text, Some("Done: a. Left: b. Stuck: c."));
+        assert_eq!(
+            texts(&entries, Some(pb::Role::Assistant)).last(),
+            Some(&"Done: a. Left: b. Stuck: c.")
+        );
         let chats = gw_bodies(&h.gw_log, "chat/completions");
         assert_eq!(chats.len(), cap as usize + 1);
         let (report, before) = (&chats[cap as usize], &chats[cap as usize - 1]);
@@ -1401,20 +1391,11 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
     })
     .await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "list it twice", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "list it twice").await;
     assert!(turn_end(&entries).ok);
     let line =
         "If the deliverable is not saved at its target path yet, save a complete first version now";
-    let system: Vec<&str> = entries
-        .iter()
-        .filter(|e| e.role == i32::from(pb::Role::System))
-        .filter_map(|e| match &e.body {
-            Some(Body::Text(t)) => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect();
+    let system = texts(&entries, Some(pb::Role::System));
     assert_eq!(system.len(), 1, "{system:?}");
     assert!(
         system[0].starts_with("Elapsed ") && system[0].contains(line),
@@ -1446,9 +1427,7 @@ async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
     for nudge in [Some(Duration::from_millis(1)), None] {
         let h = delegate_once(nudge, None).await;
         let mut agents = h.agents().await;
-        let agent_id = create_agent(&mut agents).await;
-        send(&mut agents, &agent_id, "look", "").await;
-        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        let (_, entries) = ask(&mut agents, "look").await;
         assert!(turn_end(&entries).ok);
         let fired: Vec<&pb::TextBlock> = entries
             .iter()
@@ -1489,9 +1468,7 @@ async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
 async fn each_model_call_records_the_turns_usage_so_far_before_the_turn_ends() {
     let h = delegate_once(None, None).await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "look", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "look").await;
     let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let spent: Vec<(u64, &pb::Usage)> = entries
@@ -1544,9 +1521,7 @@ async fn the_reasoning_effort_rides_on_every_model_request_and_is_off_by_default
     for effort in [Some("medium"), None] {
         let h = delegate_once(None, effort).await;
         let mut agents = h.agents().await;
-        let agent_id = create_agent(&mut agents).await;
-        send(&mut agents, &agent_id, "look", "").await;
-        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        let (_, entries) = ask(&mut agents, "look").await;
         assert!(turn_end(&entries).ok);
         let chats = gw_bodies(&h.gw_log, "chat/completions");
         assert_eq!(chats.len(), 4);
@@ -1612,9 +1587,7 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     script.push(("chat/completions", chat_text("Done.")));
     let h = Harness::with_desk(script).await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "look", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "look").await;
     assert!(turn_end(&entries).ok);
     let delegate = tool_result(&entries, "call_d");
     assert!(delegate.is_error);
@@ -1643,24 +1616,16 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let listed = create_agent(&mut agents).await;
-    send(&mut agents, &listed, "list it", "").await;
-    let entries = wait_turn_end(&mut agents, &listed).await;
+    let (_, entries) = ask(&mut agents, "list it").await;
     assert!(turn_end(&entries).ok);
-    let texts: Vec<&str> = entries
-        .iter()
-        .filter_map(|e| match &e.body {
-            Some(Body::Text(t)) => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(texts, ["list it", "Let me check.", "Listed."]);
+    assert_eq!(
+        texts(&entries, None),
+        ["list it", "Let me check.", "Listed."]
+    );
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_continued(&chats, 0, 1);
     assert_continued(&chats, 2, 3);
-    let silent = create_agent(&mut agents).await;
-    send(&mut agents, &silent, "say nothing", "").await;
-    let entries = wait_turn_end(&mut agents, &silent).await;
+    let (_, entries) = ask(&mut agents, "say nothing").await;
     let end = turn_end(&entries);
     assert!(!end.ok);
     assert_eq!(end.error, "the model returned no answer");
@@ -1681,9 +1646,7 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let listed = create_agent(&mut agents).await;
-    send(&mut agents, &listed, "list it", "").await;
-    let entries = wait_turn_end(&mut agents, &listed).await;
+    let (_, entries) = ask(&mut agents, "list it").await;
     let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
@@ -1695,9 +1658,7 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
         "the cut reply is asked again as it was, with no continuation"
     );
 
-    let cut = create_agent(&mut agents).await;
-    send(&mut agents, &cut, "think forever", "").await;
-    let entries = wait_turn_end(&mut agents, &cut).await;
+    let (_, entries) = ask(&mut agents, "think forever").await;
     let end = turn_end(&entries);
     assert!(!end.ok);
     assert_eq!(
@@ -1723,9 +1684,7 @@ async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_histo
     ])
     .await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "answer", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "answer").await;
     let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let calls: Vec<&str> = entries
@@ -1741,15 +1700,10 @@ async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_histo
         ["c2", "c2"],
         "the cut call c1 ran or entered the transcript"
     );
-    let said: Vec<&str> = entries
-        .iter()
-        .filter(|e| e.role == i32::from(pb::Role::Assistant))
-        .filter_map(|e| match &e.body {
-            Some(Body::Text(t)) => Some(t.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(said, ["Let me check.", "The answer is 42."]);
+    assert_eq!(
+        texts(&entries, Some(pb::Role::Assistant)),
+        ["Let me check.", "The answer is 42."]
+    );
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 4);
     let caps: Vec<&Value> = chats.iter().map(|c| &c["max_tokens"]).collect();
@@ -1781,21 +1735,15 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let listed = create_agent(&mut agents).await;
-    send(&mut agents, &listed, "list it", "").await;
-    let entries = wait_turn_end(&mut agents, &listed).await;
+    let (_, entries) = ask(&mut agents, "list it").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_continued(&chats, 0, 1);
     assert_continued(&chats, 2, 3);
-    let prose = create_agent(&mut agents).await;
-    send(&mut agents, &prose, "again", "").await;
-    let entries = wait_turn_end(&mut agents, &prose).await;
+    let (_, entries) = ask(&mut agents, "again").await;
     assert!(turn_end(&entries).ok);
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
-    let looping = create_agent(&mut agents).await;
-    send(&mut agents, &looping, "run it", "").await;
-    let entries = wait_turn_end(&mut agents, &looping).await;
+    let (_, entries) = ask(&mut agents, "run it").await;
     let end = turn_end(&entries);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 7);
@@ -1820,27 +1768,20 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let listed = create_agent(&mut agents).await;
-    send(&mut agents, &listed, "list it", "").await;
-    let entries = wait_turn_end(&mut agents, &listed).await;
+    let (_, entries) = ask(&mut agents, "list it").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_continued(&chats, 1, 2);
-    let idle = create_agent(&mut agents).await;
-    send(&mut agents, &idle, "run it", "").await;
-    let entries = wait_turn_end(&mut agents, &idle).await;
+    let (_, entries) = ask(&mut agents, "run it").await;
     let end = turn_end(&entries);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
-    let repeated = create_agent(&mut agents).await;
-    send(&mut agents, &repeated, "go on", "").await;
-    let entries = wait_turn_end(&mut agents, &repeated).await;
+    let (_, entries) = ask(&mut agents, "go on").await;
     assert!(turn_end(&entries).ok);
-    let last = entries.iter().rev().find_map(|e| match &e.body {
-        Some(Body::Text(t)) => Some(t.text.as_str()),
-        _ => None,
-    });
-    assert_eq!(last, Some("I'll continue with the next steps."));
+    assert_eq!(
+        texts(&entries, None).last(),
+        Some(&"I'll continue with the next steps.")
+    );
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 7);
 }
 
@@ -1862,9 +1803,7 @@ async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let agent = create_agent(&mut agents).await;
-    send(&mut agents, &agent, "save it, then check the widths", "").await;
-    let entries = wait_turn_end(&mut agents, &agent).await;
+    let (_, entries) = ask(&mut agents, "save it, then check the widths").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 3);
@@ -1908,23 +1847,11 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
         listed.agents[0].status,
         i32::from(pb::AgentStatus::WaitingForUser)
     );
-    let missing = agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id: "nope".into(),
-            approve: true,
-            text: String::new(),
-        }))
+    let missing = respond(&mut agents, &agent_id, "nope", true, "")
         .await
         .unwrap_err();
     assert_eq!(missing.code(), Code::NotFound);
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id,
-            approve: true,
-            text: "done".into(),
-        }))
+    respond(&mut agents, &agent_id, &approval_id, true, "done")
         .await
         .unwrap();
     let entries = wait_turn_end(&mut agents, &agent_id).await;
@@ -2010,13 +1937,7 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
         wait_until(Duration::from_secs(2), || saving.exists()).await,
         "the quiesce never started"
     );
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id,
-            approve: true,
-            text: String::new(),
-        }))
+    respond(&mut agents, &agent_id, &approval_id, true, "")
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(800)).await;
@@ -2034,7 +1955,7 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
 #[tokio::test]
 async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let door_log = Log::default();
-    let (events, _) = tokio::sync::broadcast::channel(8);
+    let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
     let h = Harness::with_connect(
         vec![
@@ -2072,13 +1993,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         listed.agents[0].status,
         i32::from(pb::AgentStatus::WaitingForUser)
     );
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id: asked.approval_id.clone(),
-            approve: true,
-            text: String::new(),
-        }))
+    respond(&mut agents, &agent_id, &asked.approval_id, true, "")
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 1).await;
@@ -2098,13 +2013,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         entries.last().unwrap().seq,
     )
     .await;
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id: asked.approval_id,
-            approve: false,
-            text: String::new(),
-        }))
+    respond(&mut agents, &agent_id, &asked.approval_id, false, "")
         .await
         .unwrap();
     let entries = turn_ends(&mut agents, &agent_id, 2).await;
@@ -2121,37 +2030,28 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         .count();
     assert_eq!(approved_calls, 1, "a declined call ran again");
 
-    wait_until(Duration::from_secs(2), || {
-        door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
-    })
-    .await;
+    assert!(
+        wait_until(Duration::from_secs(2), || {
+            door_log.lock().unwrap().iter().any(|(m, _)| m == "GET")
+        })
+        .await
+    );
     events
         .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     send(&mut agents, &agent_id, "list", "").await;
     turn_ends(&mut agents, &agent_id, 3).await;
-    let names = |body: &Value| -> Vec<String> {
-        body["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["function"]["name"].as_str().unwrap().to_owned())
-            .collect()
-    };
     let bodies = gw_bodies(&h.gw_log, "/v1/chat/completions");
-    let first = names(&bodies[0]);
-    assert!(
-        first.contains(&"mock_list_items".to_owned())
-            && first.contains(&"mock_create_item".to_owned())
-    );
+    let first = offered(&bodies[0]);
+    assert!(first.contains(&"mock_list_items") && first.contains(&"mock_create_item"));
     assert_eq!(
-        first.iter().filter(|n| *n == "shell").count(),
+        first.iter().filter(|n| **n == "shell").count(),
         1,
         "{first:?}"
     );
-    assert!(!first.contains(&"mock_new".to_owned()));
-    assert!(names(bodies.last().unwrap()).contains(&"mock_new".to_owned()));
+    assert!(!first.contains(&"mock_new"));
+    assert!(offered(bodies.last().unwrap()).contains(&"mock_new"));
     assert!(
         door_log
             .lock()
@@ -2165,7 +2065,7 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
 #[tokio::test]
 async fn an_ended_door_stream_is_followed_again_within_two_and_a_half_seconds_each_time() {
     let door_log = Log::default();
-    let (events, _) = tokio::sync::broadcast::channel(8);
+    let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
     let _h = Harness::with_connect(vec![], door).await;
     for readers in 1..=4 {
@@ -2187,7 +2087,7 @@ async fn an_ended_door_stream_is_followed_again_within_two_and_a_half_seconds_ea
 #[tokio::test]
 async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() {
     let door_log = Log::default();
-    let (events, _) = tokio::sync::broadcast::channel(8);
+    let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), usize::MAX).await;
     let _h = Harness::with_connect(vec![], door).await;
     let refusals = || -> Vec<u64> {
@@ -2209,7 +2109,7 @@ async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() 
 #[tokio::test]
 async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_door() {
     let door_log = Log::default();
-    let (events, _) = tokio::sync::broadcast::channel(8);
+    let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 1).await;
     let h = Harness::with_connect(
         vec![
@@ -2245,13 +2145,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
         created.text,
         format!("created \"x\" with {}", asked.approval_id)
     );
-    agents
-        .respond(authed(pb::RespondRequest {
-            agent_id: agent_id.clone(),
-            approval_id: asked.approval_id,
-            approve: true,
-            text: String::new(),
-        }))
+    respond(&mut agents, &agent_id, &asked.approval_id, true, "")
         .await
         .unwrap();
 }
@@ -2259,7 +2153,7 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
 #[tokio::test]
 async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     let door_log = Log::default();
-    let (events, _) = tokio::sync::broadcast::channel(8);
+    let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events, 0).await;
     let run = json!({"code": "export function main() { return 1 }", "screenshot": false});
     let h = Harness::boot(Boot {
@@ -2278,9 +2172,7 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     })
     .await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "run the demo", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "run the demo").await;
     assert!(turn_end(&entries).ok);
     let calls: Vec<Value> = door_log
         .lock()
@@ -2292,6 +2184,24 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     assert!(calls.is_empty(), "{calls:?}");
     let ran = h.shuttle_tools();
     assert!(ran.iter().any(|t| t == "demo_run"), "{ran:?}");
+}
+
+async fn respond(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    approval_id: &str,
+    approve: bool,
+    text: &str,
+) -> Result<(), tonic::Status> {
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.into(),
+            approval_id: approval_id.into(),
+            approve,
+            text: text.into(),
+        }))
+        .await
+        .map(drop)
 }
 
 async fn asked_approval(
@@ -2492,9 +2402,7 @@ async fn delete_ends_the_agents_shell_and_its_background_jobs() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let doomed = create_agent(&mut agents).await;
-    send(&mut agents, &doomed, "start a job", "").await;
-    wait_turn_end(&mut agents, &doomed).await;
+    let (doomed, _) = ask(&mut agents, "start a job").await;
     let pids = [h.workspace.join("shell.pid"), h.workspace.join("job.pid")];
     for pid in &pids {
         assert!(
@@ -2636,20 +2544,14 @@ async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
 #[tokio::test]
 async fn screen_is_unimplemented_on_the_agent() {
     let h = Harness::start(Vec::new()).await;
-    let (_tx, rx) = tokio::sync::mpsc::channel(1);
+    let (_tx, rx) = mpsc::channel(1);
     let err = h
         .session()
         .await
-        .screen(authed(tokio_stream_from(rx)))
+        .screen(authed(ReceiverStream::new(rx)))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::Unimplemented);
-}
-
-fn tokio_stream_from<T>(
-    rx: tokio::sync::mpsc::Receiver<T>,
-) -> tokio_stream::wrappers::ReceiverStream<T> {
-    tokio_stream::wrappers::ReceiverStream::new(rx)
 }
 
 fn exec_start(command: &str) -> pb::ExecClientFrame {
@@ -2689,7 +2591,7 @@ async fn exec_output(
 }
 
 async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, Option<i32>) {
-    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let (tx, rx) = mpsc::channel(4);
     tx.send(exec_start(command)).await.unwrap();
     tokio::spawn(async move {
         for chunk in stdin.chunks(64 << 10) {
@@ -2701,7 +2603,7 @@ async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, 
     let frames = h
         .session()
         .await
-        .exec(authed(tokio_stream_from(rx)))
+        .exec(authed(ReceiverStream::new(rx)))
         .await
         .unwrap()
         .into_inner();
@@ -2749,7 +2651,7 @@ async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
         (pb::ExecSignal::Int, "ready\ngot-int\n", 9),
         (pb::ExecSignal::Term, "ready\n", 128 + 15),
     ] {
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (tx, rx) = mpsc::channel(4);
         tx.send(exec_start(
             "trap 'echo got-int; exit 9' INT; echo ready; while :; do sleep 0.1; done",
         ))
@@ -2761,7 +2663,7 @@ async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
         let mut frames = h
             .session()
             .await
-            .exec(authed(tokio_stream_from(rx)))
+            .exec(authed(ReceiverStream::new(rx)))
             .await
             .unwrap()
             .into_inner();
@@ -2787,26 +2689,24 @@ async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
 #[tokio::test]
 async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
     let h = Harness::start(Vec::new()).await;
-    let (tx, rx) = tokio::sync::mpsc::channel(4);
-    tx.send(pb::ExecClientFrame {
-        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
-            command: "tty; echo \"term=$TERM\"; stty size; read x; stty size; exit 4".into(),
-            tty: Some(pb::ExecTty {
-                term: "vt220".into(),
-                window: Some(pb::ExecWindow {
-                    rows: 30,
-                    cols: 100,
-                }),
-                terminfo: String::new(),
+    let (tx, rx) = mpsc::channel(4);
+    tx.send(exec_frame(exec_client_frame::Body::Start(pb::ExecStart {
+        command: "tty; echo \"term=$TERM\"; stty size; read x; stty size; exit 4".into(),
+        tty: Some(pb::ExecTty {
+            term: "vt220".into(),
+            window: Some(pb::ExecWindow {
+                rows: 30,
+                cols: 100,
             }),
-        })),
-    })
+            terminfo: String::new(),
+        }),
+    })))
     .await
     .unwrap();
     let mut frames = h
         .session()
         .await
-        .exec(authed(tokio_stream_from(rx)))
+        .exec(authed(ReceiverStream::new(rx)))
         .await
         .unwrap()
         .into_inner();
@@ -2840,24 +2740,22 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
 }
 
 async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (String, String) {
-    let (tx, rx) = tokio::sync::mpsc::channel(2);
-    tx.send(pb::ExecClientFrame {
-        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
-            command: command.into(),
-            tty: Some(pb::ExecTty {
-                term: term.into(),
-                window: Some(pb::ExecWindow { rows: 24, cols: 80 }),
-                terminfo: terminfo.into(),
-            }),
-        })),
-    })
+    let (tx, rx) = mpsc::channel(2);
+    tx.send(exec_frame(exec_client_frame::Body::Start(pb::ExecStart {
+        command: command.into(),
+        tty: Some(pb::ExecTty {
+            term: term.into(),
+            window: Some(pb::ExecWindow { rows: 24, cols: 80 }),
+            terminfo: terminfo.into(),
+        }),
+    })))
     .await
     .unwrap();
     drop(tx);
     let frames = h
         .session()
         .await
-        .exec(authed(tokio_stream_from(rx)))
+        .exec(authed(ReceiverStream::new(rx)))
         .await
         .unwrap()
         .into_inner();
@@ -2920,23 +2818,21 @@ async fn exec_tty_falls_back_to_xterm_256color_without_a_usable_terminfo() {
 #[tokio::test]
 async fn exec_refuses_an_oversized_terminfo() {
     let h = Harness::start(Vec::new()).await;
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
-    tx.send(pb::ExecClientFrame {
-        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
-            command: "true".into(),
-            tty: Some(pb::ExecTty {
-                term: "cb-huge-term".into(),
-                window: None,
-                terminfo: "#".repeat((256 << 10) + 1),
-            }),
-        })),
-    })
+    let (tx, rx) = mpsc::channel(1);
+    tx.send(exec_frame(exec_client_frame::Body::Start(pb::ExecStart {
+        command: "true".into(),
+        tty: Some(pb::ExecTty {
+            term: "cb-huge-term".into(),
+            window: None,
+            terminfo: "#".repeat((256 << 10) + 1),
+        }),
+    })))
     .await
     .unwrap();
     let err = h
         .session()
         .await
-        .exec(authed(tokio_stream_from(rx)))
+        .exec(authed(ReceiverStream::new(rx)))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::InvalidArgument);
@@ -2948,23 +2844,23 @@ async fn exec_is_for_the_owner_only() {
     let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     for principal in ["share:sh-1:write", "share:sh-1:read:u-1"] {
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let (tx, rx) = mpsc::channel(1);
         tx.send(exec_start("touch shared")).await.unwrap();
         let err = h
             .session()
             .await
-            .exec(signed(tokio_stream_from(rx), &edge.share(principal)))
+            .exec(signed(ReceiverStream::new(rx), &edge.share(principal)))
             .await
             .unwrap_err();
         assert_eq!(err.code(), Code::PermissionDenied, "{principal}");
     }
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let (tx, rx) = mpsc::channel(1);
     tx.send(exec_start("touch owned")).await.unwrap();
     drop(tx);
     let frames = h
         .session()
         .await
-        .exec(signed(tokio_stream_from(rx), &edge.owner()))
+        .exec(signed(ReceiverStream::new(rx), &edge.owner()))
         .await
         .unwrap()
         .into_inner();
@@ -2980,12 +2876,12 @@ async fn cancelling_exec_kills_the_command() {
         let pid = h.workspace.join(format!("{name}.pid"));
         let (addr, link) = severable(&h.endpoint).await;
         let channel = Channel::from_shared(addr).unwrap().connect().await.unwrap();
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (tx, rx) = mpsc::channel(4);
         tx.send(exec_start(&format!("echo $$ > {name}.pid; exec sleep 300")))
             .await
             .unwrap();
         let _frames = SessionClient::new(channel)
-            .exec(authed(tokio_stream_from(rx)))
+            .exec(authed(ReceiverStream::new(rx)))
             .await
             .unwrap();
         wait_until(Duration::from_secs(2), || {
@@ -3020,9 +2916,9 @@ async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
     let h = Harness::start(Vec::new()).await;
     let channel = h.channel().await;
     let mut session = SessionClient::new(channel);
-    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let (tx, rx) = mpsc::channel(4);
     tx.send(exec_start("exec sleep 300")).await.unwrap();
-    let _frames = session.exec(authed(tokio_stream_from(rx))).await.unwrap();
+    let _frames = session.exec(authed(ReceiverStream::new(rx))).await.unwrap();
     let chunk = noise(64 << 10, 5);
     while tokio::time::timeout(Duration::from_millis(300), tx.send(exec_stdin(&chunk)))
         .await
@@ -3037,13 +2933,13 @@ async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
         hello.is_ok_and(|r| r.is_ok()),
         "Hello on the same connection stalled behind the exec"
     );
-    let (tx2, rx2) = tokio::sync::mpsc::channel(4);
+    let (tx2, rx2) = mpsc::channel(4);
     tx2.send(exec_start("cat")).await.unwrap();
     tx2.send(exec_stdin(&chunk)).await.unwrap();
     drop(tx2);
     let frames = tokio::time::timeout(
         Duration::from_secs(3),
-        session.exec(authed(tokio_stream_from(rx2))),
+        session.exec(authed(ReceiverStream::new(rx2))),
     )
     .await
     .expect("a second exec stalled")
@@ -3076,12 +2972,12 @@ async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
 #[tokio::test]
 async fn exec_needs_start_first() {
     let h = Harness::start(Vec::new()).await;
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let (tx, rx) = mpsc::channel(1);
     tx.send(exec_stdin(b"x")).await.unwrap();
     let err = h
         .session()
         .await
-        .exec(authed(tokio_stream_from(rx)))
+        .exec(authed(ReceiverStream::new(rx)))
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::InvalidArgument);
@@ -3152,18 +3048,10 @@ async fn vision_main_model_gets_a_screenshot_tool() {
     })
     .await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "what is on screen", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "what is on screen").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    assert!(
-        chats[0]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["function"]["name"] == "screenshot")
-    );
+    assert!(offered(&chats[0]).contains(&"screenshot"));
     let last = chats[1]["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(last["role"], "user");
     assert!(
@@ -3172,14 +3060,7 @@ async fn vision_main_model_gets_a_screenshot_tool() {
             .unwrap()
             .starts_with("data:image/png;base64,")
     );
-    let looks: Vec<Value> = h
-        .desk_log
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|(n, _)| n == "desk_look")
-        .map(|(_, a)| a.clone())
-        .collect();
+    let looks = driver_calls(&h, "desk_look");
     assert_eq!(looks.len(), 1, "{looks:?}");
     assert!(looks[0].get("session").is_none(), "{looks:?}");
 }
@@ -3199,23 +3080,8 @@ impl McpClient {
     }
 
     async fn connect_as(h: &Harness, credential: Option<String>) -> Self {
-        let mut c = Self {
-            http: reqwest::Client::new(),
-            url: format!("{}/mcp", h.endpoint),
-            session: String::new(),
-            next_id: 0,
-            credential,
-            instructions: String::new(),
-        };
-        let resp = c
-            .post(
-                json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
-                    "protocolVersion": "2025-06-18",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test-client", "version": "1.0"}
-                }}),
-            )
-            .await;
+        let mut c = Self::detached(format!("{}/mcp", h.endpoint), String::new(), credential);
+        let resp = c.post(Self::initialize()).await;
         assert_eq!(resp.status(), 200);
         c.session = resp.headers()["mcp-session-id"]
             .to_str()
@@ -3234,6 +3100,32 @@ impl McpClient {
             .await;
         assert_eq!(note.status(), 202);
         c
+    }
+
+    fn detached(url: String, session: String, credential: Option<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            url,
+            session,
+            next_id: 0,
+            credential,
+            instructions: String::new(),
+        }
+    }
+
+    fn initialize() -> Value {
+        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test-client", "version": "1.0"}
+        }})
+    }
+
+    async fn close(&self) -> reqwest::Response {
+        self.authorize(self.http.delete(&self.url))
+            .send()
+            .await
+            .unwrap()
     }
 
     async fn post(&self, body: Value) -> reqwest::Response {
@@ -3412,13 +3304,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
 
     let job = h.workspace.join("owner-job.pid");
     assert!(alive(&job));
-    let deleted = http
-        .delete(format!("{}/mcp", h.endpoint))
-        .header("x-cocoonbox-credential", owner())
-        .header("mcp-session-id", &mcp.session)
-        .send()
-        .await
-        .unwrap();
+    let deleted = mcp.close().await;
     assert_eq!(deleted.status(), 204);
     let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 1);
@@ -3496,6 +3382,20 @@ async fn mcp_plugin_runs_on_shuttle_as_its_own_tool() {
 async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
     let h = Harness::with_plugin(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
+    let instructions = mcp.instructions.as_str();
+    let extra = format!("\n\n{DEMO_ROUTING}");
+    let base = instructions.strip_suffix(&extra).unwrap_or(instructions);
+    assert_eq!(
+        instructions.ends_with(&extra),
+        base.chars().count() + extra.chars().count() <= 1600,
+        "{instructions}"
+    );
+    assert!(instructions.chars().count() <= 1600, "{instructions}");
+    assert!(
+        base.chars().count() + 150 <= 1600,
+        "{} chars leave under 150 for routing.d",
+        base.chars().count()
+    );
 
     let listed = mcp.rpc("tools/list", json!({})).await;
     let tools = listed["result"]["tools"].as_array().unwrap();
@@ -3540,13 +3440,11 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
         let mut mcp = McpClient::connect(&h).await;
 
         let listed = mcp.rpc("tools/list", json!({})).await;
-        let names: Vec<&str> = listed["result"]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|t| t["name"].as_str().unwrap())
-            .collect();
-        assert!(!names.contains(&"demo_run"), "{automation:?}: {names:?}");
+        let names = McpClient::tool_names(&listed);
+        assert!(
+            !names.contains(&"demo_run".to_owned()),
+            "{automation:?}: {names:?}"
+        );
         let resources = mcp.rpc("resources/list", json!({})).await;
         assert!(
             !resources.to_string().contains("cocoonbox://demo/"),
@@ -3569,14 +3467,13 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
 #[tokio::test]
 async fn an_android_box_keeps_its_mcp_texts_within_the_caps() {
     let h = Harness::with_android().await;
-    let opened = McpClient::connect(&h).await;
-    let instructions = opened.instructions.as_str();
+    let mut mcp = McpClient::connect(&h).await;
+    let instructions = mcp.instructions.as_str();
     assert!(
         instructions.chars().count() <= 1600,
         "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
         instructions.chars().count()
     );
-    let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
     for tool in listed["result"]["tools"].as_array().unwrap() {
         assert!(
@@ -3596,7 +3493,7 @@ async fn a_box_without_a_guide_offers_shell_and_files_only() {
         McpClient::tool_names(&listed),
         ["edit_file", "list_dir", "read_file", "shell", "write_file"]
     );
-    let main: Vec<String> = cocoonbox_agent::tools::main_tools(true, Automation::Minimal)
+    let main: Vec<String> = main_tools(true, Automation::Minimal)
         .into_iter()
         .map(|t| t.name.into_owned())
         .collect();
@@ -3651,12 +3548,11 @@ async fn hello_names_the_box_automation_and_its_screen() {
 #[tokio::test]
 async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
     let h = Harness::with_android().await;
-    let opened = McpClient::connect(&h).await;
-    let instructions = opened.instructions.as_str();
+    let mut mcp = McpClient::connect(&h).await;
+    let instructions = mcp.instructions.as_str();
     assert!(instructions.contains("Android 16 phone"), "{instructions}");
     assert!(!instructions.contains("XFCE"), "{instructions}");
 
-    let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
     assert_eq!(
         McpClient::tool_names(&listed),
@@ -3691,26 +3587,6 @@ async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
 }
 
 #[tokio::test]
-async fn a_plugin_box_keeps_its_mcp_instructions_within_the_cap() {
-    let h = Harness::with_plugin(Vec::new()).await;
-    let opened = McpClient::connect(&h).await;
-    let instructions = opened.instructions.as_str();
-    let extra = format!("\n\n{DEMO_ROUTING}");
-    let base = instructions.strip_suffix(&extra).unwrap_or(instructions);
-    assert_eq!(
-        instructions.ends_with(&extra),
-        base.chars().count() + extra.chars().count() <= 1600,
-        "{instructions}"
-    );
-    assert!(instructions.chars().count() <= 1600, "{instructions}");
-    assert!(
-        base.chars().count() + 150 <= 1600,
-        "{} chars leave under 150 for routing.d",
-        base.chars().count()
-    );
-}
-
-#[tokio::test]
 async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let run = json!({"code": "export function main(p) { return p }", "params": {"n": 2}, "screenshot": false});
     let h = Harness::with_plugin(vec![
@@ -3727,17 +3603,10 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     )
     .unwrap();
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "run the demo loop", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "run the demo loop").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let offered: Vec<&str> = chats[0]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["function"]["name"].as_str().unwrap())
-        .collect();
+    let offered = offered(&chats[0]);
     assert_eq!(
         offered[..3],
         ["gui_plan", "script_run", "demo_run"],
@@ -3757,10 +3626,15 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
 }
 
 #[tokio::test]
-async fn mcp_lists_a_title_and_one_hint_for_every_tool() {
+async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
     let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
+    let names = McpClient::tool_names(&listed);
+    for tool in ["desk", "browser_tabs", "script_run"] {
+        assert!(names.contains(&tool.to_owned()), "{names:?}");
+    }
+    assert!(!names.contains(&"cua_route".to_owned()), "{names:?}");
     let reads = [
         "read_file",
         "list_dir",
@@ -3782,24 +3656,6 @@ async fn mcp_lists_a_title_and_one_hint_for_every_tool() {
             !read,
             "{tool}"
         );
-    }
-    for spec in cocoonbox_agent::tools::remote_tools(Automation::Android) {
-        let mut tool = json!({});
-        cocoonbox_agent::tools::annotate(&mut tool, &spec.name);
-        assert_ne!(tool["title"], spec.name.as_ref(), "{tool}");
-    }
-}
-
-#[tokio::test]
-async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
-    let h = Harness::with_desk(Vec::new()).await;
-    let mut mcp = McpClient::connect(&h).await;
-    let listed = mcp.rpc("tools/list", json!({})).await;
-    let names = McpClient::tool_names(&listed);
-    assert!(names.contains(&"desk".to_owned()), "{names:?}");
-    assert!(names.contains(&"browser_tabs".to_owned()), "{names:?}");
-    for tool in listed["result"]["tools"].as_array().unwrap() {
-        let name = tool["name"].as_str().unwrap();
         assert!(
             tool["description"].as_str().unwrap().chars().count() <= 2048,
             "{name}: Claude Code cuts a description at 2048 characters"
@@ -3827,10 +3683,23 @@ async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
                 "browser_read",
                 "browser_fetch"
             ]
-            .contains(&tool["name"].as_str().unwrap()),
+            .contains(&name),
             "{tool}"
         );
     }
+    for spec in remote_tools(Automation::Android) {
+        let mut tool = json!({});
+        annotate(&mut tool, &spec.name);
+        assert_ne!(tool["title"], spec.name.as_ref(), "{tool}");
+    }
+    let refused = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "cua_route", "arguments": {"task": "x"}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    assert!(gw_bodies(&h.gw_log, "decisions").is_empty());
     let listed = mcp.rpc("resources/list", json!({})).await;
     assert_eq!(
         listed["result"]["resources"][0]["uri"], "cocoonbox://desk/AGENTS.md",
@@ -3845,7 +3714,6 @@ async fn mcp_lists_the_desk_tools_and_serves_its_guide_as_a_resource() {
 
 #[test]
 fn the_shell_of_a_box_that_runs_gui_plans_names_its_time_budget() {
-    use cocoonbox_agent::tools::{main_tools, remote_tools};
     for (tools, budget) in [
         (main_tools(false, Automation::Desk), true),
         (remote_tools(Automation::Desk), true),
@@ -3867,9 +3735,9 @@ fn the_shell_of_a_box_that_runs_gui_plans_names_its_time_budget() {
 #[test]
 fn screenshots_of_a_box_that_runs_gui_plans_name_the_default_scale_instead_of_the_screen_size() {
     let shots = ["screenshot", "computer_state"];
-    let desk = cocoonbox_agent::tools::main_tools(true, Automation::Desk)
+    let desk = main_tools(true, Automation::Desk)
         .into_iter()
-        .chain(cocoonbox_agent::tools::computer_tools(Automation::Desk))
+        .chain(computer_tools(Automation::Desk))
         .filter(|t| shots.contains(&t.name.as_ref()));
     let mut named = Vec::new();
     for t in desk {
@@ -3888,7 +3756,7 @@ fn screenshots_of_a_box_that_runs_gui_plans_name_the_default_scale_instead_of_th
         named.push(t.name);
     }
     assert_eq!(named, shots);
-    assert!(cocoonbox_agent::tools::computer_tools(Automation::Minimal).is_empty());
+    assert!(computer_tools(Automation::Minimal).is_empty());
 }
 
 #[tokio::test]
@@ -3957,9 +3825,7 @@ async fn a_turn_sums_the_model_calls_its_script_and_plugin_runs_made() {
     ])
     .await;
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "read the calculator", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "read the calculator").await;
     let end = turn_end(&entries);
     let usage = end.usage.as_ref().unwrap();
     let vision: Vec<(u64, u64, u64)> = usage
@@ -3993,17 +3859,10 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     )
     .unwrap();
     let mut agents = h.agents().await;
-    let agent_id = create_agent(&mut agents).await;
-    send(&mut agents, &agent_id, "save a note in mousepad", "").await;
-    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let (_, entries) = ask(&mut agents, "save a note in mousepad").await;
     assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let offered: Vec<&str> = chats[0]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["function"]["name"].as_str().unwrap())
-        .collect();
+    let offered = offered(&chats[0]);
     assert_eq!(offered[..2], ["gui_plan", "script_run"], "{offered:?}");
     assert!(offered.contains(&"delegate_computer"), "{offered:?}");
     assert!(!offered.contains(&"cua_route"), "{offered:?}");
@@ -4101,23 +3960,6 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
 }
 
 #[tokio::test]
-async fn a_desk_box_serves_no_cua_route_over_mcp() {
-    let h = Harness::with_desk(Vec::new()).await;
-    let mut mcp = McpClient::connect(&h).await;
-    let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
-    assert!(tools.contains(&"script_run".to_owned()), "{tools:?}");
-    assert!(!tools.contains(&"cua_route".to_owned()), "{tools:?}");
-    let refused = mcp
-        .rpc(
-            "tools/call",
-            json!({"name": "cua_route", "arguments": {"task": "x"}}),
-        )
-        .await;
-    assert_eq!(refused["error"]["code"], -32602, "{refused}");
-    assert!(gw_bodies(&h.gw_log, "decisions").is_empty());
-}
-
-#[tokio::test]
 async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
@@ -4171,7 +4013,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     let mut mcp = McpClient::connect_as(&h, Some(reader.clone())).await;
 
     let listed = mcp.rpc("tools/list", json!({})).await;
-    let mut read_only: Vec<&str> = cocoonbox_agent::tools::READ_ONLY.to_vec();
+    let mut read_only: Vec<&str> = READ_ONLY.to_vec();
     read_only.sort_unstable();
     assert_eq!(McpClient::tool_names(&listed), read_only);
     let refused = mcp
@@ -4237,7 +4079,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     drop(stream);
     assert_eq!(
         McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await).len(),
-        cocoonbox_agent::tools::remote_tools(Automation::Desk).len()
+        remote_tools(Automation::Desk).len()
     );
     let shell = mcp
         .call("shell", json!({"command": "echo guest > g.txt"}))
@@ -4258,14 +4100,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
         edge.share("share:sh-2:write"),
         edge.share("share:sh-1:read:u-1"),
     ] {
-        let stranger = McpClient {
-            http: reqwest::Client::new(),
-            url: mcp.url.clone(),
-            session: mcp.session.clone(),
-            next_id: 0,
-            credential: Some(other),
-            instructions: String::new(),
-        };
+        let stranger = McpClient::detached(mcp.url.clone(), mcp.session.clone(), Some(other));
         let resp = stranger
             .post(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
             .await;
@@ -4291,10 +4126,10 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
         .plan(signed(pb::PlanRequest::default(), &reader))
         .await;
     assert_eq!(plan.unwrap_err().code(), Code::PermissionDenied);
-    let (_tx, rx) = tokio::sync::mpsc::channel(1);
+    let (_tx, rx) = mpsc::channel(1);
     assert_eq!(
         screen
-            .screen(signed(tokio_stream_from(rx), &reader))
+            .screen(signed(ReceiverStream::new(rx), &reader))
             .await
             .unwrap_err()
             .code(),
@@ -4370,20 +4205,8 @@ async fn a_share_principal_holds_at_most_four_open_sessions() {
     for _ in 0..4 {
         open.push(McpClient::connect_as(&h, Some(reader.clone())).await);
     }
-    let fifth = McpClient {
-        http: reqwest::Client::new(),
-        url: open[0].url.clone(),
-        session: String::new(),
-        next_id: 0,
-        credential: Some(reader.clone()),
-        instructions: String::new(),
-    };
-    let init = json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
-        "protocolVersion": "2025-06-18",
-        "capabilities": {},
-        "clientInfo": {"name": "test-client", "version": "1.0"}
-    }});
-    let refused = fifth.post(init).await;
+    let fifth = McpClient::detached(open[0].url.clone(), String::new(), Some(reader.clone()));
+    let refused = fifth.post(McpClient::initialize()).await;
     assert_eq!(refused.status(), 429);
     let body: Value = refused.json().await.unwrap();
     assert_eq!(body["error"]["code"], -32000, "{body}");
@@ -4404,11 +4227,7 @@ async fn a_share_principal_holds_at_most_four_open_sessions() {
     for _ in 0..5 {
         McpClient::connect_as(&h, Some(edge.owner())).await;
     }
-    let closed = open[0]
-        .authorize(reqwest::Client::new().delete(&open[0].url))
-        .send()
-        .await
-        .unwrap();
+    let closed = open[0].close().await;
     assert_eq!(closed.status(), 204);
     McpClient::connect_as(&h, Some(reader)).await;
 }
@@ -4724,11 +4543,7 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
     assert_eq!(job["isError"], false, "{job}");
     let job = h.workspace.join("mcp-job.pid");
     assert!(alive(&job));
-    let deleted = closed
-        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
-        .send()
-        .await
-        .unwrap();
+    let deleted = closed.close().await;
     assert_eq!(deleted.status(), 204);
     let mut open = McpClient::connect_as(&h, Some(guest)).await;
     let mut names: Vec<(String, String)> = Vec::new();
@@ -4795,11 +4610,7 @@ async fn mcp_agents_are_deleted_only_after_their_session_closes() {
             .status(),
         200
     );
-    let closed = mcp
-        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
-        .send()
-        .await
-        .unwrap();
+    let closed = mcp.close().await;
     assert_eq!(closed.status(), 204);
     agents
         .delete(signed(
@@ -4891,13 +4702,7 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
         );
     }
 
-    let closed = reqwest::Client::new()
-        .delete(format!("{}/mcp", h.endpoint))
-        .header("x-cocoonbox-credential", owner())
-        .header("mcp-session-id", &b.session)
-        .send()
-        .await
-        .unwrap();
+    let closed = b.close().await;
     assert_eq!(closed.status(), 204);
     assert!(
         tab_gone(h.cdp_port, &url_b("/b")).await,
@@ -4988,11 +4793,7 @@ async fn a_share_session_closes_its_chrome_window() {
     let nav = guest.call("browser_navigate", json!({"url": page})).await;
     assert_eq!(nav["isError"], false, "{nav}");
     assert!(tabs(h.cdp_port).await.iter().any(|t| t.1 == page));
-    let closed = guest
-        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
-        .send()
-        .await
-        .unwrap();
+    let closed = guest.close().await;
     assert_eq!(closed.status(), 204);
     assert!(
         tab_gone(h.cdp_port, &page).await,
@@ -5019,9 +4820,7 @@ async fn delete_closes_the_agents_chrome_window() {
     )
     .await;
     let mut agents = h.agents().await;
-    let doomed = create_agent(&mut agents).await;
-    send(&mut agents, &doomed, "open the page", "").await;
-    wait_turn_end(&mut agents, &doomed).await;
+    let (doomed, _) = ask(&mut agents, "open the page").await;
     assert!(tabs(h.cdp_port).await.iter().any(|t| t.1 == page));
     agents
         .delete(authed(pb::DeleteAgentRequest { agent_id: doomed }))
@@ -5112,6 +4911,14 @@ async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateCl
 }
 
 async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
+    try_plan(h, consistency, parent).await.unwrap()
+}
+
+async fn try_plan(
+    h: &Harness,
+    consistency: pb::Consistency,
+    parent: &str,
+) -> Result<pb::PlanResponse, tonic::Status> {
     state_client(h)
         .await
         .plan(authed(pb::PlanRequest {
@@ -5120,8 +4927,7 @@ async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::Pl
             parent: parent.into(),
         }))
         .await
-        .unwrap()
-        .into_inner()
+        .map(tonic::Response::into_inner)
 }
 
 async fn upload_missing(
@@ -5178,7 +4984,7 @@ async fn restore(
             url: format!("{base}/{k}"),
         })
         .collect();
-    restore_pages(h, base, manifest_id, gets).await
+    restore_pages(h, base, manifest_id, gets, None).await
 }
 
 async fn restore_pages(
@@ -5186,7 +4992,9 @@ async fn restore_pages(
     base: &str,
     manifest_id: &str,
     gets: Vec<pb::PresignedGet>,
+    scope: Option<pb::RestoreScope>,
 ) -> Result<pb::TransferProgress, tonic::Status> {
+    let scoped = scope.is_some();
     let mut reqs = vec![pb::RestoreRequest {
         key: Some(state_key()),
         manifest: Some(pb::PresignedGet {
@@ -5194,17 +5002,20 @@ async fn restore_pages(
             url: format!("{base}/{manifest_id}"),
         }),
         gets: Vec::new(),
-        scope: None,
+        scope,
     }];
     reqs.extend(gets.chunks(2).map(|page| pb::RestoreRequest {
         gets: page.to_vec(),
         ..Default::default()
     }));
-    let stream = state_client(h)
-        .await
-        .restore(authed(tokio_stream::iter(reqs)))
-        .await?
-        .into_inner();
+    let mut state = state_client(h).await;
+    let reqs = authed(tokio_stream::iter(reqs));
+    let stream = if scoped {
+        state.restore_paths(reqs).await
+    } else {
+        state.restore(reqs).await
+    }?
+    .into_inner();
     last_message(stream).await
 }
 
@@ -5244,7 +5055,7 @@ fn chunks_of(m: &Value, path: &str) -> Value {
 fn write_script(path: &Path, body: &str) {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::rename(&tmp, path).unwrap();
 }
 
@@ -5564,13 +5375,7 @@ async fn quiesced_plan_saves_the_desktop_session_and_survives_a_failed_save() {
 async fn an_android_box_fails_a_quiesced_plan_when_its_session_save_fails() {
     let h = Harness::with_android().await;
     write_script(&h.session_save, "echo tar failed >&2; exit 1");
-    let err = state_client(&h)
-        .await
-        .plan(authed(pb::PlanRequest {
-            key: Some(state_key()),
-            consistency: pb::Consistency::Quiesced.into(),
-            parent: String::new(),
-        }))
+    let err = try_plan(&h, pb::Consistency::Quiesced, "")
         .await
         .unwrap_err();
     assert!(err.message().contains("tar failed"), "{err:?}");
@@ -5663,7 +5468,7 @@ async fn restore_rejects_a_manifest_whose_chunks_never_all_got_urls() {
             url: format!("{base}/{}", c.id),
         })
         .collect();
-    let err = restore_pages(&h, &base, &planned.snapshot_id, gets)
+    let err = restore_pages(&h, &base, &planned.snapshot_id, gets, None)
         .await
         .unwrap_err();
     assert_eq!(err.code(), Code::InvalidArgument, "{err:?}");
@@ -5710,7 +5515,7 @@ async fn restore_fetches_a_page_before_the_stream_ends() {
         chunk_id: id.into(),
         url: format!("{base}/{id}"),
     };
-    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    let (tx, rx) = mpsc::channel(4);
     tx.send(pb::RestoreRequest {
         key: Some(state_key()),
         manifest: Some(get(&planned.snapshot_id)),
@@ -5721,7 +5526,7 @@ async fn restore_fetches_a_page_before_the_stream_ends() {
     .unwrap();
     let mut stream = state_client(&h)
         .await
-        .restore(authed(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        .restore(authed(ReceiverStream::new(rx)))
         .await
         .unwrap()
         .into_inner();
@@ -6207,15 +6012,7 @@ async fn a_failed_plan_removes_its_spool() {
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 41)).unwrap();
     let dir = h.dir.path();
     std::fs::remove_file(dir.join("toolhost.sock")).unwrap();
-    let err = state_client(&h)
-        .await
-        .plan(authed(pb::PlanRequest {
-            key: Some(state_key()),
-            consistency: pb::Consistency::Live.into(),
-            parent: String::new(),
-        }))
-        .await
-        .unwrap_err();
+    let err = try_plan(&h, pb::Consistency::Live, "").await.unwrap_err();
     assert!(err.message().contains("toolhost"), "{err:?}");
     let spools: Vec<_> = std::fs::read_dir(dir.join("state/state"))
         .unwrap()
@@ -6441,36 +6238,18 @@ async fn restore_paths(
     target: &str,
     chunks: &[String],
 ) -> Result<pb::TransferProgress, tonic::Status> {
-    let mut reqs = vec![pb::RestoreRequest {
-        key: Some(state_key()),
-        manifest: Some(pb::PresignedGet {
-            chunk_id: manifest_id.into(),
-            url: format!("{base}/{manifest_id}"),
-        }),
-        gets: Vec::new(),
-        scope: Some(pb::RestoreScope {
-            paths: paths.to_vec(),
-            target: target.into(),
-        }),
-    }];
-    reqs.extend(chunks.chunks(2).map(|page| {
-        pb::RestoreRequest {
-            gets: page
-                .iter()
-                .map(|id| pb::PresignedGet {
-                    chunk_id: id.clone(),
-                    url: format!("{base}/{id}"),
-                })
-                .collect(),
-            ..Default::default()
-        }
-    }));
-    let stream = state_client(h)
-        .await
-        .restore_paths(authed(tokio_stream::iter(reqs)))
-        .await?
-        .into_inner();
-    last_message(stream).await
+    let gets = chunks
+        .iter()
+        .map(|id| pb::PresignedGet {
+            chunk_id: id.clone(),
+            url: format!("{base}/{id}"),
+        })
+        .collect();
+    let scope = pb::RestoreScope {
+        paths: paths.to_vec(),
+        target: target.into(),
+    };
+    restore_pages(h, base, manifest_id, gets, Some(scope)).await
 }
 
 fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
