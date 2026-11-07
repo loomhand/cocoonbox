@@ -110,7 +110,7 @@ func (l *stateLayer) deltaBase(ctx context.Context, p statePath, day time.Time) 
 		if cached != nil && cached.ID == e.ID {
 			return cached, nil
 		}
-		base, err := l.record(ctx, p, e.ID)
+		base, err := l.readRecord(ctx, p, e.ID, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func (l *stateLayer) deltaBase(ctx context.Context, p statePath, day time.Time) 
 	return nil, nil
 }
 
-// putRecord writes rec as a delta against base when base is set and the change stays within 1/deltaShare of it, else full; it sets rec.Base to match.
+// putRecord writes rec as a delta against a set base when chunkDiff allows it, else full, and sets rec.Base to match.
 func (l *stateLayer) putRecord(ctx context.Context, p statePath, rec *snapshotRecord, base *snapshotRecord) error {
 	rec.Base = ""
 	body, err := json.Marshal(rec.Chunks)
@@ -292,7 +292,7 @@ func (l *stateLayer) compactManifest(ctx context.Context, p statePath, key keyri
 
 // expandSnapshot rewrites snapshot id of p's box as a full record with a full manifest, so it no longer needs its base.
 func (l *stateLayer) expandSnapshot(ctx context.Context, p statePath, key keyring.Key, id string) error {
-	rec, err := l.record(ctx, p, id)
+	rec, err := l.readRecord(ctx, p, id, nil)
 	if err != nil {
 		return err
 	}
@@ -305,7 +305,7 @@ func (l *stateLayer) expandSnapshot(ctx context.Context, p statePath, key keyrin
 	return l.store.Delete(ctx, []string{p.manifest(id) + deltaSuffix})
 }
 
-// chunkDiff returns next as a delta against base, or false when the delta would list more than 1/deltaShare of base's chunks.
+// chunkDiff returns next as a delta against base, false when it is too large.
 func chunkDiff(base, next []chunk) (chunkDelta, bool) {
 	inBase, inNext := map[string]bool{}, map[string]bool{}
 	for _, c := range base {

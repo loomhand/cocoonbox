@@ -25,7 +25,7 @@ type Drift struct {
 	Operations []string
 }
 
-// EnableLedger copies every box head the state layer commits and every operation event into l until ctx ends.
+// EnableLedger copies every box head the state layer caches and every operation event into l until ctx ends.
 func (s *Service) EnableLedger(ctx context.Context, l *cluster.Store) {
 	s.ledger, s.mirror = l, cluster.NewMirror()
 	go s.mirror.Run(ctx)

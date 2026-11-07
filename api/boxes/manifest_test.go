@@ -53,7 +53,7 @@ func TestTheContractFixtureOpensSplitsAndSealsLikeTheAgent(t *testing.T) {
 	if err := json.Unmarshal(plain, &m); err != nil || m.Version != manifestVersion || len(m.Files) != 3 {
 		t.Fatalf("manifest = %+v, %v", m, err)
 	}
-	if got := m.Files[2]; got.boxPath() != "/workspace/notes.txt" || got.Kind != kindFile || !slices.Equal(got.Chunks, []string{f.Chunk.ID}) {
+	if got := m.Files[2]; got.fullPath() != "/workspace/notes.txt" || got.Kind != kindFile || !slices.Equal(got.Chunks, []string{f.Chunk.ID}) {
 		t.Errorf("file = %+v", got)
 	}
 	parts, err := splitManifest(plain)

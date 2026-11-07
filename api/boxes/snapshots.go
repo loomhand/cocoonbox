@@ -95,7 +95,7 @@ func (s *Service) BrowseSnapshot(ctx context.Context, req *controlv1.BrowseSnaps
 	list := dirs[dir]
 	resp := &controlv1.BrowseSnapshotResponse{Truncated: len(list) > browseLimit}
 	for _, f := range list[:min(len(list), browseLimit)] {
-		resp.Entries = append(resp.Entries, &controlv1.SnapshotEntry{Path: f.boxPath(), Kind: entryKinds[f.Kind], Size: f.Size, MtimeMs: f.MtimeMs})
+		resp.Entries = append(resp.Entries, &controlv1.SnapshotEntry{Path: f.fullPath(), Kind: entryKinds[f.Kind], Size: f.Size, MtimeMs: f.MtimeMs})
 	}
 	return resp, nil
 }
@@ -249,7 +249,7 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	if err != nil {
 		return done, err
 	}
-	rec, err := l.record(ctx, p, e.ID)
+	rec, err := l.readRecord(ctx, p, e.ID, nil)
 	if err != nil {
 		return done, err
 	}

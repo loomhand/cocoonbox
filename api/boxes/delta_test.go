@@ -47,7 +47,7 @@ func TestDeltaRecordsHoldOnlyTheChangeAndReadBackFull(t *testing.T) {
 	if err := json.Unmarshal(env.store.objects[p.record(second)], &old); err == nil {
 		t.Error("an api without delta records decodes a delta record as a chunk list")
 	}
-	rec, err := env.svc.state.record(env.ctx, p, second)
+	rec, err := env.svc.state.readRecord(env.ctx, p, second, nil)
 	if err != nil {
 		t.Fatalf("read delta record: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestPruningKeepsABaseThatSeveralSnapshotsNeed(t *testing.T) {
 	}
 	key, _ := env.keys.StateKey(env.ctx, alice)
 	for _, id := range []string{second, head} {
-		rec, err := env.svc.state.record(env.ctx, p, id)
+		rec, err := env.svc.state.readRecord(env.ctx, p, id, nil)
 		if err != nil || rec.Base != base {
 			t.Fatalf("record %s: base %q, %v", id, rec.Base, err)
 		}
@@ -268,7 +268,7 @@ func TestGCAndADeltaSaveInterleave(t *testing.T) {
 			}
 			env.store.before = nil
 			head := env.headID(t)
-			rec, err := env.svc.state.record(env.ctx, p, head)
+			rec, err := env.svc.state.readRecord(env.ctx, p, head, nil)
 			if err != nil {
 				t.Fatalf("head record: %v", err)
 			}

@@ -91,7 +91,7 @@ func (m *manifest) tree() map[string][]manifestFile {
 	}
 	for _, f := range m.Files {
 		f.Chunks = nil
-		parent := path.Dir(f.boxPath())
+		parent := path.Dir(f.fullPath())
 		dirs[parent] = append(dirs[parent], f)
 	}
 	return dirs
@@ -108,7 +108,7 @@ type manifestFile struct {
 	Chunks  []string `json:"chunks,omitempty"`
 }
 
-func (f manifestFile) boxPath() string {
+func (f manifestFile) fullPath() string {
 	for _, r := range stateRoots {
 		if r.name == f.Root {
 			return path.Join(r.path, f.Path)

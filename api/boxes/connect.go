@@ -59,15 +59,7 @@ func (s *Service) MachineOrigin(ctx context.Context, machine string) (string, st
 
 // RunCredentials pushes the credentials of running machines every interval until ctx ends, so a token is refreshed before it expires.
 func (s *Service) RunCredentials(ctx context.Context, interval time.Duration) {
-	tick := time.Tick(interval)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick:
-		}
-		s.refreshCredentials(ctx)
-	}
+	every(ctx, interval, func() { s.refreshCredentials(ctx) })
 }
 
 // PruneDoorKeys deletes the box door keys of machines the backend no longer holds; a hibernated machine keeps its key.

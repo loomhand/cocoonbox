@@ -157,7 +157,7 @@ type stateLayer struct {
 	keys       keyring.Keyring
 	retryDelay time.Duration
 	versioned  store.Versioned
-	// mirror, when set, gets every committed head and, as nil, every forgotten one.
+	// mirror, when set, gets every head the layer caches and, as nil, every forgotten one.
 	mirror func(p statePath, h *head)
 	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
 	shared *cluster.Store
@@ -326,7 +326,7 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 	if !objectID.MatchString(id) {
 		return nil, fmt.Errorf("invalid snapshot id %q", id)
 	}
-	rec, err := l.record(ctx, p, id)
+	rec, err := l.readRecord(ctx, p, id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -678,10 +678,6 @@ func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[
 		return nil, 0, err
 	}
 	return idx.stored(keyID), idx.Generation, nil
-}
-
-func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
-	return l.readRecord(ctx, p, id, nil)
 }
 
 func (l *stateLayer) userLock(user string) *sync.RWMutex {

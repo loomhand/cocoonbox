@@ -878,7 +878,7 @@ func TestSaveHealsAfterACommitThatKeptFailing(t *testing.T) {
 	if got := []string{plans[2].GetParent(), plans[3].GetParent()}; !slices.Equal(got, []string{snapshotID(1), ""}) {
 		t.Errorf("parents of the plans after the failed commit = %q, want the old head, then none", got)
 	}
-	rec, err := env.svc.state.record(env.ctx, statePath{user: alice, box: aliceBox}, snapshotID(4))
+	rec, err := env.svc.state.readRecord(env.ctx, statePath{user: alice, box: aliceBox}, snapshotID(4), nil)
 	if err != nil || rec.Parent != snapshotID(1) || len(rec.Chunks) != 3 {
 		t.Errorf("healed snapshot = %+v, %v", rec, err)
 	}

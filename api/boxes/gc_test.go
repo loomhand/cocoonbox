@@ -303,7 +303,7 @@ func TestASaveAfterPruningPlansOnTheHead(t *testing.T) {
 		t.Fatal("the GC kept the head's parent")
 	}
 	env.save(t)
-	rec, err := env.svc.state.record(env.ctx, p, snapshotID(3))
+	rec, err := env.svc.state.readRecord(env.ctx, p, snapshotID(3), nil)
 	if plan := env.agent.lastPlan(); err != nil || plan.GetParent() != snapshotID(2) || rec.Parent != snapshotID(2) {
 		t.Errorf("save after pruning planned on %q, record %+v, %v", plan.GetParent(), rec, err)
 	}
