@@ -75,7 +75,7 @@ func TestMetadataDocumentClient(t *testing.T) {
 		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write([]byte(body))
 	}))
-	defer srv.Close()
+	t.Cleanup(srv.Close)
 	id := srv.URL + "/client.json"
 	tests := []struct {
 		name, body, contentType string

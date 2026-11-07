@@ -53,7 +53,7 @@ const (
 
 func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	e := newEnv(t)
-	resp := e.mcp(t, "", "tools/list", nil)
+	resp := e.rpc(t, controlmcp.Path, "", "", "tools/list", nil)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("no token: %d, want 401", resp.StatusCode)
 	}
@@ -105,7 +105,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 		t.Error("the user authenticator admits an access token, so gRPC, the box MCP and Connect would take it")
 	}
 
-	newAccess, newRefresh := e.token(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}})
+	newAccess, newRefresh, _ := e.token(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}})
 	if newRefresh == refresh || newAccess == access {
 		t.Fatal("refresh did not rotate")
 	}
@@ -120,7 +120,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") || life.Err() == nil {
 		t.Fatalf("replayed refresh token: %d %s; the grant's calls' lifetime %v", code, body, life.Err())
 	}
-	if resp := e.mcp(t, newAccess, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(resp.Header.Get("WWW-Authenticate"), "invalid_token") {
+	if resp := e.rpc(t, controlmcp.Path, newAccess, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(resp.Header.Get("WWW-Authenticate"), "invalid_token") {
 		t.Errorf("after a replay the grant still works: %d", resp.StatusCode)
 	}
 	if list := e.boxNames(t, e.userToken); !slices.Equal(list, []string{"main", "agent-one"}) {
@@ -148,7 +148,7 @@ func TestConsoleListsAcknowledgesAndRevokesGrants(t *testing.T) {
 	}
 	life := lifetime(e.users, e.alice, grants[0].ID)
 	e.console(t, http.MethodDelete, "agents/"+grants[0].ID, map[string]any{}, nil)
-	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
+	if resp := e.rpc(t, controlmcp.Path, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
 		t.Errorf("a revoked grant answers %d, want 401; its calls' lifetime %v", resp.StatusCode, life.Err())
 	}
 }
@@ -191,10 +191,9 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 	e := newEnv(t)
 	clientID := e.register(t, "Agent")
 	base := func() url.Values {
-		return url.Values{
-			"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
-			"code_challenge_method": {"S256"}, "state": {"s1"}, "scope": {"boxes"}, "resource": {e.resource},
-		}
+		q := connectQuery(clientID, strings.Repeat("v", 43), "boxes")
+		q.Set("resource", e.resource)
+		return q
 	}
 	tests := []struct {
 		name     string
@@ -220,7 +219,7 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 			if status != http.StatusBadRequest || (refusal.Redirect != "") != tt.redirect {
 				t.Errorf("%d %s, want 400 with redirect %t", status, body, tt.redirect)
 			}
-			if tt.redirect && (!strings.Contains(refusal.Redirect, "state=s1") || !strings.HasPrefix(refusal.Redirect, "http://127.0.0.1/callback?")) {
+			if tt.redirect && (!strings.Contains(refusal.Redirect, "state=st") || !strings.HasPrefix(refusal.Redirect, "http://127.0.0.1/callback?")) {
 				t.Errorf("redirect = %q", refusal.Redirect)
 			}
 		})
@@ -230,15 +229,12 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	e := newEnv(t)
 	clientID := e.register(t, "Agent")
-	q := url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
-		"code_challenge_method": {"S256"}, "state": {"s2"}, "scope": {"boxes"},
-	}
+	q := connectQuery(clientID, strings.Repeat("v", 43), "boxes")
 	var denied struct {
 		Redirect string `json:"redirect"`
 	}
 	e.console(t, http.MethodPost, "oauth/deny", map[string]any{"query": q.Encode()}, &denied)
-	if u, err := url.Parse(denied.Redirect); err != nil || u.Query().Get("error") != "access_denied" || u.Query().Get("state") != "s2" || u.Query().Get("code") != "" {
+	if u, err := url.Parse(denied.Redirect); err != nil || u.Query().Get("error") != "access_denied" || u.Query().Get("state") != "st" || u.Query().Get("code") != "" {
 		t.Errorf("deny redirect = %q", denied.Redirect)
 	}
 	access, refresh := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
@@ -247,7 +243,7 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	if resp := e.post(t, oauth.RevokePath, "application/x-www-form-urlencoded", url.Values{"token": {refresh}, "client_id": {clientID}}.Encode()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
-	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
+	if resp := e.rpc(t, controlmcp.Path, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
 		t.Errorf("after revocation the access token answers %d; its calls' lifetime %v", resp.StatusCode, life.Err())
 	}
 }
@@ -266,7 +262,7 @@ func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
 		t.Fatalf("sign out everywhere = %d %s", code, body)
 	}
 	for name, token := range map[string]string{"the first agent": first, "the second agent": second} {
-		if resp := e.mcp(t, token, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
+		if resp := e.rpc(t, controlmcp.Path, token, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 			t.Errorf("%s answers %d after signing out everywhere, want 401", name, resp.StatusCode)
 		}
 	}
@@ -354,7 +350,7 @@ func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resp := e.boxMCP(t, tt.token, tt.box)
+			resp := e.rpc(t, edge.MCPPrefix+tt.box, tt.token, "", "ping", nil)
 			if resp.StatusCode != tt.want {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
 			}
@@ -437,7 +433,7 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 		{"the grant on another user's box", access, bobs, http.StatusNotFound},
 		{"the user on an unchosen box", e.userToken, work.ID, http.StatusOK},
 	} {
-		if resp := e.boxMCP(t, tt.token, tt.box); resp.StatusCode != tt.want {
+		if resp := e.rpc(t, edge.MCPPrefix+tt.box, tt.token, "", "ping", nil); resp.StatusCode != tt.want {
 			t.Errorf("box MCP, %s: %d, want %d", tt.name, resp.StatusCode, tt.want)
 		}
 	}
@@ -469,7 +465,7 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 	if list := e.boxNames(t, access); !slices.Equal(list, []string{"work", "agent-one"}) {
 		t.Errorf("after the change the grant sees %v", list)
 	}
-	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
+	if resp := e.rpc(t, edge.MCPPrefix+main, access, "", "ping", nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("box MCP of a box no longer chosen: %d", resp.StatusCode)
 	}
 	if fails, text := e.rootTool(t, access, "s1", "shell", map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
@@ -510,10 +506,7 @@ func TestSigningInAgainShowsAndReplacesTheChosenBoxes(t *testing.T) {
 	clientID := e.register(t, "Agent")
 	main := e.users.Boxes(e.alice)[0].ID
 	e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main)
-	q := url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
-		"code_challenge_method": {"S256"},
-	}
+	q := connectQuery(clientID, strings.Repeat("v", 43), "")
 	var consent struct {
 		oauth.Consent
 		Boxes []struct {
@@ -529,7 +522,7 @@ func TestSigningInAgainShowsAndReplacesTheChosenBoxes(t *testing.T) {
 	if grants := e.grants(t); len(grants) != 1 || len(grants[0].Chosen) != 0 {
 		t.Fatalf("grants = %+v, want the renewal to drop the chosen box", grants)
 	}
-	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
+	if resp := e.rpc(t, edge.MCPPrefix+main, access, "", "ping", nil); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("box MCP of the dropped box: %d", resp.StatusCode)
 	}
 }
@@ -539,10 +532,7 @@ func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
 	clientID := e.register(t, "Agent")
 	first, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 	e.call(t, first, "box_create", map[string]any{"name": "agent-one"})
-	q := url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
-		"code_challenge_method": {"S256"},
-	}
+	q := connectQuery(clientID, strings.Repeat("v", 43), "")
 	var consent oauth.Consent
 	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
 	if !consent.Existing {
@@ -567,7 +557,7 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
+	if resp := e.rpc(t, controlmcp.Path, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("a disabled user's grant answers %d", resp.StatusCode)
 	}
 }
@@ -676,7 +666,7 @@ func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
 	if _, err := io.ReadAll(stream); err != nil {
 		t.Errorf("stream after the revoke: %v", err)
 	}
-	if resp := e.rootRPC(t, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
+	if resp := e.rpc(t, controlmcp.RootPath, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("tools/list after the revoke = %d", resp.StatusCode)
 	}
 }
@@ -781,10 +771,9 @@ func (e *env) code(t *testing.T, clientID string, caps oauth.Caps, boxes ...stri
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
 	redirect := "http://127.0.0.1:43123/callback"
-	q := url.Values{
-		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {redirect}, "code_challenge": {challenge(verifier)},
-		"code_challenge_method": {"S256"}, "state": {"st"}, "scope": {"boxes"}, "resource": {e.resource},
-	}
+	q := connectQuery(clientID, verifier, "boxes")
+	q.Set("redirect_uri", redirect)
+	q.Set("resource", e.resource)
 	var consent oauth.Consent
 	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
 	if consent.ClientID != clientID || !consent.Loopback || consent.RedirectHost != "127.0.0.1:43123" {
@@ -804,24 +793,26 @@ func (e *env) code(t *testing.T, clientID string, caps oauth.Caps, boxes ...stri
 func (e *env) authorize(t *testing.T, clientID string, caps oauth.Caps, boxes ...string) (string, string) {
 	t.Helper()
 	code, verifier, redirect := e.code(t, clientID, caps, boxes...)
-	return e.token(t, url.Values{
+	access, refresh, _ := e.token(t, url.Values{
 		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect},
 		"code_verifier": {verifier}, "resource": {e.resource},
 	})
+	return access, refresh
 }
 
-func (e *env) token(t *testing.T, form url.Values) (string, string) {
+func (e *env) token(t *testing.T, form url.Values) (string, string, string) {
 	t.Helper()
 	resp := e.post(t, oauth.TokenPath, "application/x-www-form-urlencoded", form.Encode())
 	var tok struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
 	}
 	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil || tok.TokenType != "Bearer" || !strings.HasPrefix(tok.AccessToken, oauth.AccessPrefix) {
 		t.Fatalf("token: %d", resp.StatusCode)
 	}
-	return tok.AccessToken, tok.RefreshToken
+	return tok.AccessToken, tok.RefreshToken, tok.Scope
 }
 
 func (e *env) tokenError(t *testing.T, form url.Values) (int, string) {
@@ -831,25 +822,29 @@ func (e *env) tokenError(t *testing.T, form url.Values) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
-func (e *env) mcp(t *testing.T, token, method string, params any) *http.Response {
+func (e *env) rpc(t *testing.T, path, token, session, method string, params any) *http.Response {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.Path, bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
 	resp, err := e.client.Do(req)
 	if err != nil {
-		t.Fatalf("mcp %s: %v", method, err)
+		t.Fatalf("%s %s: %v", path, method, err)
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
 }
 
-func (e *env) result(t *testing.T, token, tool string, args map[string]any) (bool, string, jsontext.Value) {
+func (e *env) result(t *testing.T, path, token, session, tool string, args map[string]any) (bool, string, jsontext.Value) {
 	t.Helper()
-	resp := e.mcp(t, token, "tools/call", map[string]any{"name": tool, "arguments": args})
+	resp := e.rpc(t, path, token, session, "tools/call", map[string]any{"name": tool, "arguments": args})
 	var out struct {
 		Result struct {
 			IsError bool `json:"isError"`
@@ -870,7 +865,7 @@ func (e *env) result(t *testing.T, token, tool string, args map[string]any) (boo
 
 func (e *env) call(t *testing.T, token, tool string, args map[string]any) jsontext.Value {
 	t.Helper()
-	isError, text, structured := e.result(t, token, tool, args)
+	isError, text, structured := e.result(t, controlmcp.Path, token, "", tool, args)
 	if isError {
 		t.Fatalf("%s: %s", tool, text)
 	}
@@ -879,7 +874,7 @@ func (e *env) call(t *testing.T, token, tool string, args map[string]any) jsonte
 
 func (e *env) toolError(t *testing.T, token, tool string, args map[string]any) string {
 	t.Helper()
-	isError, text, _ := e.result(t, token, tool, args)
+	isError, text, _ := e.result(t, controlmcp.Path, token, "", tool, args)
 	if !isError {
 		t.Fatalf("%s succeeded: %s", tool, text)
 	}
@@ -910,19 +905,6 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 	}
 	e.console(t, http.MethodGet, "agents", nil, &agents)
 	return agents.Grants
-}
-
-func (e *env) boxMCP(t *testing.T, token, box string) *http.Response {
-	t.Helper()
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+edge.MCPPrefix+box, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := e.client.Do(req)
-	if err != nil {
-		t.Fatalf("box mcp: %v", err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
 }
 
 func (e *env) console(t *testing.T, method, path string, body, out any) {
@@ -1009,7 +991,6 @@ func (e *env) redeemAccount(t *testing.T, q url.Values, verifier string) string 
 	return token
 }
 
-// enableConnect turns Connect on with alice's active accounts mock and other, her account stale that needs a reconnect, and bob's account theirs.
 func (e *env) enableConnect(t *testing.T) *connecttest.Vendor {
 	t.Helper()
 	vendor := connecttest.New()
@@ -1069,35 +1050,7 @@ func (e *env) connectGrant(t *testing.T, clientID string, boxes []string, connec
 	if err != nil {
 		t.Fatalf("redirect = %q", approved.Redirect)
 	}
-	form := url.Values{"grant_type": {"authorization_code"}, "code": {u.Query().Get("code")}, "client_id": {clientID}, "redirect_uri": {callback}, "code_verifier": {verifier}}
-	resp := e.post(t, oauth.TokenPath, "application/x-www-form-urlencoded", form.Encode())
-	var tok struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		Scope        string `json:"scope"`
-	}
-	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil {
-		t.Fatalf("token: %d", resp.StatusCode)
-	}
-	return tok.AccessToken, tok.RefreshToken, tok.Scope
-}
-
-func (e *env) rootRPC(t *testing.T, token, session, method string, params any) *http.Response {
-	t.Helper()
-	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+token)
-	if session != "" {
-		req.Header.Set("Mcp-Session-Id", session)
-	}
-	resp, err := e.client.Do(req)
-	if err != nil {
-		t.Fatalf("unified %s: %v", method, err)
-	}
-	t.Cleanup(func() { _ = resp.Body.Close() })
-	return resp
+	return e.token(t, url.Values{"grant_type": {"authorization_code"}, "code": {u.Query().Get("code")}, "client_id": {clientID}, "redirect_uri": {callback}, "code_verifier": {verifier}})
 }
 
 func (e *env) rootTools(t *testing.T, token string) map[string]string {
@@ -1110,7 +1063,7 @@ func (e *env) rootTools(t *testing.T, token string) map[string]string {
 			} `json:"tools"`
 		} `json:"result"`
 	}
-	if resp := e.rootRPC(t, token, "", "tools/list", nil); resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &out) != nil {
+	if resp := e.rpc(t, controlmcp.RootPath, token, "", "tools/list", nil); resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &out) != nil {
 		t.Fatalf("unified tools/list: %d", resp.StatusCode)
 	}
 	tools := map[string]string{}
@@ -1122,19 +1075,8 @@ func (e *env) rootTools(t *testing.T, token string) map[string]string {
 
 func (e *env) rootTool(t *testing.T, token, session, tool string, args map[string]any) (bool, string) {
 	t.Helper()
-	var out struct {
-		Result struct {
-			IsError bool `json:"isError"`
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-	}
-	resp := e.rootRPC(t, token, session, "tools/call", map[string]any{"name": tool, "arguments": args})
-	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &out) != nil || len(out.Result.Content) == 0 {
-		t.Fatalf("unified %s: %d", tool, resp.StatusCode)
-	}
-	return out.Result.IsError, out.Result.Content[0].Text
+	isError, text, _ := e.result(t, controlmcp.RootPath, token, session, tool, args)
+	return isError, text
 }
 
 func (e *env) rootStream(t *testing.T, token string) io.ReadCloser {
@@ -1152,14 +1094,7 @@ func (e *env) rootStream(t *testing.T, token string) io.ReadCloser {
 
 func (e *env) door(t *testing.T, token string) (int, string) {
 	t.Helper()
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+connect.MCPPath, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := e.client.Do(req)
-	if err != nil {
-		t.Fatalf("door: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+	resp := e.rpc(t, connect.MCPPath, token, "", "tools/list", nil)
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body)
 }
@@ -1180,7 +1115,6 @@ type connectConsent struct {
 	ChosenConnectors []string `json:"chosen_connectors"`
 }
 
-// fakeBoxes keeps box rows in the users service, as boxes.Service does, and every box runs at once.
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
 	users *users.Service
@@ -1229,14 +1163,6 @@ func (f *fakeBoxes) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*
 	return f.start(list[i].ID, list[i].Name), nil
 }
 
-func (f *fakeBoxes) Hibernate(_ context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.states[ref.GetBoxId()] = controlv1.BoxState_BOX_STATE_HIBERNATED
-	f.ops++
-	return &controlv1.Operation{Id: fmt.Sprint("op-", f.ops), BoxId: ref.GetBoxId()}, nil
-}
-
 func (f *fakeBoxes) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	if err := f.users.RemoveBox(ctx, auth.User(ctx), ref.GetBoxId()); err != nil {
 		return nil, err
@@ -1265,7 +1191,6 @@ func (f *fakeBoxes) start(id, name string) *controlv1.EnsureResponse {
 	}
 }
 
-// fakeResolver routes every box of its owner to the fake agent.
 type fakeResolver struct {
 	users  *users.Service
 	addr   string
@@ -1342,7 +1267,6 @@ type fakeTenants struct{}
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
-// newFakeAgent echoes the credential and authorization it saw.
 func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

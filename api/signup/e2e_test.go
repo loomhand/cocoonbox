@@ -169,11 +169,10 @@ func TestLinkingWhileAdmissionCreatesTheAccountKeepsOneIdentityOwner(t *testing.
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	for blocked := false; !blocked; {
-		if err := conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock')").Scan(&blocked); err != nil {
-			t.Fatalf("wait for concurrent link: %v", err)
-		}
-	}
+	clustertest.WaitFor(t, "the link blocks on the account lock", func() bool {
+		var blocked bool
+		return conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock')").Scan(&blocked) == nil && blocked
+	})
 	release()
 	if err := <-admitted; err != nil {
 		t.Fatal(err)
@@ -195,9 +194,7 @@ func TestInviteOnlySignupAdmitsAtOnceThenQueuesAndAFreedSeatAdmitsTheFront(t *te
 	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", nil); !strings.Contains(loc, "login_error=invite_required") {
 		t.Fatalf("invite-only signup without an invite ends at %q", loc)
 	}
-	var made struct {
-		Code string `json:"code"`
-	}
+	var made madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 3, "days": 7}, &made)
 	bob := e.browser(t)
 	if loc := bob.githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"invite": made.Code}); loc != "/cb/" {
@@ -472,9 +469,7 @@ func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) 
 	admin := e.browser(t)
 	admin.password(t, "admin", adminPassword)
 	admin.setSignup(t, signup.Settings{Enabled: true, InviteOnly: true, Seats: 10, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
-	var made struct {
-		Code string `json:"code"`
-	}
+	var made madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 1, "days": 1}, &made)
 	verifier := strings.Repeat("v", 43)
 	sum := sha256.Sum256([]byte(verifier))
@@ -531,10 +526,7 @@ func TestAnInviteTokenMakesOnlyOneUseInvitesAndListsOnlyItsOwn(t *testing.T) {
 	admin := e.browser(t)
 	admin.password(t, "admin", adminPassword)
 	admin.setSignup(t, signup.Settings{Enabled: true, InviteOnly: true, Seats: 10, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
-	var minted struct {
-		Token       string             `json:"token"`
-		InviteToken signup.InviteToken `json:"invite_token"`
-	}
+	var minted mintedToken
 	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
 	if !strings.HasPrefix(minted.Token, auth.InviteTokenPrefix) || minted.InviteToken.Label != "dora" {
 		t.Fatalf("minted = %+v", minted)
@@ -583,10 +575,7 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 	e := newEnv(t)
 	admin := e.browser(t)
 	admin.password(t, "admin", adminPassword)
-	var minted struct {
-		Token       string             `json:"token"`
-		InviteToken signup.InviteToken `json:"invite_token"`
-	}
+	var minted mintedToken
 	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
 	counts := func() string {
 		t.Helper()
@@ -708,6 +697,11 @@ type madeInvite struct {
 	Invite signup.Invite `json:"invite"`
 }
 
+type mintedToken struct {
+	Token       string             `json:"token"`
+	InviteToken signup.InviteToken `json:"invite_token"`
+}
+
 type heldAccounts struct {
 	signup.Accounts
 	entered chan struct{}
@@ -771,23 +765,7 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, string) {
 	t.Helper()
-	var reader io.Reader
-	if body != nil {
-		data, _ := json.Marshal(body)
-		reader = bytes.NewReader(data)
-	}
-	req, _ := http.NewRequestWithContext(t.Context(), method, e.srv.URL+path, reader)
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := e.srv.Client().Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(data)
+	return send(t, e.srv.Client(), method, e.srv.URL+path, token, body)
 }
 
 func (e *env) openUsers(t *testing.T) *users.Service {
@@ -819,7 +797,6 @@ func (e *env) openSignup(t *testing.T) *signup.Service {
 	return svc
 }
 
-// browser is one person's browser: its own cookies, and redirects left to the test.
 type browser struct {
 	e      *env
 	client *http.Client
@@ -847,12 +824,11 @@ func (b *browser) begin(t *testing.T, path string, body any) string {
 		t.Fatalf("begin at %s: %d %s", path, status, raw)
 	}
 	u, err := url.Parse(started.URL)
-	q := u.Query()
-	if err != nil || !strings.HasPrefix(started.URL, b.e.github.URL+"/login/oauth/authorize?") || q.Get("client_id") != "gh-login" || q.Get("scope") != "user:email" ||
-		q.Get("redirect_uri") != b.e.srv.URL+signup.CallbackPath || q.Get("code_challenge_method") != "S256" {
+	if err != nil || !strings.HasPrefix(started.URL, b.e.github.URL+"/login/oauth/authorize?") || u.Query().Get("client_id") != "gh-login" || u.Query().Get("scope") != "user:email" ||
+		u.Query().Get("redirect_uri") != b.e.srv.URL+signup.CallbackPath || u.Query().Get("code_challenge_method") != "S256" {
 		t.Fatalf("authorize URL = %q", started.URL)
 	}
-	return q.Get("state")
+	return u.Query().Get("state")
 }
 
 func (b *browser) callback(t *testing.T, who, state string) string {
@@ -885,22 +861,7 @@ func (b *browser) json(t *testing.T, method, path string, body, out any) {
 
 func (b *browser) call(t *testing.T, method, path string, body any) (int, string) {
 	t.Helper()
-	var reader io.Reader
-	if body != nil {
-		data, _ := json.Marshal(body)
-		reader = bytes.NewReader(data)
-	}
-	req, _ := http.NewRequestWithContext(t.Context(), method, b.e.srv.URL+console.Prefix+"api/"+path, reader)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := b.client.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(data)
+	return send(t, b.client, method, b.e.srv.URL+console.Prefix+"api/"+path, "", body)
 }
 
 func (e *env) browser(t *testing.T) *browser {
@@ -910,7 +871,6 @@ func (e *env) browser(t *testing.T) *browser {
 	return &browser{e: e, client: client}
 }
 
-// newFakeGitHub answers the token, user and emails calls: a code names a person, and its token is "tok-" + the code.
 func newFakeGitHub(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1005,11 +965,11 @@ func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) err
 	return nil
 }
 
-func (g *fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
+func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
 	return "gw-machine", "ak-machine", nil
 }
 
-func (g *fakeGW) Delete(context.Context, string) error { return nil }
+func (*fakeGW) Delete(context.Context, string) error { return nil }
 
 func (g *fakeGW) cap(owner string) int64 {
 	g.mu.Lock()
@@ -1021,6 +981,29 @@ type fakeTenants struct{}
 
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
+
+func send(t *testing.T, client *http.Client, method, target, token string, body any) (int, string) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		reader = bytes.NewReader(data)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), method, target, reader)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, target, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(data)
+}
 
 func masterKeyFile(t *testing.T) string {
 	t.Helper()

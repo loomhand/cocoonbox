@@ -12,7 +12,7 @@ import (
 )
 
 func TestAnInviteTokenIsNeverAUserTokenEvenWhenTheUsersWouldTakeIt(t *testing.T) {
-	a := New(anyToken{}, noShares{})
+	a := New(anyToken{}, nil)
 	for _, header := range []string{"Bearer " + InviteTokenPrefix + "0123", "bearer " + InviteTokenPrefix, "BEARER " + InviteTokenPrefix + "x"} {
 		if id, err := a.Authenticate(t.Context(), EntryGRPC, header); status.Code(err) != codes.Unauthenticated || id.User != "" {
 			t.Errorf("Authenticate(%q) = %+v, %v, want Unauthenticated", header, id, err)
@@ -27,7 +27,7 @@ func TestAnInviteTokenIsNeverAUserTokenEvenWhenTheUsersWouldTakeIt(t *testing.T)
 }
 
 func TestTheInterceptorsCarryTheTokensCredential(t *testing.T) {
-	a := New(anyToken{}, noShares{})
+	a := New(anyToken{}, nil)
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderAuthorization, "Bearer cb_0123"))
 	var user, credential string
 	_, err := a.Unary(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, _ any) (any, error) {
@@ -40,7 +40,7 @@ func TestTheInterceptorsCarryTheTokensCredential(t *testing.T) {
 }
 
 func TestOnlyTheOperatorSocketMarksAnOperatorCall(t *testing.T) {
-	a := New(anyToken{}, noShares{})
+	a := New(anyToken{}, nil)
 	operator := func(ctx context.Context, _ any) (any, error) { return Operator(ctx), nil }
 	got, err := a.Unary(metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderAuthorization, "Bearer cb_0123", HeaderOperatorUser, "u-any")), nil, &grpc.UnaryServerInfo{}, operator)
 	if err != nil || got != false {
@@ -53,7 +53,7 @@ func TestOnlyTheOperatorSocketMarksAnOperatorCall(t *testing.T) {
 }
 
 func TestAnIdentityProviderNamesTheCredentialItsCallsEndWith(t *testing.T) {
-	a := WithIdentities(provider{"ext-alice": {User: "alice", Credential: "idp:session-1"}}, noShares{})
+	a := WithIdentities(provider{"ext-alice": {User: "alice", Credential: "idp:session-1"}}, nil)
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderAuthorization, "Bearer ext-alice"))
 	var user, credential string
 	_, err := a.Unary(ctx, nil, &grpc.UnaryServerInfo{}, func(ctx context.Context, _ any) (any, error) {
@@ -72,7 +72,7 @@ func TestAnIdentityProviderNamesTheCredentialItsCallsEndWith(t *testing.T) {
 }
 
 func TestIdentifyNamesTheCallerOrNobody(t *testing.T) {
-	a := WithIdentities(provider{"ext-alice": {User: "alice", Credential: "idp:session-1"}}, noShares{})
+	a := WithIdentities(provider{"ext-alice": {User: "alice", Credential: "idp:session-1"}}, nil)
 	for header, want := range map[string]string{"Bearer ext-alice": "alice", "Bearer ext-nobody": "", "": ""} {
 		md := metadata.MD{}
 		if header != "" {
@@ -85,7 +85,7 @@ func TestIdentifyNamesTheCallerOrNobody(t *testing.T) {
 }
 
 func TestAProviderThatCannotAnswerIsUnavailableNotUnauthenticated(t *testing.T) {
-	a := WithIdentities(provider{}, noShares{})
+	a := WithIdentities(provider{}, nil)
 	if _, err := a.Authenticate(t.Context(), EntryGRPC, "Bearer ext-down"); status.Code(err) != codes.Unavailable {
 		t.Errorf("a provider outage = %v, want Unavailable", err)
 	}
@@ -96,7 +96,7 @@ func TestAProviderThatCannotAnswerIsUnavailableNotUnauthenticated(t *testing.T) 
 
 func TestCocoonboxsOwnTokensNeverReachTheOutsideProvider(t *testing.T) {
 	outside := &recorder{}
-	a := WithIdentities(Outside(Tokens(anyToken{}), outside), noShares{})
+	a := WithIdentities(Outside(Tokens(anyToken{}), outside), nil)
 	for _, token := range []string{"cb_0123", "cba_0123", "cbs_0123", "cbr_0123", "cbx_0123"} {
 		if id, err := a.Authenticate(t.Context(), EntryGRPC, "Bearer "+token); err != nil || id.User != "u-any" {
 			t.Errorf("Authenticate(%s) = %+v, %v, want the local user", token, id, err)
@@ -111,7 +111,7 @@ func TestCocoonboxsOwnTokensNeverReachTheOutsideProvider(t *testing.T) {
 }
 
 func TestAShareSecretIsNoOutsideProvidersBusinessEvenWhileItIsDown(t *testing.T) {
-	a := WithIdentities(Outside(Tokens(noToken{}), provider{}), noShares{})
+	a := WithIdentities(Outside(Tokens(noToken{}), provider{}), nil)
 	if _, err := a.Authenticate(t.Context(), EntryGRPC, "Bearer cbs_0123"); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("a share secret with the provider down = %v, want Unauthenticated, so the share path takes it", err)
 	}
@@ -121,7 +121,7 @@ func TestAShareSecretIsNoOutsideProvidersBusinessEvenWhileItIsDown(t *testing.T)
 }
 
 func TestAProviderLearnsTheEntryAndMayKeepATokenOutOfOne(t *testing.T) {
-	a := WithIdentities(provider{"ext-mcp": {User: "alice", Credential: "idp:session-1"}}, noShares{})
+	a := WithIdentities(provider{"ext-mcp": {User: "alice", Credential: "idp:session-1"}}, nil)
 	if id, err := a.Authenticate(t.Context(), EntryMCP, "Bearer ext-mcp"); err != nil || id.User != "alice" {
 		t.Errorf("an MCP token at MCP = %+v, %v", id, err)
 	}
@@ -168,7 +168,3 @@ func (anyToken) ByTokenSHA256(context.Context, string) (string, bool) { return "
 func (anyToken) Lifetime(string, string) (context.Context, func()) {
 	return context.Background(), func() {}
 }
-
-type noShares struct{}
-
-func (noShares) ShareBySecretSHA256(string) (Share, bool) { return Share{}, false }

@@ -80,7 +80,7 @@ func as(t *testing.T, us *fakeUsers, token string) context.Context {
 	t.Helper()
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(auth.HeaderAuthorization, "Bearer "+token))
 	var out context.Context
-	_, err := auth.New(us, noShares{}).Unary(ctx, nil, nil, func(ctx context.Context, _ any) (any, error) {
+	_, err := auth.New(us, nil).Unary(ctx, nil, nil, func(ctx context.Context, _ any) (any, error) {
 		out = ctx
 		return nil, nil
 	})
@@ -150,7 +150,3 @@ func (g *fakeGrants) RevokeAll(_ context.Context, user string) error {
 	g.users.order = strings.TrimSpace(g.users.order + " grants:" + user)
 	return nil
 }
-
-type noShares struct{}
-
-func (noShares) ShareBySecretSHA256(string) (auth.Share, bool) { return auth.Share{}, false }

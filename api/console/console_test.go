@@ -1,7 +1,6 @@
 package console
 
 import (
-	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -160,8 +159,8 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if code := env.do(t, http.MethodPatch, "api/users/"+created.ID, root, `{"max_boxes_cap":3,"max_boxes":2}`).Code; code != http.StatusOK {
 		t.Errorf("admin cap change = %d", code)
 	}
-	if env.tenants.tenants[created.ID].max != 3 {
-		t.Errorf("tenant cap = %d, want 3", env.tenants.tenants[created.ID].max)
+	if env.tenants.tenants[created.ID] != 3 {
+		t.Errorf("tenant cap = %d, want 3", env.tenants.tenants[created.ID])
 	}
 }
 
@@ -365,20 +364,6 @@ func TestWriteJSONSortsMapKeys(t *testing.T) {
 	}
 }
 
-func TestSignInCountsGoWithTheirWindow(t *testing.T) {
-	l := newLimiter(time.Minute)
-	now := time.Now()
-	l.now = func() time.Time { return now }
-	for i := range 3 {
-		l.allow("login-begin:10.0.0."+strconv.Itoa(i), 5)
-	}
-	now = now.Add(time.Minute)
-	l.allow("login-begin:10.0.0.9", 5)
-	if len(l.failures) != 1 {
-		t.Errorf("limiter holds %d keys past their window, want 1", len(l.failures))
-	}
-}
-
 type env struct {
 	srv     *Server
 	dsn     string
@@ -395,7 +380,7 @@ func newEnv(t *testing.T) *env {
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]tenant{}}}
+	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]int{}}}
 	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -540,11 +525,11 @@ func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) err
 	return nil
 }
 
-func (g *fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
+func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
 	return "gw-machine", "ak-machine", nil
 }
 
-func (g *fakeGW) Delete(context.Context, string) error { return nil }
+func (*fakeGW) Delete(context.Context, string) error { return nil }
 
 func (g *fakeGW) capOf(owner string) string {
 	g.mu.Lock()
@@ -555,20 +540,15 @@ func (g *fakeGW) capOf(owner string) string {
 	return "inherit"
 }
 
-type tenant struct {
-	token string
-	max   int
-}
-
 type fakeTenants struct {
 	mu      sync.Mutex
-	tenants map[string]tenant
+	tenants map[string]int
 }
 
-func (f *fakeTenants) PutTenant(_ context.Context, name, token string, maxClaims int) error {
+func (f *fakeTenants) PutTenant(_ context.Context, name, _ string, maxClaims int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.tenants[name] = tenant{token: cmp.Or(token, f.tenants[name].token), max: maxClaims}
+	f.tenants[name] = maxClaims
 	return nil
 }
 

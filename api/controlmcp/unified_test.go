@@ -53,11 +53,7 @@ func TestRootListsControlAndBoxToolsWhileTheBoxSleeps(t *testing.T) {
 		t.Fatalf("initialize = %+v", init.Result)
 	}
 	tools, _ := decode(t, serveRoot(srv, http.MethodPost, aliceToken, rec.Header().Get(mcpwire.SessionHeader), listRequest)).Result["tools"].([]any)
-	var names []string
-	for _, tool := range tools {
-		names = append(names, tool.(map[string]any)["name"].(string))
-	}
-	if want := []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete", "usage", "shell", "gui_plan"}; !slices.Equal(names, want) {
+	if names, want := listedNames(tools), []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete", "usage", "shell", "gui_plan"}; !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
 	if meta, _ := tools[len(tools)-1].(map[string]any)["_meta"].(map[string]any); meta["anthropic/alwaysLoad"] != true {
@@ -84,7 +80,7 @@ func TestRootCallWakesTheSleepingDefaultBox(t *testing.T) {
 	if len(msgs) != 3 || msgs[0]["params"].(map[string]any)["message"] != "waking: restoring memory snapshot" || msgs[1]["params"].(map[string]any)["message"] != "done: running" {
 		t.Fatalf("stream = %v", msgs)
 	}
-	if text := callText(t, msgs[2]); msgs[2]["id"] != float64(7) || text != shellAnswer+boxes.BoxID("alice") {
+	if text := callText(t, msgs[2]["result"]); msgs[2]["id"] != float64(7) || text != shellAnswer+boxes.BoxID("alice") {
 		t.Fatalf("answer = %v", msgs[2])
 	}
 	if !slices.Contains(fake.recorded(), fakeCall{method: "Ensure", user: "alice", box: boxes.BoxID("alice")}) {
@@ -138,7 +134,7 @@ func TestRootCallOnARunningBoxIsOneAgentRoundTrip(t *testing.T) {
 	}
 
 	for i := range 2 {
-		if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result}); text != shellAnswer+boxes.BoxID("alice") {
+		if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
 			t.Fatalf("call %d = %q", i, text)
 		}
 	}
@@ -150,7 +146,7 @@ func TestRootCallOnARunningBoxIsOneAgentRoundTrip(t *testing.T) {
 	}
 
 	agents.forget()
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result}); text != shellAnswer+boxes.BoxID("alice") {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
 		t.Fatalf("call after the agent forgot the session = %q", text)
 	}
 	if rec := serveRoot(srv, http.MethodDelete, aliceToken, session, ""); rec.Code != http.StatusNoContent {
@@ -227,7 +223,7 @@ func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
 	fake.gone["alice"] = true
 	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-next", Name: "next", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
 	fake.mu.Unlock()
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result}); text != shellAnswer+"cb-next" {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+"cb-next" {
 		t.Fatalf("call after the default box went = %q", text)
 	}
 }
@@ -249,7 +245,7 @@ func TestRootBoxArgumentPicksTheBoxAndListsInTheSchema(t *testing.T) {
 	}
 	call := func(box string) string {
 		body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id","box":"` + box + `"}}}`
-		return callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, body)).Result})
+		return callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, body)).Result)
 	}
 	if text := call("next"); text != shellAnswer+"cb-next" {
 		t.Fatalf("call on box next = %q", text)
@@ -260,7 +256,7 @@ func TestRootBoxArgumentPicksTheBoxAndListsInTheSchema(t *testing.T) {
 	if text := call("nope"); text != `You have no box "nope"; box_list lists your boxes.` {
 		t.Fatalf("call on a box the caller lacks = %q", text)
 	}
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, bobToken, "", strings.Replace(callShell, `"id"}`, `"id","box":"cb-next"}`, 1))).Result}); !strings.Contains(text, `no box "cb-next"`) {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, bobToken, "", strings.Replace(callShell, `"id"}`, `"id","box":"cb-next"}`, 1))).Result); !strings.Contains(text, `no box "cb-next"`) {
 		t.Fatalf("bob's call on alice's box = %q", text)
 	}
 	if want := []string{"initialize", "initialize", "tools/call", "tools/call"}; !slices.Equal(agents.recorded(), want) {
@@ -281,11 +277,11 @@ func TestRootDefaultOfAGrantIsItsFirstChosenBox(t *testing.T) {
 	}
 	fake.mu.Unlock()
 	srv.EnableGrants(fakeGrants{boxes: []string{"cb-made"}, chosen: []string{"cb-picked"}})
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+"cb-picked" {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+"cb-picked" {
 		t.Fatalf("a grant's default call = %q, want its chosen box", text)
 	}
 	srv.EnableGrants(fakeGrants{boxes: []string{"cb-made"}})
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+"cb-made" {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+"cb-made" {
 		t.Fatalf("the default call once the box is no longer chosen = %q, want the created box", text)
 	}
 }
@@ -296,7 +292,7 @@ func TestRootGrantSharesOneAgentSessionPerBoxAcrossClientSessions(t *testing.T) 
 	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}})
 	for i := range 3 {
 		session := serveRoot(srv, http.MethodPost, grantToken, "", initialize).Header().Get(mcpwire.SessionHeader)
-		if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, session, callShell)).Result}); text != shellAnswer+boxes.BoxID("alice") {
+		if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
 			t.Fatalf("call %d = %q", i, text)
 		}
 		if rec := serveRoot(srv, http.MethodDelete, grantToken, session, ""); rec.Code != http.StatusNoContent {
@@ -324,7 +320,7 @@ func TestRootWakeKeepsTheSessionsDefaultBox(t *testing.T) {
 	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	made := boxes.BoxID("alice")
 	srv.EnableGrants(fakeGrants{boxes: []string{made}})
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+made {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
 		t.Fatalf("first call = %q", text)
 	}
 	fake.mu.Lock()
@@ -332,7 +328,7 @@ func TestRootWakeKeepsTheSessionsDefaultBox(t *testing.T) {
 	fake.mu.Unlock()
 	srv.EnableGrants(fakeGrants{boxes: []string{made}, chosen: []string{"cb-picked"}})
 	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+made {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
 		t.Fatalf("the call that woke the session's default box ran as %q, want on %s", text, made)
 	}
 }
@@ -405,11 +401,7 @@ func TestRootServesOnlyTheTickedAccountsToolsOfAGrant(t *testing.T) {
 
 	names := func(token string) []string {
 		tools, _ := decode(t, serveRoot(srv, http.MethodPost, token, "", listRequest)).Result["tools"].([]any)
-		var out []string
-		for _, tool := range tools {
-			out = append(out, tool.(map[string]any)["name"].(string))
-		}
-		return out
+		return listedNames(tools)
 	}
 	srv.EnableGrants(fakeGrants{connectors: []string{"cg-mock"}})
 	if got := names(grantToken); len(got) != controlTools+4 || !slices.Equal(got[controlTools:], []string{"shell", "gui_plan", "mock_list_items", "mock_create_item"}) {
@@ -435,7 +427,7 @@ func TestRootCallOfAnAccountToolGoesToConnectAndWakesNoBox(t *testing.T) {
 	srv.EnableConnectors(accounts)
 	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, connectors: []string{"cg-mock"}})
 
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callAccount)).Result}); text != "mock_list_items done" {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callAccount)).Result); text != "mock_list_items done" {
 		t.Fatalf("account call = %q", text)
 	}
 	if got := accounts.calledWith(); !slices.Equal(got, []string{`alice Agent [cg-mock] mock_list_items {"q":"x"}`}) {
@@ -490,7 +482,7 @@ func TestRootCallOfAShadowedAccountToolGoesToTheBox(t *testing.T) {
 	shadowed := strings.Replace(callShell, `"shell"`, `"shell_x"`, 1)
 	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(`[{"name":"shell_x"}]`)})
 
-	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", shadowed)).Result}); text != shellAnswer+boxes.BoxID("alice") {
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", shadowed)).Result); text != shellAnswer+boxes.BoxID("alice") {
 		t.Fatalf("shadowed call = %q, want the box's answer", text)
 	}
 	if len(accounts.calledWith()) != 0 || len(agents.calledOn()) != 1 {
@@ -564,7 +556,6 @@ func (fakeGrants) AddBox(context.Context, string, string) error { return nil }
 
 func (fakeGrants) Challenge(bool) string { return "Bearer" }
 
-// fakeAgents answers MCP like the agent of a running box of fakeBoxes; a deaf one never answers, one that lost the connection drops every request it got, and hold keeps each answer to an expired session until all it counts were made.
 type fakeAgents struct {
 	boxes *fakeBoxes
 
@@ -661,7 +652,6 @@ func (a *fakeAgents) recorded() []string {
 	return slices.Clone(a.sent)
 }
 
-// fakeConnectors stands in for Connect with alice's account mock, whose tools collide with a box tool and a control tool.
 type fakeConnectors struct {
 	changed chan struct{}
 
@@ -808,12 +798,19 @@ func answer(code int, session, body string) *http.Response {
 	return &http.Response{StatusCode: code, Status: http.StatusText(code), Header: header, Body: io.NopCloser(strings.NewReader(body))}
 }
 
-func callText(t *testing.T, msg map[string]any) string {
+func callText(t *testing.T, result any) string {
 	t.Helper()
-	result, _ := msg["result"].(map[string]any)
-	content, _ := result["content"].([]any)
+	r, _ := result.(map[string]any)
+	content, _ := r["content"].([]any)
 	if len(content) != 1 {
-		t.Fatalf("not a tool result: %v", msg)
+		t.Fatalf("not a tool result: %v", result)
 	}
 	return content[0].(map[string]any)["text"].(string)
+}
+
+func listedNames(tools []any) (names []string) {
+	for _, tool := range tools {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	return names
 }

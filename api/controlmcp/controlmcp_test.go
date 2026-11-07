@@ -148,22 +148,6 @@ func TestTransportStatuses(t *testing.T) {
 	}
 }
 
-func TestRefusedBodiesCarryTheirJSONRPCCode(t *testing.T) {
-	srv, _ := newTestServer(t)
-	for body, want := range map[string]int{
-		`{"jsonrpc":`: mcpwire.CodeParse,
-		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`: mcpwire.CodeInvalidRequest,
-		`{"jsonrpc":"2.0","id":1,"method":5}`:        mcpwire.CodeInvalidRequest,
-	} {
-		var reply struct {
-			Error mcpwire.Error `json:"error"`
-		}
-		if rec := serve(srv, http.MethodPost, aliceToken, body); json.Unmarshal(rec.Body.Bytes(), &reply) != nil || reply.Error.Code != want {
-			t.Errorf("%s: %s, want code %d", body, rec.Body, want)
-		}
-	}
-}
-
 func TestInitializeAnswersTheSameBytes(t *testing.T) {
 	srv, _ := newTestServer(t)
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`
@@ -178,10 +162,13 @@ func TestInitializeAnswersTheSameBytes(t *testing.T) {
 	}
 }
 
-func TestUnknownMethodAndTool(t *testing.T) {
+func TestRefusedRequestsCarryTheirJSONRPCCodeAndNoResult(t *testing.T) {
 	srv, fake := newTestServer(t)
 
 	for body, want := range map[string]int{
+		`{"jsonrpc":`: mcpwire.CodeParse,
+		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`:                                                               mcpwire.CodeInvalidRequest,
+		`{"jsonrpc":"2.0","id":1,"method":5}`:                                                                      mcpwire.CodeInvalidRequest,
 		`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`:                                                       mcpwire.CodeMethodNotFound,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"}}}`:    mcpwire.CodeInvalidParams,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_ensure","arguments":{"wait":"yes"}}}`: mcpwire.CodeInvalidParams,
@@ -456,7 +443,6 @@ type fakeCall struct {
 	method, user, box string
 }
 
-// fakeBoxes owns boxes by user like boxes.Service; carol has none, and every operation finishes after two events.
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
 
@@ -725,7 +711,6 @@ func sseMessages(t *testing.T, body string) []map[string]any {
 	return msgs
 }
 
-// boundIdentities names alice for ext-alice and records every user and credential a call is bound to.
 type boundIdentities struct {
 	mu    sync.Mutex
 	bound []string
