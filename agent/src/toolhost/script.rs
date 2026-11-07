@@ -1,4 +1,4 @@
-//! The toolhost's part of shuttle's runs: the plan executor's locate and reindex, the flow catalog and run screenshots.
+//! The toolhost's part of shuttle's runs: the plan executor's locate and reindex, and run screenshots.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -47,18 +47,6 @@ impl Scripts {
             return Err(format!("reindex flows: {error}"));
         }
         Ok(Output::text(report["result"].to_string()))
-    }
-
-    /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save; off Linux, pruned first.
-    pub async fn flows(workspace: &Path) -> String {
-        if !cfg!(target_os = "linux")
-            && let Err(e) = super::flows::prune(&super::flows::dir(workspace)).await
-        {
-            eprintln!("toolhost: prune the flow index: {e}");
-        }
-        tokio::fs::read_to_string(super::flows::index(workspace))
-            .await
-            .unwrap_or_default()
     }
 
     /// One screenshot of shuttle's screen, its long edge at most `max_edge`; with `keep`, also kept as a file.

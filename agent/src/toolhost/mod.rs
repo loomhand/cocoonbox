@@ -174,7 +174,7 @@ impl Host {
                 .run(&call.agent_id, t, call.args)
                 .await
                 .map(Output::text),
-            "gui_flows" => Ok(Output::text(Scripts::flows(&self.workspace).await)),
+            "gui_flows" => Ok(Output::text(flows::catalog(&self.workspace).await)),
             "flows_scan" => flows::scan(&self.workspace).await.map(Output::text),
             "flows_read" => flows::read(&self.workspace, call.args)
                 .await

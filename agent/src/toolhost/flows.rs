@@ -1,4 +1,4 @@
-//! The flow files of `/workspace/flows` that the library sync reads and writes; never MCP tools.
+//! The flow files of `/workspace/flows`: the `gui_flows` catalog, and the library sync's reads and writes, which are never MCP tools.
 
 use std::path::{Path, PathBuf};
 
@@ -60,8 +60,16 @@ pub fn dir(workspace: &Path) -> PathBuf {
     workspace.join(DIR)
 }
 
-pub fn index(workspace: &Path) -> PathBuf {
-    dir(workspace).join(INDEX)
+/// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save; off Linux, pruned first.
+pub async fn catalog(workspace: &Path) -> String {
+    if !cfg!(target_os = "linux")
+        && let Err(e) = prune(&dir(workspace)).await
+    {
+        eprintln!("toolhost: prune the flow index: {e}");
+    }
+    tokio::fs::read_to_string(index(workspace))
+        .await
+        .unwrap_or_default()
 }
 
 /// `flows_scan`: JSON `{name: sha256}` of the regular flow files of at most [`MAX_BYTES`] that are UTF-8 text.
@@ -223,7 +231,7 @@ pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(
 }
 
 /// Drops from `dir/INDEX` each flow whose `.json` file is gone, swapping in the rewritten file so that a reader never sees half of it and a folder being removed gains no entry.
-pub(super) async fn prune(dir: &Path) -> Result<(), String> {
+async fn prune(dir: &Path) -> Result<(), String> {
     let _index = INDEX_LOCK.lock().await;
     let path = dir.join(INDEX);
     let index = match tokio::fs::read_to_string(&path).await {
@@ -259,6 +267,10 @@ pub(super) async fn prune(dir: &Path) -> Result<(), String> {
         }
         _ => Ok(()),
     }
+}
+
+fn index(workspace: &Path) -> PathBuf {
+    dir(workspace).join(INDEX)
 }
 
 fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {
@@ -363,7 +375,7 @@ mod tests {
         std::fs::write(flows.join("a.json"), "{}").unwrap();
         std::fs::write(flows.join("b.json"), "{}").unwrap();
         std::fs::write(flows.join("INDEX"), "a(x): one\nb(): two\n").unwrap();
-        let listing = || super::super::script::Scripts::flows(dir.path());
+        let listing = || catalog(dir.path());
         assert_eq!(listing().await, "a(x): one\nb(): two\n");
         std::fs::remove_file(flows.join("a.json")).unwrap();
         assert_eq!(listing().await, "b(): two\n");
