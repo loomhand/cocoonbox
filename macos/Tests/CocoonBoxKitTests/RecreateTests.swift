@@ -36,6 +36,15 @@ import Testing
         #expect(await !until(seconds: 2) { mock.log().contains("mcp DELETE /cocoonbox.mcp/\(box)") })
     }
 
+    @Test func deletingABoxEndsItsShare() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let box = try await Self.running(mock.connection, try await mock.connection.createBox(name: "simtest").box.id)
+        _ = try await mock.connection.createShare(boxID: box, ttlSeconds: 0, userNames: [], write: false)
+        try await Self.delete(mock.connection, box)
+        #expect(try await mock.connection.listShares().isEmpty)
+    }
+
     @Test func renewedPairsADeletedBoxWithItsNamesake() {
         let box = { (id: String, name: String) in Cocoonbox_Control_V1_Box.with { $0.id = id; $0.name = name } }
         let old = [box("cb-1", "main"), box("cb-2", "simtest"), box("cb-3", "gone")]
