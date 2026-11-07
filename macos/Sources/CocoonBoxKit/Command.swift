@@ -11,12 +11,11 @@ public enum Command {
         public var error: String { String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    public static func run(_ argv: [String], in dir: URL? = nil, environment: [String: String], input: Data? = nil, timeout: Double? = nil) throws -> Run {
+    public static func run(_ argv: [String], environment: [String: String], input: Data? = nil, timeout: Double? = nil) throws -> Run {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
         process.environment = environment
-        process.currentDirectoryURL = dir
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         process.standardInput = input == nil ? FileHandle.nullDevice : stdin
         process.standardOutput = stdout

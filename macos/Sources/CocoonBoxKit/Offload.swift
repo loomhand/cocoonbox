@@ -252,7 +252,7 @@ public struct OffloadStore: Sendable {
 public enum OffloadNames {
     // repoKey is the first 12 hex of sha256 of the top level and the oldest root commit of HEAD.
     public static func repoKey(top: String, root: String) -> String {
-        hex(Data("\(top)\n\(root)".utf8)).prefix(12).description
+        SHA256.hash(data: Data("\(top)\n\(root)".utf8)).hex.prefix(12).description
     }
 
     // copyName is the box copy's name before the box adds a -2, -3 suffix.
@@ -264,10 +264,6 @@ public enum OffloadNames {
 
     public static func newID() -> String {
         (0..<6).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
-    }
-
-    static func hex(_ data: Data) -> String {
-        SHA256.hash(data: data).hex
     }
 }
 

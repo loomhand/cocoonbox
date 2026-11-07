@@ -89,12 +89,8 @@ final class MCPUpstream: Sendable {
 
     // close ends the MCP session, so the box closes the client's session now instead of on idle.
     func close() async {
-        guard let session = sessionID.withLock({ id in defer { id = nil }; return id }) else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id")
-        request.timeoutInterval = 5
+        let request = request("DELETE", accept: "application/json, text/event-stream", timeout: 5)
+        guard sessionID.withLock({ id in defer { id = nil }; return id }) != nil else { return }
         _ = try? await URLSession.shared.data(for: request)
     }
 

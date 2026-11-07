@@ -111,9 +111,8 @@ public struct EventFollower<Event: Sendable>: Sendable {
 }
 
 extension EventFollower where Event == Cocoonbox_Agent_V1_Event {
-    static func session(backoff: Backoff = Backoff()) -> Self {
+    static func session() -> Self {
         Self(
-            backoff: backoff,
             offsetOf: { $0.offset },
             isResync: { error in
                 guard let rpc = error as? RPCError else { return false }
