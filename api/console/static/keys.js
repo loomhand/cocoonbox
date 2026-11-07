@@ -36,17 +36,11 @@ async function load() {
   if (!keys.length) cell(body.insertRow(), "No keys yet.");
 }
 
-$("add-form").addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  const f = ev.target;
-  const hosts = list(f.hosts.value);
-  api("POST", "keys", { name: f.name.value, hosts, header: f.header.value, template: f.template.value, query: f.query.value, value: f.value.value })
-    .then((k) => {
-      f.reset();
-      notice("Saved " + k.name + ". New shells in your boxes see it as $" + k.name + ".");
-      return load();
-    })
-    .catch((e) => notice(e.message, true));
+submit("add-form", async (f) => {
+  const k = await api("POST", "keys", { name: f.name.value, hosts: list(f.hosts.value), header: f.header.value, template: f.template.value, query: f.query.value, value: f.value.value });
+  f.reset();
+  notice("Saved " + k.name + ". New shells in your boxes see it as $" + k.name + ".");
+  await load();
 });
 
 load().catch((e) => notice(e.message, true));

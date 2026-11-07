@@ -166,15 +166,10 @@ function prefill() {
   f.scrollIntoView();
 }
 
-$("custom-form").addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  const f = ev.target;
-  begin("custom", { name: f.name.value, url: f.url.value, header: f.header.value, key: f.key.value })
-    .then(() => {
-      f.reset();
-      $("custom-confirm").hidden = true;
-    })
-    .catch((e) => notice(e.message, true));
+submit("custom-form", async (f) => {
+  await begin("custom", { name: f.name.value, url: f.url.value, header: f.header.value, key: f.key.value });
+  f.reset();
+  $("custom-confirm").hidden = true;
 });
 
 if (params.has("connected")) notice("Connected.");

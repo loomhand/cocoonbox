@@ -39,6 +39,6 @@ async function leave() {
 
 const refresh = () => load().catch((e) => notice(e.message, true));
 
-$("leave").addEventListener("click", () => leave().catch((e) => notice(e.message, true)));
+click("leave", leave);
 refresh();
 setInterval(refresh, 60000);

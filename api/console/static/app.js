@@ -383,17 +383,6 @@ function update(id, settings) {
   return saved(api("PATCH", "users/" + encodeURIComponent(id), settings));
 }
 
-function click(id, fn) {
-  $(id).addEventListener("click", () => fn().catch((e) => notice(e.message, true)));
-}
-
-function submit(id, fn) {
-  $(id).addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    fn(ev.target).catch((e) => notice(e.message, true));
-  });
-}
-
 submit("login-form", async (f) => {
   await api("POST", "login", { name: f.name.value, password: f.password.value });
   f.reset();

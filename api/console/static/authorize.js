@@ -76,22 +76,16 @@ function checkbox(name, value, text, checked) {
   return label;
 }
 
-$("github-button").addEventListener("click", () => {
-  api("POST", "auth/github/begin", { return_to: location.pathname + location.search, invite })
-    .then(({ url }) => location.assign(url))
-    .catch((e) => notice(e.message, true));
+click("github-button", async () => {
+  const { url } = await api("POST", "auth/github/begin", { return_to: location.pathname + location.search, invite });
+  location.assign(url);
 });
 
-$("login-form").addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  const f = ev.target;
-  api("POST", "login", { name: f.name.value, password: f.password.value })
-    .then(() => {
-      f.reset();
-      notice("");
-      return load();
-    })
-    .catch((e) => notice(e.message, true));
+submit("login-form", async (f) => {
+  await api("POST", "login", { name: f.name.value, password: f.password.value });
+  f.reset();
+  notice("");
+  await load();
 });
 
 $("consent-form").addEventListener("submit", (ev) => {

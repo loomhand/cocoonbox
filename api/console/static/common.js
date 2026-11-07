@@ -59,6 +59,17 @@ function button(label, onClick, danger) {
   return b;
 }
 
+function click(id, fn) {
+  $(id).addEventListener("click", () => fn().catch((e) => notice(e.message, true)));
+}
+
+function submit(id, fn) {
+  $(id).addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    fn(ev.target).catch((e) => notice(e.message, true));
+  });
+}
+
 function list(text) {
   return text.split(/[\s,]+/).filter(Boolean);
 }
