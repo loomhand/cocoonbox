@@ -223,7 +223,7 @@ func (s *Service) callGoogleTasks(ctx context.Context, authorization string, cal
 		return nil, ex, err
 	}
 	req.Header.Set(headerAuthorization, authorization)
-	ex = exchange{reqBytes: reqBytes}
+	ex = exchange{sent: true, reqBytes: reqBytes}
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return nil, ex, err

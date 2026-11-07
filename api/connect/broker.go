@@ -497,10 +497,10 @@ func parseTool(raw jsontext.Value) (tool, error) {
 
 // uncertain reports whether a failed write may still have reached the vendor: a timeout, a 5xx, or a broken answer.
 func uncertain(err error, ex exchange) bool {
-	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr.Op == "dial" {
+	if !ex.sent {
 		return false
 	}
-	if _, refreshed := errors.AsType[*oauthError](err); refreshed {
+	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr.Op == "dial" {
 		return false
 	}
 	_, answered := errors.AsType[*mcpwire.Error](err)

@@ -631,9 +631,64 @@ func TestAnUncertainWriteIsNotRetried(t *testing.T) {
 	}
 }
 
-func TestATokenRefreshFailureIsNotAnUncertainWrite(t *testing.T) {
-	if uncertain(&oauthError{status: http.StatusServiceUnavailable}, exchange{}) {
-		t.Error("uncertain(token endpoint 503) = true; want false, the call never left")
+func TestAWriteThatNeverLeftIsNotUncertain(t *testing.T) {
+	var gone atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     jsontext.Value `json:"id"`
+			Method string         `json:"method"`
+		}
+		_ = json.UnmarshalRead(r.Body, &req)
+		var result string
+		switch {
+		case len(req.ID) == 0:
+			w.WriteHeader(http.StatusAccepted)
+			return
+		case req.Method == "initialize" && !gone.Load():
+			w.Header().Set(mcpwire.SessionHeader, "s-1")
+			result = `{"protocolVersion":"2025-11-25","capabilities":{"tools":{}}}`
+		case req.Method == "tools/list":
+			result = `{"tools":[{"name":"create_item","inputSchema":{"type":"object"}}]}`
+		case req.Method == "tools/call":
+			gone.Store(true)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		default:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":` + result + `}`))
+	}))
+	t.Cleanup(srv.Close)
+	env := newEnv(t)
+	if _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "gone", URL: srv.URL}); err != nil {
+		t.Fatalf("Start = %v", err)
+	}
+	out, err := call(t.Context(), env.svc, modeB, "gone_create_item", nil, "")
+	if err != nil || !out.IsError || strings.HasPrefix(out.Content[0].Text, outcomeUnknown) {
+		t.Fatalf("Call = %+v, %v; want a plain failure, the reinitialize never sent the call", out, err)
+	}
+	timeout := &url.Error{Op: "Post", URL: "https://token.example", Err: context.DeadlineExceeded}
+	for _, err := range []error{&oauthError{status: http.StatusServiceUnavailable}, fmt.Errorf("refresh the token: %w", timeout), errNoGrant} {
+		if uncertain(err, exchange{}) {
+			t.Errorf("uncertain(%v, unsent) = true; want false", err)
+		}
+	}
+}
+
+func TestAWriteWhoseGrantDoesNotOpenIsNotUncertain(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	if out, err := call(t.Context(), env.svc, modeB, listItems, nil, ""); err != nil || out.IsError {
+		t.Fatalf("list = %+v, %v", out, err)
+	}
+	env.exec(t, "UPDATE connect_grants SET sealed = $1", []byte("not sealed"))
+	if out, err := call(t.Context(), env.svc, modeB, createItem, nil, ""); err != nil || !out.IsError || strings.HasPrefix(out.Content[0].Text, outcomeUnknown) {
+		t.Fatalf("Call = %+v, %v; want a plain failure, the grant never opened", out, err)
+	}
+	if _, _, calls := env.vendor.Snapshot(); len(calls) != 1 {
+		t.Errorf("vendor ran %d calls, want only the list", len(calls))
 	}
 }
 

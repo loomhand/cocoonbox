@@ -62,6 +62,7 @@ func (e *statusError) Error() string {
 }
 
 type exchange struct {
+	sent      bool
 	status    int
 	reqBytes  int64
 	respBytes int64
@@ -164,6 +165,7 @@ func (u *upstream) send(ctx context.Context, session, version string, msg rpcReq
 	if version != "" {
 		req.Header.Set(headerProtocol, version)
 	}
+	ex.sent = true
 	resp, err := u.s.http.Do(req)
 	if err != nil {
 		return nil, "", ex, err
