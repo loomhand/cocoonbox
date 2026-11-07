@@ -249,6 +249,38 @@ func TestCreatesOfOneIDTakeTurnsAndHandBackTheirLockConnections(t *testing.T) {
 	}
 }
 
+func TestReleasingAUserLockOnAStalledConnectionHandsTheConnectionBack(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	stall := &stalledRollback{free: make(chan struct{})}
+	t.Cleanup(func() { close(stall.free) })
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	cfg.ConnConfig.Tracer = stall
+	locks, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("open lock pool: %v", err)
+	}
+	svc.store.locks.Close()
+	svc.store.locks = locks
+	release, err := svc.store.lockUser(t.Context(), outsideID)
+	if err != nil {
+		t.Fatalf("lockUser: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		release()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * unlockTimeout):
+		t.Fatal("releasing the lock waits on a stalled rollback")
+	}
+	clustertest.WaitFor(t, "the stalled lock connection leaves the pool", func() bool { return locks.Stat().AcquiredConns() == 0 })
+}
+
 func TestTokensPasswordsAndDisabling(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
@@ -682,6 +714,22 @@ func (g *gatedTenants) PutTenant(ctx context.Context, name, token string, maxCla
 	<-g.open
 	return g.Tenants.PutTenant(ctx, name, token, maxClaims)
 }
+
+type stalledRollback struct {
+	free chan struct{}
+}
+
+func (g *stalledRollback) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if data.SQL == "rollback" {
+		select {
+		case <-ctx.Done():
+		case <-g.free:
+		}
+	}
+	return ctx
+}
+
+func (*stalledRollback) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 type queryCounter struct {
 	sql string
