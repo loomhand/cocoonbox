@@ -172,13 +172,16 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 	if _, err := b.lookup(ctx, spec.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
 		return machines.Machine{}, machines.ActionNone, err
 	}
-	template := cmp.Or(spec.Image, b.opts.Image)
-	action, sandbox, addr, wakes := machines.ActionNone, "", "", 0
+	template, action, sandbox, addr, wakes := "", machines.ActionNone, "", "", 0
 	e, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
 		now := time.Now()
 		action = machines.ActionNone
 		switch {
 		case e == nil || (e.row == nil && !e.busy(now)):
+			template = cmp.Or(spec.Image, b.opts.Image)
+			if e != nil {
+				template = cmp.Or(spec.Image, e.image)
+			}
 			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: maps.Clone(spec.Meta)}
 			e.begin(opClaim, now, b.leaseFor)
 			action = machines.ActionCreated

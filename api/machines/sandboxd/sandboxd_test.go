@@ -884,6 +884,23 @@ func TestDeleteReleasesTheClaim(t *testing.T) {
 	t.Error("watch ended without StateGone")
 }
 
+func TestARetryOfARefusedClaimKeepsItsImage(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.refusals = 1
+	b := newTestBackend(t, fake)
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge, Image: "cbcore:v1"})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	waitState(t, b, boxID, m.Revision, machines.StateFailed)
+	if _, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil {
+		t.Fatalf("Ensure again: %v", err)
+	}
+	if got := waitState(t, b, boxID, m.Revision, machines.StateRunning); got.Image != "cbcore:v1" || fake.lastClaim().Template != "cbcore:v1" {
+		t.Errorf("retried claim of %s, machine image %s; want cbcore:v1", fake.lastClaim().Template, got.Image)
+	}
+}
+
 func TestAClaimRefusedForCapacityFailsAndDeleteForgetsIt(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	fake.refusals = 1
