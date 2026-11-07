@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/multitracer"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
@@ -108,7 +109,10 @@ func TestAListenerReadsANewUserWithoutAFullReload(t *testing.T) {
 	go svc.Listen(t.Context())
 	clustertest.WaitFor(t, "the listener loads once", func() bool { return loads.n.Load() == 1 })
 	creator := openTestService(t, dsn, gw, tenants)
-	creatorLoads := trace(t, creator, dsn, &queryCounter{sql: "FROM users ORDER BY"})
+	creatorLoads, creatorSyncs := &queryCounter{sql: "FROM users ORDER BY"}, &queryCounter{sql: "FROM shares WHERE revoked_at IS NULL AND"}
+	trace(t, creator, dsn, multitracer.New(creatorLoads, creatorSyncs))
+	go creator.Listen(t.Context())
+	clustertest.WaitFor(t, "the creator's listener loads once", func() bool { return creatorSyncs.n.Load() == 1 })
 	u, err := creator.Ensure(t.Context(), "firebase", outsideID)
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -117,8 +121,13 @@ func TestAListenerReadsANewUserWithoutAFullReload(t *testing.T) {
 	if got, err := svc.ByName(u.Name); err != nil || got.ID != u.ID || len(svc.Boxes(u.ID)) != 1 || len(creator.Boxes(u.ID)) != 1 {
 		t.Errorf("listener ByName = %+v, %v; boxes %+v on the listener, %+v on the creator", got, err, svc.Boxes(u.ID), creator.Boxes(u.ID))
 	}
-	if n, m := loads.n.Load(), creatorLoads.n.Load(); n != 1 || m != 0 {
-		t.Errorf("full reloads after the create: listener %d, creator %d, want none", n-1, m)
+	if n := loads.n.Load(); n != 1 {
+		t.Errorf("the listener reloaded fully %d times for the create, want none", n-1)
+	}
+	creator.published(t.Context(), "a later write")
+	clustertest.WaitFor(t, "the creator's listener reloads on the later write", func() bool { return creatorSyncs.n.Load() == 2 })
+	if m := creatorLoads.n.Load(); m != 2 {
+		t.Errorf("the creator reloaded fully %d times for its own create, want none", m-2)
 	}
 }
 
@@ -180,6 +189,74 @@ func TestAFullLoadInstallsWhileNewUsersKeepArriving(t *testing.T) {
 	}
 }
 
+func TestALateCreationNotifyStillCutsTheSharesOfADisabledOwner(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	gate := trace(t, svc, dsn, &creationNotifyGate{entered: make(chan struct{}), resume: make(chan struct{})})
+	go svc.Listen(context.WithValue(t.Context(), listenerKey{}, true))
+	clustertest.WaitFor(t, "the listener loads", func() bool { return gate.loads.Load() > 0 })
+	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
+	<-gate.entered
+	share, err := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: svc.Boxes(owner.ID)[0].ID})
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	live, ok := svc.ShareBySecretSHA256(sum(share.Secret))
+	if !ok {
+		t.Fatal("the share does not admit a viewer before the disable")
+	}
+	if _, err := openTestService(t, dsn, gw, tenants).Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	close(gate.resume)
+	clustertest.WaitFor(t, "the listener knows the disable", func() bool { u, err := svc.Get(owner.ID); return err == nil && u.Disabled })
+	if err := svc.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := svc.syncShares(t.Context()); err != nil {
+		t.Fatalf("syncShares: %v", err)
+	}
+	if _, ok := svc.ShareBySecretSHA256(sum(share.Secret)); ok {
+		t.Error("a disabled owner's share admits a new viewer")
+	}
+	if !closed(live.Cut) {
+		t.Error("a disabled owner's open share stream survives the late notify and a full reload")
+	}
+}
+
+func TestAFullLoadDoesNotBringBackAUserDeletedWhileItRead(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	other := openTestService(t, dsn, gw, tenants)
+	owner, err := other.Ensure(t.Context(), "firebase", outsideID)
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	token, err := other.RegenerateToken(t.Context(), owner.ID)
+	if err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
+	gate := trace(t, svc, dsn, &deleteRaceGate{oneEntered: make(chan struct{}), oneResume: make(chan struct{}), allEntered: make(chan struct{}), allResume: make(chan struct{})})
+	oneDone := make(chan error, 1)
+	go func() { _, err := svc.Ensure(t.Context(), "firebase", outsideID); oneDone <- err }()
+	<-gate.oneEntered
+	if err := other.Delete(t.Context(), owner.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	allDone := make(chan error, 1)
+	go func() { allDone <- svc.Load(t.Context()) }()
+	<-gate.allEntered
+	close(gate.oneResume)
+	if err := <-oneDone; err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	close(gate.allResume)
+	if err := <-allDone; err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); ok {
+		t.Error("the full reload read the delete but a stale single-user read brought the deleted user's token back")
+	}
+}
+
 type reloadGate struct {
 	sql     string
 	entered chan struct{}
@@ -222,3 +299,48 @@ func (g *signupDuringLoad) TraceQueryStart(ctx context.Context, _ *pgx.Conn, dat
 }
 
 func (*signupDuringLoad) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+type listenerKey struct{}
+
+type creationNotifyGate struct {
+	entered chan struct{}
+	resume  chan struct{}
+	blocked atomic.Bool
+	loads   atomic.Int64
+}
+
+func (g *creationNotifyGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if ctx.Value(listenerKey{}) != true {
+		return ctx
+	}
+	if strings.Contains(data.SQL, "FROM users ORDER BY") {
+		g.loads.Add(1)
+	}
+	if strings.Contains(data.SQL, "FROM users WHERE id =") && g.blocked.CompareAndSwap(false, true) {
+		close(g.entered)
+		<-g.resume
+	}
+	return ctx
+}
+
+func (*creationNotifyGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+type deleteRaceGate struct {
+	oneEntered, oneResume  chan struct{}
+	allEntered, allResume  chan struct{}
+	oneBlocked, allBlocked atomic.Bool
+}
+
+func (g *deleteRaceGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "FROM boxes WHERE owner") && g.oneBlocked.CompareAndSwap(false, true) {
+		close(g.oneEntered)
+		<-g.oneResume
+	}
+	if strings.Contains(data.SQL, "FROM boxes ORDER BY") && g.allBlocked.CompareAndSwap(false, true) {
+		close(g.allEntered)
+		<-g.allResume
+	}
+	return ctx
+}
+
+func (*deleteRaceGate) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}

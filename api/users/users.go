@@ -258,6 +258,7 @@ func (s *Service) Close() {
 
 // Load replaces the in-memory index with a current snapshot of the tables.
 func (s *Service) Load(ctx context.Context) error {
+read:
 	for {
 		s.mu.RLock()
 		gen, indexGen, spliced := s.boxGen, s.indexGen, len(s.spliced)
@@ -285,19 +286,33 @@ func (s *Service) Load(ctx context.Context) error {
 			byID[r.ID] = r
 			addTokens(byToken, r)
 		}
-		var changed []string
-		s.mu.Lock()
-		if s.indexGen != indexGen || s.boxGen != gen {
+		gone := map[string]bool{}
+		for {
+			s.mu.Lock()
+			if s.indexGen != indexGen || s.boxGen != gen {
+				s.mu.Unlock()
+				continue read
+			}
+			check := unread(s.spliced[spliced:], byID, gone)
+			if len(check) == 0 {
+				break
+			}
 			s.mu.Unlock()
-			continue
-		}
-		s.indexGen++
-		for _, id := range s.spliced[spliced:] {
-			if r, ok := s.byID[id]; ok && byID[id].ID == "" {
-				byID[id], byOwner[id] = r, s.boxes[id]
-				addTokens(byToken, r)
+			for _, id := range check {
+				r, boxes, err := s.store.one(ctx, id)
+				switch {
+				case errors.Is(err, ErrNotFound):
+					gone[id] = true
+				case err != nil:
+					return err
+				default:
+					byID[id], byOwner[id] = r, boxes
+					addTokens(byToken, r)
+				}
 			}
 		}
+		var changed []string
+		s.indexGen++
 		s.spliced = nil
 		for id, r := range byID {
 			if r.Disabled && !s.byID[id].Disabled {
@@ -1001,8 +1016,15 @@ func (s *Service) loadUser(ctx context.Context, id string) error {
 			s.mu.Unlock()
 			continue
 		}
+		if old, known := s.byID[id]; known || r.Disabled {
+			same := known && old.Disabled == r.Disabled && old.tokenSHA256 == r.tokenSHA256 && slices.Equal(old.devices, r.devices) && slices.Equal(s.boxes[id], boxes)
+			s.mu.Unlock()
+			if same {
+				return nil
+			}
+			return s.Load(ctx)
+		}
 		s.spliced = append(s.spliced, id)
-		dropTokens(s.byToken, s.byID[id])
 		s.byID[id] = r
 		addTokens(s.byToken, r)
 		var hooks []func(string)
@@ -1150,6 +1172,16 @@ func dropTokens(byToken map[string]tokenOwner, r record) {
 	for _, d := range r.devices {
 		delete(byToken, d.sha256)
 	}
+}
+
+func unread(ids []string, byID map[string]record, gone map[string]bool) []string {
+	var out []string
+	for _, id := range ids {
+		if _, ok := byID[id]; !ok && !gone[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // liveIn returns key's context in lives, made under parent when it has none or its last one ended with the parent.
