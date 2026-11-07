@@ -45,7 +45,7 @@ make help            # every target
 make api             # api: fmt check, lint, test, build
 make agent           # agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the Chrome tests)
 make macos           # macOS app: build and the swift-testing suite (macOS only)
-make image           # syntax-check the image scripts, test cut.sh's dry run and the package replay
+make image           # syntax-check the shell scripts, test cut.sh's dry run and the package replay
 make gate            # clean gate over the tracked files and the dependencies
 ```
 
