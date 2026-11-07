@@ -61,6 +61,8 @@ message CatalogResponse {
 }
 
 message Connector {
+  reserved 6, 9;
+  reserved "scopes", "connected_at_ms";
   // The catalog id, or the name the user gave a custom connector. Tool names
   // start with it: `<id>_<tool>`.
   string id = 1;
@@ -71,26 +73,23 @@ message Connector {
   string account = 4;
   // `active`, or `needs_reconnect` after the vendor refused the grant.
   string status = 5;
-  repeated string scopes = 6;
   string mcp_url = 7;
   // Only when ListConnectorsRequest.with_tools is set.
   repeated ConnectorTool tools = 8;
-  int64 connected_at_ms = 9;
   // Why the tools could not be listed, such as the MCP server's refusal; empty otherwise.
   string tools_error = 10;
 }
 
 message ConnectorTool {
+  reserved 2, 7;
+  reserved "title", "effective";
   // The upstream name; the MCP doors serve it as `<connector id>_<name>`.
   string name = 1;
-  string title = 2;
   string description = 3;
   bool read_only = 4;
   bool destructive = 5;
   // The user's choice; POLICY_UNSPECIFIED is the default.
   Policy policy = 6;
-  // The policy the broker applies.
-  Policy effective = 7;
 }
 
 message ListConnectorsRequest {

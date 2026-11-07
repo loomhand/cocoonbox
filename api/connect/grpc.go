@@ -288,8 +288,7 @@ func (s *Service) revokeAtVendor(ctx context.Context, g *grant, sec *secrets) (b
 
 func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *controlv1.Connector {
 	out := &controlv1.Connector{
-		Id: g.connector, Kind: g.kind, Name: s.vendorName(g), Account: g.account, Status: g.status, Scopes: g.scopes,
-		McpUrl: g.mcpURL, ConnectedAtMs: g.createdAt.UnixMilli(),
+		Id: g.connector, Kind: g.kind, Name: s.vendorName(g), Account: g.account, Status: g.status, McpUrl: g.mcpURL,
 	}
 	if !withTools || g.status != statusActive {
 		return out
@@ -302,8 +301,7 @@ func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *cont
 	}
 	for _, t := range tools {
 		out.Tools = append(out.Tools, &controlv1.ConnectorTool{
-			Name: t.Name, Title: t.Title, Description: t.Description, ReadOnly: t.ReadOnly, Destructive: t.Destructive,
-			Policy: policyEnum(g.policy[t.Name]), Effective: policyEnum(t.effective(g.policy[t.Name])),
+			Name: t.Name, Description: t.Description, ReadOnly: t.ReadOnly, Destructive: t.Destructive, Policy: policyEnum(g.policy[t.Name]),
 		})
 	}
 	return out

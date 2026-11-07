@@ -18,7 +18,7 @@ import (
 const (
 	migrationLock = 0x63626374 // "cbct"
 
-	grantColumns = "id, user_id, connector, kind, mcp_url, account_label, scopes, status, policy, sealed, token_expires_at, created_at"
+	grantColumns = "id, user_id, connector, kind, mcp_url, account_label, status, policy, sealed, token_expires_at"
 )
 
 //go:embed migrations/*.sql
@@ -36,7 +36,6 @@ type grant struct {
 	policy    map[string]string
 	sealed    []byte
 	expiresAt *time.Time
-	createdAt time.Time
 }
 
 type flow struct {
@@ -387,6 +386,6 @@ func (s *store) purge(ctx context.Context, retention time.Duration) (int64, erro
 
 func scanGrant(row pgx.CollectableRow) (*grant, error) {
 	g := &grant{}
-	err := row.Scan(&g.id, &g.user, &g.connector, &g.kind, &g.mcpURL, &g.account, &g.scopes, &g.status, &g.policy, &g.sealed, &g.expiresAt, &g.createdAt)
+	err := row.Scan(&g.id, &g.user, &g.connector, &g.kind, &g.mcpURL, &g.account, &g.status, &g.policy, &g.sealed, &g.expiresAt)
 	return g, err
 }

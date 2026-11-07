@@ -181,14 +181,10 @@ public nonisolated struct Cocoonbox_Control_V1_Connector: Sendable {
   /// `active`, or `needs_reconnect` after the vendor refused the grant.
   public var status: String = String()
 
-  public var scopes: [String] = []
-
   public var mcpURL: String = String()
 
   /// Only when ListConnectorsRequest.with_tools is set.
   public var tools: [Cocoonbox_Control_V1_ConnectorTool] = []
-
-  public var connectedAtMs: Int64 = 0
 
   /// Why the tools could not be listed, such as the MCP server's refusal; empty otherwise.
   public var toolsError: String = String()
@@ -206,8 +202,6 @@ public nonisolated struct Cocoonbox_Control_V1_ConnectorTool: Sendable {
   /// The upstream name; the MCP doors serve it as `<connector id>_<name>`.
   public var name: String = String()
 
-  public var title: String = String()
-
   public var description_p: String = String()
 
   public var readOnly: Bool = false
@@ -216,9 +210,6 @@ public nonisolated struct Cocoonbox_Control_V1_ConnectorTool: Sendable {
 
   /// The user's choice; POLICY_UNSPECIFIED is the default.
   public var policy: Cocoonbox_Control_V1_Policy = .unspecified
-
-  /// The policy the broker applies.
-  public var effective: Cocoonbox_Control_V1_Policy = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -481,7 +472,7 @@ nonisolated extension Cocoonbox_Control_V1_CatalogResponse: SwiftProtobuf.Messag
 
 nonisolated extension Cocoonbox_Control_V1_Connector: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Connector"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}kind\0\u{1}name\0\u{1}account\0\u{1}status\0\u{1}scopes\0\u{3}mcp_url\0\u{1}tools\0\u{3}connected_at_ms\0\u{3}tools_error\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}kind\0\u{1}name\0\u{1}account\0\u{1}status\0\u{4}\u{2}mcp_url\0\u{1}tools\0\u{4}\u{2}tools_error\0\u{b}scopes\0\u{b}connected_at_ms\0\u{c}\u{6}\u{1}\u{c}\u{9}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -494,10 +485,8 @@ nonisolated extension Cocoonbox_Control_V1_Connector: SwiftProtobuf.Message, Swi
       case 3: try { try decoder.decodeSingularStringField(value: &self.name) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.account) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.status) }()
-      case 6: try { try decoder.decodeRepeatedStringField(value: &self.scopes) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.mcpURL) }()
       case 8: try { try decoder.decodeRepeatedMessageField(value: &self.tools) }()
-      case 9: try { try decoder.decodeSingularInt64Field(value: &self.connectedAtMs) }()
       case 10: try { try decoder.decodeSingularStringField(value: &self.toolsError) }()
       default: break
       }
@@ -520,17 +509,11 @@ nonisolated extension Cocoonbox_Control_V1_Connector: SwiftProtobuf.Message, Swi
     if !self.status.isEmpty {
       try visitor.visitSingularStringField(value: self.status, fieldNumber: 5)
     }
-    if !self.scopes.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.scopes, fieldNumber: 6)
-    }
     if !self.mcpURL.isEmpty {
       try visitor.visitSingularStringField(value: self.mcpURL, fieldNumber: 7)
     }
     if !self.tools.isEmpty {
       try visitor.visitRepeatedMessageField(value: self.tools, fieldNumber: 8)
-    }
-    if self.connectedAtMs != 0 {
-      try visitor.visitSingularInt64Field(value: self.connectedAtMs, fieldNumber: 9)
     }
     if !self.toolsError.isEmpty {
       try visitor.visitSingularStringField(value: self.toolsError, fieldNumber: 10)
@@ -544,10 +527,8 @@ nonisolated extension Cocoonbox_Control_V1_Connector: SwiftProtobuf.Message, Swi
     if lhs.name != rhs.name {return false}
     if lhs.account != rhs.account {return false}
     if lhs.status != rhs.status {return false}
-    if lhs.scopes != rhs.scopes {return false}
     if lhs.mcpURL != rhs.mcpURL {return false}
     if lhs.tools != rhs.tools {return false}
-    if lhs.connectedAtMs != rhs.connectedAtMs {return false}
     if lhs.toolsError != rhs.toolsError {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
@@ -556,7 +537,7 @@ nonisolated extension Cocoonbox_Control_V1_Connector: SwiftProtobuf.Message, Swi
 
 nonisolated extension Cocoonbox_Control_V1_ConnectorTool: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ConnectorTool"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}title\0\u{1}description\0\u{3}read_only\0\u{1}destructive\0\u{1}policy\0\u{1}effective\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{2}\u{2}description\0\u{3}read_only\0\u{1}destructive\0\u{1}policy\0\u{b}title\0\u{b}effective\0\u{c}\u{2}\u{1}\u{c}\u{7}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -565,12 +546,10 @@ nonisolated extension Cocoonbox_Control_V1_ConnectorTool: SwiftProtobuf.Message,
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
-      case 2: try { try decoder.decodeSingularStringField(value: &self.title) }()
       case 3: try { try decoder.decodeSingularStringField(value: &self.description_p) }()
       case 4: try { try decoder.decodeSingularBoolField(value: &self.readOnly) }()
       case 5: try { try decoder.decodeSingularBoolField(value: &self.destructive) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.policy) }()
-      case 7: try { try decoder.decodeSingularEnumField(value: &self.effective) }()
       default: break
       }
     }
@@ -579,9 +558,6 @@ nonisolated extension Cocoonbox_Control_V1_ConnectorTool: SwiftProtobuf.Message,
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
-    }
-    if !self.title.isEmpty {
-      try visitor.visitSingularStringField(value: self.title, fieldNumber: 2)
     }
     if !self.description_p.isEmpty {
       try visitor.visitSingularStringField(value: self.description_p, fieldNumber: 3)
@@ -595,20 +571,15 @@ nonisolated extension Cocoonbox_Control_V1_ConnectorTool: SwiftProtobuf.Message,
     if self.policy != .unspecified {
       try visitor.visitSingularEnumField(value: self.policy, fieldNumber: 6)
     }
-    if self.effective != .unspecified {
-      try visitor.visitSingularEnumField(value: self.effective, fieldNumber: 7)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Control_V1_ConnectorTool, rhs: Cocoonbox_Control_V1_ConnectorTool) -> Bool {
     if lhs.name != rhs.name {return false}
-    if lhs.title != rhs.title {return false}
     if lhs.description_p != rhs.description_p {return false}
     if lhs.readOnly != rhs.readOnly {return false}
     if lhs.destructive != rhs.destructive {return false}
     if lhs.policy != rhs.policy {return false}
-    if lhs.effective != rhs.effective {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

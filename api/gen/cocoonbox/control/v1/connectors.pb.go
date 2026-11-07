@@ -316,12 +316,10 @@ type Connector struct {
 	// The vendor account, such as a GitHub login or an email address; empty when the vendor names none.
 	Account string `protobuf:"bytes,4,opt,name=account,proto3" json:"account,omitempty"`
 	// `active`, or `needs_reconnect` after the vendor refused the grant.
-	Status string   `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
-	Scopes []string `protobuf:"bytes,6,rep,name=scopes,proto3" json:"scopes,omitempty"`
-	McpUrl string   `protobuf:"bytes,7,opt,name=mcp_url,json=mcpUrl,proto3" json:"mcp_url,omitempty"`
+	Status string `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	McpUrl string `protobuf:"bytes,7,opt,name=mcp_url,json=mcpUrl,proto3" json:"mcp_url,omitempty"`
 	// Only when ListConnectorsRequest.with_tools is set.
-	Tools         []*ConnectorTool `protobuf:"bytes,8,rep,name=tools,proto3" json:"tools,omitempty"`
-	ConnectedAtMs int64            `protobuf:"varint,9,opt,name=connected_at_ms,json=connectedAtMs,proto3" json:"connected_at_ms,omitempty"`
+	Tools []*ConnectorTool `protobuf:"bytes,8,rep,name=tools,proto3" json:"tools,omitempty"`
 	// Why the tools could not be listed, such as the MCP server's refusal; empty otherwise.
 	ToolsError    string `protobuf:"bytes,10,opt,name=tools_error,json=toolsError,proto3" json:"tools_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -393,13 +391,6 @@ func (x *Connector) GetStatus() string {
 	return ""
 }
 
-func (x *Connector) GetScopes() []string {
-	if x != nil {
-		return x.Scopes
-	}
-	return nil
-}
-
 func (x *Connector) GetMcpUrl() string {
 	if x != nil {
 		return x.McpUrl
@@ -414,13 +405,6 @@ func (x *Connector) GetTools() []*ConnectorTool {
 	return nil
 }
 
-func (x *Connector) GetConnectedAtMs() int64 {
-	if x != nil {
-		return x.ConnectedAtMs
-	}
-	return 0
-}
-
 func (x *Connector) GetToolsError() string {
 	if x != nil {
 		return x.ToolsError
@@ -432,14 +416,11 @@ type ConnectorTool struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The upstream name; the MCP doors serve it as `<connector id>_<name>`.
 	Name        string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Title       string `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
 	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	ReadOnly    bool   `protobuf:"varint,4,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`
 	Destructive bool   `protobuf:"varint,5,opt,name=destructive,proto3" json:"destructive,omitempty"`
 	// The user's choice; POLICY_UNSPECIFIED is the default.
-	Policy Policy `protobuf:"varint,6,opt,name=policy,proto3,enum=cocoonbox.control.v1.Policy" json:"policy,omitempty"`
-	// The policy the broker applies.
-	Effective     Policy `protobuf:"varint,7,opt,name=effective,proto3,enum=cocoonbox.control.v1.Policy" json:"effective,omitempty"`
+	Policy        Policy `protobuf:"varint,6,opt,name=policy,proto3,enum=cocoonbox.control.v1.Policy" json:"policy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -481,13 +462,6 @@ func (x *ConnectorTool) GetName() string {
 	return ""
 }
 
-func (x *ConnectorTool) GetTitle() string {
-	if x != nil {
-		return x.Title
-	}
-	return ""
-}
-
 func (x *ConnectorTool) GetDescription() string {
 	if x != nil {
 		return x.Description
@@ -512,13 +486,6 @@ func (x *ConnectorTool) GetDestructive() bool {
 func (x *ConnectorTool) GetPolicy() Policy {
 	if x != nil {
 		return x.Policy
-	}
-	return Policy_POLICY_UNSPECIFIED
-}
-
-func (x *ConnectorTool) GetEffective() Policy {
-	if x != nil {
-		return x.Effective
 	}
 	return Policy_POLICY_UNSPECIFIED
 }
@@ -1013,28 +980,25 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\tcheckable\x18\a \x01(\bR\tcheckableJ\x04\b\b\x10\vR\amcp_urlR\x04authR\bicon_url\"\x10\n" +
 	"\x0eCatalogRequest\"O\n" +
 	"\x0fCatalogResponse\x12<\n" +
-	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\xaa\x02\n" +
+	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\x8f\x02\n" +
 	"\tConnector\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x18\n" +
 	"\aaccount\x18\x04 \x01(\tR\aaccount\x12\x16\n" +
-	"\x06status\x18\x05 \x01(\tR\x06status\x12\x16\n" +
-	"\x06scopes\x18\x06 \x03(\tR\x06scopes\x12\x17\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x17\n" +
 	"\amcp_url\x18\a \x01(\tR\x06mcpUrl\x129\n" +
-	"\x05tools\x18\b \x03(\v2#.cocoonbox.control.v1.ConnectorToolR\x05tools\x12&\n" +
-	"\x0fconnected_at_ms\x18\t \x01(\x03R\rconnectedAtMs\x12\x1f\n" +
+	"\x05tools\x18\b \x03(\v2#.cocoonbox.control.v1.ConnectorToolR\x05tools\x12\x1f\n" +
 	"\vtools_error\x18\n" +
 	" \x01(\tR\n" +
-	"toolsError\"\x8c\x02\n" +
+	"toolsErrorJ\x04\b\x06\x10\aJ\x04\b\t\x10\n" +
+	"R\x06scopesR\x0fconnected_at_ms\"\xd8\x01\n" +
 	"\rConnectorTool\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1b\n" +
 	"\tread_only\x18\x04 \x01(\bR\breadOnly\x12 \n" +
 	"\vdestructive\x18\x05 \x01(\bR\vdestructive\x124\n" +
-	"\x06policy\x18\x06 \x01(\x0e2\x1c.cocoonbox.control.v1.PolicyR\x06policy\x12:\n" +
-	"\teffective\x18\a \x01(\x0e2\x1c.cocoonbox.control.v1.PolicyR\teffective\"6\n" +
+	"\x06policy\x18\x06 \x01(\x0e2\x1c.cocoonbox.control.v1.PolicyR\x06policyJ\x04\b\x02\x10\x03J\x04\b\a\x10\bR\x05titleR\teffective\"6\n" +
 	"\x15ListConnectorsRequest\x12\x1d\n" +
 	"\n" +
 	"with_tools\x18\x01 \x01(\bR\twithTools\"Y\n" +
@@ -1126,26 +1090,25 @@ var file_cocoonbox_control_v1_connectors_proto_depIdxs = []int32{
 	2,  // 0: cocoonbox.control.v1.CatalogResponse.entries:type_name -> cocoonbox.control.v1.CatalogEntry
 	6,  // 1: cocoonbox.control.v1.Connector.tools:type_name -> cocoonbox.control.v1.ConnectorTool
 	0,  // 2: cocoonbox.control.v1.ConnectorTool.policy:type_name -> cocoonbox.control.v1.Policy
-	0,  // 3: cocoonbox.control.v1.ConnectorTool.effective:type_name -> cocoonbox.control.v1.Policy
-	5,  // 4: cocoonbox.control.v1.ListConnectorsResponse.connectors:type_name -> cocoonbox.control.v1.Connector
-	0,  // 5: cocoonbox.control.v1.SetPolicyRequest.policy:type_name -> cocoonbox.control.v1.Policy
-	1,  // 6: cocoonbox.control.v1.ApproveRequest.decision:type_name -> cocoonbox.control.v1.ApprovalDecision
-	14, // 7: cocoonbox.control.v1.ActivityResponse.entries:type_name -> cocoonbox.control.v1.ActivityEntry
-	3,  // 8: cocoonbox.control.v1.Connectors.Catalog:input_type -> cocoonbox.control.v1.CatalogRequest
-	7,  // 9: cocoonbox.control.v1.Connectors.List:input_type -> cocoonbox.control.v1.ListConnectorsRequest
-	9,  // 10: cocoonbox.control.v1.Connectors.SetPolicy:input_type -> cocoonbox.control.v1.SetPolicyRequest
-	10, // 11: cocoonbox.control.v1.Connectors.Approve:input_type -> cocoonbox.control.v1.ApproveRequest
-	12, // 12: cocoonbox.control.v1.Connectors.Activity:input_type -> cocoonbox.control.v1.ActivityRequest
-	4,  // 13: cocoonbox.control.v1.Connectors.Catalog:output_type -> cocoonbox.control.v1.CatalogResponse
-	8,  // 14: cocoonbox.control.v1.Connectors.List:output_type -> cocoonbox.control.v1.ListConnectorsResponse
-	5,  // 15: cocoonbox.control.v1.Connectors.SetPolicy:output_type -> cocoonbox.control.v1.Connector
-	11, // 16: cocoonbox.control.v1.Connectors.Approve:output_type -> cocoonbox.control.v1.ApproveResponse
-	13, // 17: cocoonbox.control.v1.Connectors.Activity:output_type -> cocoonbox.control.v1.ActivityResponse
-	13, // [13:18] is the sub-list for method output_type
-	8,  // [8:13] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	5,  // 3: cocoonbox.control.v1.ListConnectorsResponse.connectors:type_name -> cocoonbox.control.v1.Connector
+	0,  // 4: cocoonbox.control.v1.SetPolicyRequest.policy:type_name -> cocoonbox.control.v1.Policy
+	1,  // 5: cocoonbox.control.v1.ApproveRequest.decision:type_name -> cocoonbox.control.v1.ApprovalDecision
+	14, // 6: cocoonbox.control.v1.ActivityResponse.entries:type_name -> cocoonbox.control.v1.ActivityEntry
+	3,  // 7: cocoonbox.control.v1.Connectors.Catalog:input_type -> cocoonbox.control.v1.CatalogRequest
+	7,  // 8: cocoonbox.control.v1.Connectors.List:input_type -> cocoonbox.control.v1.ListConnectorsRequest
+	9,  // 9: cocoonbox.control.v1.Connectors.SetPolicy:input_type -> cocoonbox.control.v1.SetPolicyRequest
+	10, // 10: cocoonbox.control.v1.Connectors.Approve:input_type -> cocoonbox.control.v1.ApproveRequest
+	12, // 11: cocoonbox.control.v1.Connectors.Activity:input_type -> cocoonbox.control.v1.ActivityRequest
+	4,  // 12: cocoonbox.control.v1.Connectors.Catalog:output_type -> cocoonbox.control.v1.CatalogResponse
+	8,  // 13: cocoonbox.control.v1.Connectors.List:output_type -> cocoonbox.control.v1.ListConnectorsResponse
+	5,  // 14: cocoonbox.control.v1.Connectors.SetPolicy:output_type -> cocoonbox.control.v1.Connector
+	11, // 15: cocoonbox.control.v1.Connectors.Approve:output_type -> cocoonbox.control.v1.ApproveResponse
+	13, // 16: cocoonbox.control.v1.Connectors.Activity:output_type -> cocoonbox.control.v1.ActivityResponse
+	12, // [12:17] is the sub-list for method output_type
+	7,  // [7:12] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_connectors_proto_init() }

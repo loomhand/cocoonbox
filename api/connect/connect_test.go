@@ -87,8 +87,7 @@ func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
 		t.Fatalf("List = %v, %v", list, err)
 	}
 	c := list.GetConnectors()[0]
-	if c.GetStatus() != statusActive || c.GetKind() != kindCustom || len(c.GetTools()) != 2 || c.GetTools()[0].GetEffective() != controlv1.Policy_POLICY_ALLOW ||
-		c.GetTools()[1].GetEffective() != controlv1.Policy_POLICY_ASK {
+	if c.GetStatus() != statusActive || c.GetKind() != kindCustom || len(c.GetTools()) != 2 {
 		t.Errorf("connector = %v", c)
 	}
 	if strings.Contains(c.String(), "at-") || strings.Contains(c.String(), "rt-") {

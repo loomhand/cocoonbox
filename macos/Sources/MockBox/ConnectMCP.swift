@@ -182,7 +182,6 @@ struct ConnectorsService: Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol 
                         .with {
                             $0.name = tool.name
                             $0.readOnly = tool.readOnly
-                            $0.effective = tool.readOnly ? .allow : .ask
                         }
                     }
                 }
