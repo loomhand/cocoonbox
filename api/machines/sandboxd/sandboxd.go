@@ -136,7 +136,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
-	if err := b.checkNodes(ctx, advertised); err != nil {
+	if err = b.checkNodes(ctx, advertised); err != nil {
 		return nil, err
 	}
 	go opts.Store.Listen(ctx, cluster.ChannelMachines, b.publishAll, func(payload string) {
@@ -727,7 +727,7 @@ func (b *Backend) wake(ctx context.Context, id, from, sandbox string, wakes int)
 	return b.reread(ctx, id, from, addr, sandbox)
 }
 
-// reread replaces machine id's row with the current one of sandbox on node addr, or on the node the mesh names its owner.
+// reread replaces machine id's row with the current one of sandbox on node addr, or on the node the mesh names its owner, while the machine has no row yet or is still on node from.
 func (b *Backend) reread(ctx context.Context, id, from, addr, sandbox string) error {
 	r, addr, err := b.read(ctx, id, addr, sandbox)
 	if err != nil {
@@ -823,7 +823,9 @@ func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string
 	}
 	_ = g.Wait()
 	logger := log.WithFunc("sandboxd.Backend.follow").WithField("machine", id)
-	owners = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(owners, func(owner string) bool { return owner == "" }))))
+	owners = slices.DeleteFunc(owners, func(owner string) bool { return owner == "" })
+	slices.Sort(owners)
+	owners = slices.Compact(owners)
 	switch len(owners) {
 	case 0:
 		return "", false

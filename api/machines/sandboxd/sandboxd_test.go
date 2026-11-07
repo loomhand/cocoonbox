@@ -607,7 +607,7 @@ func TestTheEndpointKeyServesAsAnH2CAuthority(t *testing.T) {
 	}
 }
 
-func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
+func TestSetCredentialsInstallsTheKeysHostOnlyAndDeliverWritesTheIdentity(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)

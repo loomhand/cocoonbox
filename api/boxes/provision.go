@@ -256,9 +256,9 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	case cur.EnvMissing && pushErr != nil:
 		return "", errors.Join(errEnvMissing, pushErr)
 	case cur.EnvMissing:
-		dropped, err := s.machines.DropMissing(ctx, m.ID, keep)
-		if err != nil {
-			return "", errors.Join(errEnvMissing, err)
+		dropped, dropErr := s.machines.DropMissing(ctx, m.ID, keep)
+		if dropErr != nil {
+			return "", errors.Join(errEnvMissing, dropErr)
 		}
 		logger.Warnf(ctx, "removed host-only entries nothing pushes again: %s", strings.Join(dropped, ", "))
 	case pushErr != nil:
@@ -267,7 +267,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	if wake != "" {
 		return wake, nil
 	}
-	if err := s.machines.SetMeta(ctx, m.ID, metaWake, m.Incarnation+"|"+identity.WakeID); err != nil {
+	if err = s.machines.SetMeta(ctx, m.ID, metaWake, m.Incarnation+"|"+identity.WakeID); err != nil {
 		return "", err
 	}
 	return identity.WakeID, nil

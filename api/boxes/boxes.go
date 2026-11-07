@@ -340,7 +340,7 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 	}
 }
 
-// Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is ready.
+// Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is reachable.
 func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	var none machines.Endpoint
 	if !s.registry.HasBox(user, boxID) {
