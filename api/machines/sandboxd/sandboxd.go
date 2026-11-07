@@ -668,7 +668,16 @@ func (b *Backend) claim(ctx context.Context, spec machines.Spec, template, size 
 	if err != nil {
 		return err
 	}
-	return b.reread(ctx, spec.ID, "", node, sandbox)
+	if _, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
+		if e == nil || e.row != nil {
+			return e, false
+		}
+		e.row, e.ownerAddr = &row{ID: sandbox, Key: poolKey{Template: template, Net: netNone, Size: size}, Metadata: metadata}, node
+		return e, true
+	}); err != nil {
+		return err
+	}
+	return b.reread(ctx, spec.ID, node, node, sandbox)
 }
 
 // claimFollow claims on the entry node and follows its redirect as the sandboxd SDK does, and returns the claim and its node.

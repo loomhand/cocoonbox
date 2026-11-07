@@ -80,6 +80,34 @@ func TestEnsureClaimsAndReportsRunningOnceTheAgentAnswers(t *testing.T) {
 	}
 }
 
+func TestAClaimWhoseReadFailsIsKeptAndNotClaimedAgain(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	fake.mu.Lock()
+	fake.getStatus = http.StatusInternalServerError
+	fake.mu.Unlock()
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	clustertest.WaitFor(t, "the claim ends", func() bool {
+		e, err := b.stored(t.Context(), boxID)
+		return err == nil && !e.busy(time.Now())
+	})
+	fake.mu.Lock()
+	fake.getStatus = 0
+	fake.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil {
+		t.Fatalf("Ensure after the failed read: %v", err)
+	}
+	if got := waitState(t, b, boxID, m.Revision, machines.StateRunning); fake.count("claim") != 1 || !strings.Contains(got.Detail, "sandbox=sb_1 ") {
+		t.Errorf("machine %s after %d claims, want sb_1 running from the one claim", got.Detail, fake.count("claim"))
+	}
+}
+
 func TestAListingNeitherCreatesNorMovesNorReownsAMachine(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, peer.peers = []*fakeSandboxd{peer}, []*fakeSandboxd{entry}
@@ -1567,6 +1595,7 @@ type fakeSandboxd struct {
 	execExit    int32
 	execStatus  int
 	patchStatus int
+	getStatus   int
 	refusals    int
 	hold        chan struct{}
 	agent       string
@@ -1693,6 +1722,10 @@ func (f *fakeSandboxd) handler() http.Handler {
 		writeJSON(w, map[string]any{"sandboxes": rows})
 	}))
 	mux.HandleFunc("GET /v1/sandboxes/{id}", f.sandbox(func(w http.ResponseWriter, _ *http.Request, sb *fakeSandbox) {
+		if f.getStatus != 0 {
+			writeError(w, f.getStatus, "read failed")
+			return
+		}
 		r := sb.row
 		r.Token = sb.token
 		writeJSON(w, r)
