@@ -39,12 +39,8 @@ final class MockOAuth: Sendable {
 
     // served maps a requested path to the one the mock handles, nil for a path this discovery mode does not serve.
     func served(_ path: String) -> String? {
-        var moved = [("/oauth/", "/cocoonbox.oauth/")]
-        switch discovery {
-        case .full, .off, .broken: return path
-        case .renamed: moved.append(("/mcp/", MCPServer.prefix))
-        }
-        for (new, old) in moved {
+        guard discovery == .renamed else { return path }
+        for (new, old) in [("/oauth/", "/cocoonbox.oauth/"), ("/mcp/", MCPServer.prefix)] {
             if path.hasPrefix(old) { return nil }
             if path.hasPrefix(new) { return old + path.dropFirst(new.count) }
         }

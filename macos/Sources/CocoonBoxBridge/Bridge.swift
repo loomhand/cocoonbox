@@ -623,6 +623,11 @@ private struct ProgressToken: @unchecked Sendable {
     let token: Any?
 }
 
+// BoxGone is a held box that was deleted, with no box under its name to follow.
+struct BoxGone: Error {
+    let name: String
+}
+
 // ToolFailure is a tool result with isError, so the model reads the reason.
 struct ToolFailure: Error {
     let result: [String: Any]

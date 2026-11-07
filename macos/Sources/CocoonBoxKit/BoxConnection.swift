@@ -444,15 +444,6 @@ public final class BoxConnection: Sendable {
     }
 }
 
-// BoxGone is a held box that was deleted, with no box under its name to follow.
-public struct BoxGone: Error {
-    public let name: String
-
-    public init(name: String) {
-        self.name = name
-    }
-}
-
 extension Cocoonbox_Control_V1_Box {
     // renewed maps each box of old that list lacks to the box of list with its name: a box deleted and created again.
     public static func renewed(from old: [Self], in list: [Self]) -> [String: Self] {

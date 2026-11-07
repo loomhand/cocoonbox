@@ -70,3 +70,10 @@ import Testing
         #expect(statuses.isEmpty)
     }
 }
+
+extension LiveScreen.Status {
+    var isConnected: Bool {
+        if case .connected = self { return true }
+        return false
+    }
+}

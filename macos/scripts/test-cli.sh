@@ -38,7 +38,19 @@ for _ in $(seq 100); do grep -q "mockbox listening" "$work/mockbox.log" && break
 echo mock-token | "$bin/cocoonbox-cli" login
 
 python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" "$release" <<'PY'
-import json, os, pty, re, shutil, signal, socket, subprocess, sys, threading, time, urllib.error, urllib.request
+import json
+import os
+import pty
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
 
 cli, mocklog, release = sys.argv[1], sys.argv[2], sys.argv[3]
 work = os.path.dirname(mocklog)

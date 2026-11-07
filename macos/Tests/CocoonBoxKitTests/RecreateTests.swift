@@ -70,10 +70,3 @@ import Testing
         return try await running(connection, created)
     }
 }
-
-extension LiveScreen.Status {
-    var isConnected: Bool {
-        if case .connected = self { return true }
-        return false
-    }
-}
