@@ -19,9 +19,7 @@ import (
 const (
 	migrationLock  = 0x63627573 // "cbus"
 	notifyChannel  = "cocoonbox_users"
-	endedChannel   = "cocoonbox_ended"
 	createdPayload = "user:"
-	notifyTimeout  = 5 * time.Second
 	unlockTimeout  = 5 * time.Second
 
 	uniqueViolation = "23505"
@@ -59,29 +57,20 @@ func (s *store) close() {
 	s.pool.Close()
 }
 
-// listen takes a connection out of the pool and listens on notifyChannel and endedChannel with it; the caller closes it.
+// listen takes a connection out of the pool and listens on notifyChannel and EndedChannel with it; the caller closes it.
 func (s *store) listen(ctx context.Context) (*pgx.Conn, error) {
 	pooled, err := s.pool.Acquire(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("acquire a connection: %w", err)
 	}
 	conn := pooled.Hijack()
-	for _, channel := range []string{notifyChannel, endedChannel} {
+	for _, channel := range []string{notifyChannel, EndedChannel} {
 		if _, err := conn.Exec(ctx, "LISTEN "+channel); err != nil {
 			_ = conn.Close(context.WithoutCancel(ctx))
 			return nil, fmt.Errorf("listen on %s: %w", channel, err)
 		}
 	}
 	return conn, nil
-}
-
-func (s *store) notifyEnded(ctx context.Context, credential string) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
-	defer cancel()
-	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, $2)", endedChannel, credential); err != nil {
-		return fmt.Errorf("notify %s: %w", endedChannel, err)
-	}
-	return nil
 }
 
 func (s *store) all(ctx context.Context) ([]record, error) {

@@ -292,14 +292,20 @@ func TestCheckingGrantsWhileCallsStartAndEndIsSafe(t *testing.T) {
 	wg.Wait()
 }
 
-func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
+func TestAnEndedGrantEndsItsCallsHereAndThroughItsNotifyInEveryApi(t *testing.T) {
 	a, gw, tenants, dsn := newTestService(t)
 	b := openTestService(t, dsn, gw, tenants)
 	go b.Listen(t.Context())
 	u := mustCreate(t, a, NewUser{Name: "qa1"})
 	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
-	call := lifetime(b, u.ID, "oag_shared")
+	local, call := lifetime(a, u.ID, "oag_shared"), lifetime(b, u.ID, "oag_shared")
 	a.EndCredential(t.Context(), "oag_shared")
+	if local.Err() == nil {
+		t.Error("a call outlived the grant its own api ended")
+	}
+	if err := userstest.Exec(t, dsn, "SELECT pg_notify($1, $2)", EndedChannel, "oag_shared"); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
 	select {
 	case <-call.Done():
 	case <-time.After(2 * time.Second):

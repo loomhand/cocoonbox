@@ -135,6 +135,19 @@ func (f *Tenants) DeleteTenant(_ context.Context, name string) error {
 	return nil
 }
 
+type LateNotifyFails struct{}
+
+func (LateNotifyFails) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if strings.Contains(data.SQL, "pg_notify") && conn.PgConn().TxStatus() == 'I' {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		return canceled
+	}
+	return ctx
+}
+
+func (LateNotifyFails) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
 func MasterKeyFile(t testing.TB) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "master.key")
