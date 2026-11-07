@@ -109,7 +109,7 @@ final class MockOAuth: Sendable {
             line += " invites=listed"
             return .json(200, [invite])
         }
-        let days = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["days"] as? Int ?? 2
+        let days = (((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["days"] as? Int).flatMap { $0 == 0 ? nil : $0 } ?? 2
         guard (1...7).contains(days) else {
             line += " invites=bad-days"
             return .json(400, ["error": "invalid request: an invite made with a token lasts 1 to 7 days"])

@@ -122,6 +122,7 @@ final class ControlMCP: Sendable {
             guard arguments["confirm"] as? Bool == true else {
                 return .rpcResult(id, Self.failure("Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."))
             }
+            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(box.state.name).")) }
             guard box.latestImage != box.image else { return .rpcResult(id, Self.failure("Already on the latest image.")) }
             let op = await world.rebase(box.id, image: box.latestImage)
             return await wait(op.id, box: box.id, id: id, token: token, verb: "Upgrade") { box, op in

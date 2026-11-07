@@ -70,7 +70,7 @@ actor MockWorld {
     private var agents: [String: Agent] = [:]
     private var untitled: Set<String> = []
     private var openSessions: Set<String> = []
-    private var share: Share?
+    private var shares: [String: Share] = [:]
     private(set) var wakeSchedules: [Cocoonbox_Control_V1_WakeSchedule] = []
     private var sharesCreated = 0
     private var nonces: [String: String] = [:]
@@ -805,7 +805,7 @@ actor MockWorld {
 
     // runExternal plays one scripted MCP session of a guest's Claude Code through the share, which stays open for a minute or until ended.
     private func runExternal() async {
-        let guest = share.map { $0.id + ($0.users.first.map { ":" + $0.id } ?? "") } ?? Self.shareID
+        let guest = shares.values.first.map { $0.id + ($0.users.first.map { ":" + $0.id } ?? "") } ?? Self.shareID
         let id = openExternal(client: "claude-code@\(guest)", version: "2.1.285")
         let calls: [(String, String)] = [
             ("shell", #"{"command":"uname -sr && ls /workspace"}"#),
@@ -826,8 +826,8 @@ actor MockWorld {
 
     func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Share {
         guard box(request.boxID)?.id == request.boxID else { throw MockWorld.noBox }
-        if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
-        guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
+        if let live = shares[request.boxID], live.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
+        guard request.ttlSeconds == 0 || (60...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be 1m to 30 days") }
         var created = Share()
         created.id = sharesCreated == 0 ? Self.shareID : "sh-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased())"
         created.boxID = request.boxID
@@ -846,25 +846,25 @@ actor MockWorld {
     }
 
     func listShares() -> [Share] {
-        share.map { $0.expiresAtMs > Self.now() ? [$0] : [] } ?? []
+        shares.values.filter { $0.expiresAtMs > Self.now() }.sorted { $0.createdAtMs < $1.createdAtMs }
     }
 
     func setShareWrite(id: String, write: Bool) throws -> Share {
-        guard var live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
+        guard var live = shares.values.first(where: { $0.id == id }) else { throw RPCError(code: .notFound, message: "share not found") }
         live.write = write
-        share = live
+        shares[live.boxID] = live
         return live
     }
 
     func regenerateShare(id: String) throws -> Share {
-        guard let live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
+        guard let live = shares.values.first(where: { $0.id == id }) else { throw RPCError(code: .notFound, message: "share not found") }
         endSessions(share: id, reason: "the share link was regenerated")
         return issue(live)
     }
 
     func revokeShare(id: String) throws {
-        guard share?.id == id else { throw RPCError(code: .notFound, message: "share not found") }
-        share = nil
+        guard let live = shares.values.first(where: { $0.id == id }) else { throw RPCError(code: .notFound, message: "share not found") }
+        shares[live.boxID] = nil
         endSessions(share: id, reason: "the share was revoked")
     }
 
@@ -890,7 +890,7 @@ actor MockWorld {
     private func issue(_ live: Share) -> Share {
         var issued = live
         issued.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        share = issued
+        shares[issued.boxID] = issued
         return issued
     }
 
