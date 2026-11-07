@@ -3,7 +3,6 @@ package dialer
 import (
 	"context"
 	"io"
-	"net"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -33,10 +32,11 @@ func TestBusyAsksForAgentTurnsThenOffloadedSessions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			box := &fakeBox{status: tt.agent, code: tt.code, stdout: tt.stdout}
-			ep := machines.TCPEndpoint(serveBox(t, box))
-			pool := NewPool()
-			t.Cleanup(pool.Close)
-			busy, err := New(pool).Busy(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), "cb-1", ep)
+			ep := machines.TCPEndpoint(serve(t, func(s *grpc.Server) {
+				agentv1.RegisterAgentsServer(s, box)
+				agentv1.RegisterSessionServer(s, box)
+			}))
+			busy, err := newDialer(t).Busy(credCtx(t), "cb-1", ep)
 			if busy != tt.want || (err != nil) != tt.wantErr {
 				t.Errorf("Busy = %t, %v; want %t, error %t", busy, err, tt.want, tt.wantErr)
 			}
@@ -48,20 +48,6 @@ func TestBusyAsksForAgentTurnsThenOffloadedSessions(t *testing.T) {
 			}
 		})
 	}
-}
-
-func serveBox(t *testing.T, box *fakeBox) string {
-	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	srv := grpc.NewServer()
-	agentv1.RegisterAgentsServer(srv, box)
-	agentv1.RegisterSessionServer(srv, box)
-	go func() { _ = srv.Serve(lis) }()
-	t.Cleanup(srv.Stop)
-	return lis.Addr().String()
 }
 
 type fakeBox struct {

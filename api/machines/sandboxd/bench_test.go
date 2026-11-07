@@ -84,12 +84,7 @@ func benchSeeded(b *testing.B, op func(context.Context, *Backend) error) {
 
 func seedBackend(b *testing.B, n int) *Backend {
 	b.Helper()
-	fake := newFakeSandboxd(b)
-	be, err := New(b.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(b)})
-	if err != nil {
-		b.Fatalf("New: %v", err)
-	}
-	go be.Run(b.Context())
+	be := newSharedBackend(b, newFakeSandboxd(b), clustertest.Open(b))
 	var g errgroup.Group
 	g.SetLimit(benchSeedFan)
 	for i := range n {

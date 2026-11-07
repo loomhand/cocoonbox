@@ -29,8 +29,6 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
-const aliceToken = "alice-secret"
-
 func TestUnaryRewritesHeaders(t *testing.T) {
 	env := newProxyEnv(t)
 	var header, trailer metadata.MD
@@ -477,10 +475,7 @@ func (e *proxyEnv) aliceCtx(t *testing.T) context.Context {
 
 func serve(t *testing.T, srv *grpc.Server) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listen(t)
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
 	return lis.Addr().String()
@@ -604,10 +599,7 @@ type echoScreen struct {
 
 func serveEchoScreen(t *testing.T) *echoScreen {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listen(t)
 	t.Cleanup(func() { _ = lis.Close() })
 	s := &echoScreen{addr: lis.Addr().String(), closed: make(chan struct{}, 16)}
 	go func() {

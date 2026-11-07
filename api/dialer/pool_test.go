@@ -5,9 +5,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/metadata"
 
-	"github.com/loomhand/cocoonbox/api/credential"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -53,7 +51,7 @@ func TestRebaseRestoreSurvivesAnEdgeCallToTheOldMachine(t *testing.T) {
 	clock := time.Unix(1_000_000, 0)
 	pool.now = func() time.Time { return clock }
 	d := New(pool)
-	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
+	ctx := credCtx(t)
 	midway := make(chan struct{})
 	resume := make(chan struct{})
 	reqs := func(yield func(*agentv1.RestoreRequest, error) bool) {

@@ -25,6 +25,7 @@ import (
 )
 
 const (
+	aliceToken     = "alice-secret"
 	bobToken       = "bob-secret"
 	carolToken     = "carol-secret"
 	openSecret     = auth.SecretPrefix + "0123456789abcdef0123456789abcdef"
@@ -191,8 +192,8 @@ func TestScreenFiltersBothDirections(t *testing.T) {
 	cut := make(chan struct{})
 	grant := auth.Grant{Share: auth.Share{ID: "sh-open", Owner: "alice", Box: boxes.BoxID("alice"), Cut: cut}}
 	viewer, client := net.Pipe()
-	served := make(chan error, 1)
-	go func() { served <- proxy.Screen(t.Context(), grant, viewer) }()
+	bridged := make(chan error, 1)
+	go func() { bridged <- proxy.Screen(t.Context(), grant, viewer) }()
 
 	sent := [][]byte{
 		[]byte("RFB 003.008\n"),
@@ -247,7 +248,7 @@ func TestScreenFiltersBothDirections(t *testing.T) {
 	}
 	close(cut)
 	select {
-	case <-served:
+	case <-bridged:
 	case <-time.After(time.Second):
 		t.Fatal("the bridge outlived its share by 1 s")
 	}
@@ -262,8 +263,8 @@ func TestAViewerThatStopsReadingStillEndsWithTheShare(t *testing.T) {
 	grant := auth.Grant{Share: auth.Share{ID: "sh-stalled", Owner: "alice", Box: boxes.BoxID("alice"), Cut: cut}}
 	pipe, _ := net.Pipe()
 	viewer := &stalledViewer{Conn: pipe, writing: make(chan struct{})}
-	served := make(chan error, 1)
-	go func() { served <- proxy.Screen(t.Context(), grant, viewer) }()
+	bridged := make(chan error, 1)
+	go func() { bridged <- proxy.Screen(t.Context(), grant, viewer) }()
 	select {
 	case <-viewer.writing:
 	case <-time.After(5 * time.Second):
@@ -271,7 +272,7 @@ func TestAViewerThatStopsReadingStillEndsWithTheShare(t *testing.T) {
 	}
 	close(cut)
 	select {
-	case <-served:
+	case <-bridged:
 	case <-time.After(time.Second):
 		t.Fatal("a viewer that stopped reading kept the bridge 1 s past its share")
 	}
@@ -284,10 +285,7 @@ type scriptedScreen struct {
 
 func serveScriptedScreen(t *testing.T, stream []byte) *scriptedScreen {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listen(t)
 	t.Cleanup(func() { _ = lis.Close() })
 	s := &scriptedScreen{addr: lis.Addr().String(), got: make(chan []byte, 64)}
 	go func() {

@@ -309,12 +309,18 @@ func (e *mcpEnv) do(t *testing.T, req *http.Request) *http.Response {
 	return resp
 }
 
-func deadAddr(t *testing.T) string {
+func listen(t *testing.T) net.Listener {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	return lis
+}
+
+func deadAddr(t *testing.T) string {
+	t.Helper()
+	lis := listen(t)
 	addr := lis.Addr().String()
 	if err := lis.Close(); err != nil {
 		t.Fatalf("close: %v", err)
@@ -324,10 +330,7 @@ func deadAddr(t *testing.T) string {
 
 func serveHTTP(t *testing.T, handler http.Handler) string {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	lis := listen(t)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)

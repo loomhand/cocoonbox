@@ -27,10 +27,8 @@ const (
 
 func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	pool := NewPool()
-	t.Cleanup(pool.Close)
-	d := New(pool)
-	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
+	d := newDialer(t)
+	ctx := credCtx(t)
 
 	var plan []*agentv1.PlanResponse
 	if err := d.Plan(ctx, "cb-1", ep, &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 2 || plan[0].GetSnapshotId() != "s1" || len(plan[1].GetChunks()) != 1 {
@@ -55,10 +53,8 @@ func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 
 func TestDialerStreamsRestorePagesAndEndsOnAPageError(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	pool := NewPool()
-	t.Cleanup(pool.Close)
-	d := New(pool)
-	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
+	d := newDialer(t)
+	ctx := credCtx(t)
 	reqs := []*agentv1.RestoreRequest{
 		{Manifest: &agentv1.PresignedGet{ChunkId: "m"}},
 		{Gets: []*agentv1.PresignedGet{{ChunkId: "a"}, {ChunkId: "b"}}},
@@ -77,40 +73,30 @@ func TestDialerStreamsRestorePagesAndEndsOnAPageError(t *testing.T) {
 func TestDialerDialsTheEndpointNotItsKey(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
 	ep.Key = "box.invalid:1"
-	pool := NewPool()
-	t.Cleanup(pool.Close)
-	d := New(pool)
-	if err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); err != nil {
+	if err := newDialer(t).Plan(credCtx(t), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); err != nil {
 		t.Errorf("Plan through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
 
 func TestDialerAddsNoCredentialOfItsOwn(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	pool := NewPool()
-	t.Cleanup(pool.Close)
-	d := New(pool)
-	if err := d.Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); status.Code(err) != codes.Unauthenticated {
+	if err := newDialer(t).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Plan without a credential: %v, want Unauthenticated", err)
 	}
 }
 
 func TestPlanFallsBackToUnaryPlanOnAnAgentWithoutPlanPages(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, unaryPlan{}))
-	pool := NewPool()
-	t.Cleanup(pool.Close)
 	var plan []*agentv1.PlanResponse
-	if err := New(pool).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 1 || len(plan[0].GetChunks()) != 2 {
+	if err := newDialer(t).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 1 || len(plan[0].GetChunks()) != 2 {
 		t.Errorf("Plan from an agent without PlanPages = %v, %v", plan, err)
 	}
 }
 
 func TestPlanTakesAChunkListLargerThanOneMessage(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, bigPlan{}))
-	pool := NewPool()
-	t.Cleanup(pool.Close)
 	var chunks, bytes int
-	err := New(pool).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, func(page *agentv1.PlanResponse) error {
+	err := newDialer(t).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, func(page *agentv1.PlanResponse) error {
 		chunks += len(page.GetChunks())
 		bytes += proto.Size(page)
 		return nil
@@ -120,20 +106,34 @@ func TestPlanTakesAChunkListLargerThanOneMessage(t *testing.T) {
 	}
 }
 
-func serveState(t *testing.T, srv agentv1.StateServer) string {
+func serve(t *testing.T, register func(*grpc.Server)) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	s := grpc.NewServer()
-	agentv1.RegisterStateServer(s, srv)
+	register(s)
 	go func() { _ = s.Serve(lis) }()
 	t.Cleanup(s.Stop)
 	return lis.Addr().String()
 }
 
-// fakeState requires credential cred-1 and no edge token.
+func serveState(t *testing.T, srv agentv1.StateServer) string {
+	t.Helper()
+	return serve(t, func(s *grpc.Server) { agentv1.RegisterStateServer(s, srv) })
+}
+
+func newDialer(t *testing.T) *Dialer {
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	return New(pool)
+}
+
+func credCtx(t *testing.T) context.Context {
+	return metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
+}
+
 type fakeState struct {
 	agentv1.UnimplementedStateServer
 }

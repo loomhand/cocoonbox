@@ -35,6 +35,7 @@ const (
 	template  = "cbdesk:v8"
 
 	reconnectWithin = 10 * time.Second
+	waitFor         = 5 * time.Second
 )
 
 var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
@@ -213,7 +214,7 @@ func TestOwnerAnswersThatDisagreeOrABlipMoveNothing(t *testing.T) {
 	sb := peer.sandboxes["sb_1"]
 	peer.mu.Unlock()
 	evil.add(&fakeSandbox{row: sb.row, token: sb.token})
-	peer.handOver(entry)
+	peer.shift(entry, entry.adoptable)
 
 	if _, err := b.Get(t.Context(), boxID); err != nil {
 		t.Fatalf("Get: %v", err)
@@ -263,7 +264,7 @@ func TestAMovedClaimWaitsForAnAPIThatHoldsItsTokenAndAListingLendsNone(t *testin
 	holder := openSharedBackend(t, entry, db)
 	claimRunning(t, holder)
 	token := holder.token(boxID, "sb_1")
-	peer.moveTo(entry)
+	peer.shift(entry, entry.sandboxes)
 	entry.mutate(func(sb *fakeSandbox) { sb.row.Token = "forged" })
 
 	fresh := openSharedBackend(t, entry, db)
@@ -322,7 +323,7 @@ func TestARefreshKeepsAMachineWhoseNewNodesDisagree(t *testing.T) {
 	evil.mu.Lock()
 	evil.adoptable["sb_1"] = &fakeSandbox{row: sb.row, token: sb.token}
 	evil.mu.Unlock()
-	peer.moveTo(entry)
+	peer.shift(entry, entry.sandboxes)
 
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh: %v", err)
@@ -888,7 +889,7 @@ func TestWatchReportsAMetaChange(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), waitFor)
 	defer cancel()
 	watch := b.Watch(ctx, boxID, 0)
 	if m := <-watch; m.State != machines.StateRunning {
@@ -909,7 +910,7 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), waitFor)
 	defer cancel()
 	watch := b.Watch(ctx, boxID, 0)
 	if m := <-watch; m.State != machines.StateRunning {
@@ -1088,7 +1089,7 @@ func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 		if waited := time.Since(start); waited >= b.leaseFor {
 			t.Errorf("the op stopped %v after the last renewal, past its %v lease", waited, b.leaseFor)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(waitFor):
 		t.Fatal("an op whose lease could not be renewed kept running")
 	}
 }
@@ -1136,7 +1137,7 @@ func TestARefreshEndsALapsedOpAndWakesItsOwner(t *testing.T) {
 	}
 	select {
 	case <-changes:
-	case <-time.After(5 * time.Second):
+	case <-time.After(waitFor):
 		t.Fatal("the refresh woke no owner watcher for a lapsed op")
 	}
 	if rec, err := db.Machine(t.Context(), boxID); err != nil || rec.Op != "" {
@@ -1329,7 +1330,7 @@ func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 		t.Fatalf("Hibernate: %v", err)
 	}
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
-	peer.handOver(entry)
+	peer.shift(entry, entry.adoptable)
 	peer.srv.Close()
 	entry.mu.Lock()
 	entry.peers = nil
@@ -1355,7 +1356,7 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	b := newTestBackend(t, entry)
 	claimRunning(t, b)
-	peer.handOver(entry)
+	peer.shift(entry, entry.adoptable)
 	peer.srv.Close()
 	entry.mu.Lock()
 	entry.peers = nil
@@ -1420,7 +1421,7 @@ func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) 
 	if m, err := rowOf(t, other, boxID); err != nil || m.State != machines.StateRunning {
 		t.Fatalf("the other api reads %+v, %v, want the running claim", m, err)
 	}
-	peer.handOver(entry)
+	peer.shift(entry, entry.adoptable)
 	if _, err := other.Get(t.Context(), boxID); err != nil {
 		t.Fatalf("Get on an api without the token = %v, want the recorded machine", err)
 	}
@@ -1440,7 +1441,7 @@ func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	b := newTestBackend(t, entry)
 	claimRunning(t, b)
-	peer.handOver(entry)
+	peer.shift(entry, entry.adoptable)
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh after the hand-over: %v", err)
 	}
@@ -1812,7 +1813,6 @@ func (f *fakeSandboxd) root(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// sandbox holds f.mu while next runs.
 func (f *fakeSandboxd) sandbox(next func(http.ResponseWriter, *http.Request, *fakeSandbox)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -1845,26 +1845,14 @@ func (f *fakeSandboxd) addr() string {
 	return strings.TrimPrefix(f.srv.URL, "http://")
 }
 
-// handOver leaves f's claims for peer to adopt, as an archive in the shared store.
-func (f *fakeSandboxd) handOver(peer *fakeSandboxd) {
+func (f *fakeSandboxd) shift(peer *fakeSandboxd, dst map[string]*fakeSandbox) {
 	f.mu.Lock()
 	claims := f.sandboxes
 	f.sandboxes = map[string]*fakeSandbox{}
 	f.mu.Unlock()
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
-	maps.Copy(peer.adoptable, claims)
-}
-
-// moveTo hands f's claims to peer live, as a node evacuation does.
-func (f *fakeSandboxd) moveTo(peer *fakeSandboxd) {
-	f.mu.Lock()
-	claims := f.sandboxes
-	f.sandboxes = map[string]*fakeSandbox{}
-	f.mu.Unlock()
-	peer.mu.Lock()
-	defer peer.mu.Unlock()
-	maps.Copy(peer.sandboxes, claims)
+	maps.Copy(dst, claims)
 }
 
 func (f *fakeSandboxd) add(sb *fakeSandbox) {
@@ -1876,7 +1864,6 @@ func (f *fakeSandboxd) add(sb *fakeSandbox) {
 	f.sandboxes[sb.row.ID] = sb
 }
 
-// lose drops the value of host-only entry name of sandbox id, as a node does at a restart.
 func (f *fakeSandboxd) lose(id, name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1966,7 +1953,6 @@ func (f *fakeSandboxd) renewed() []string {
 	return slices.Clone(f.renews)
 }
 
-// seed puts sb on fake and records its machine on the entry node, as a claim the backend made.
 func seed(t *testing.T, b *Backend, fake *fakeSandboxd, sb *fakeSandbox) {
 	t.Helper()
 	fake.add(sb)
@@ -1988,14 +1974,14 @@ func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 	return newSharedBackend(t, fake, clustertest.Open(t))
 }
 
-func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
+func newSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
 	b := openSharedBackend(t, fake, db)
 	go b.Run(t.Context())
 	return b
 }
 
-func openSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
+func openSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
 	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Store: db})
 	if err != nil {
@@ -2015,7 +2001,7 @@ func claimRunning(t *testing.T, b *Backend) machines.Machine {
 
 func waitState(t *testing.T, b *Backend, id string, revision int64, want machines.State) machines.Machine {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), waitFor)
 	defer cancel()
 	var last machines.Machine
 	for m := range b.Watch(ctx, id, revision) {
@@ -2043,7 +2029,7 @@ func fenceListener(t *testing.T, b *Backend, dsn string) {
 	execSQL(t, dsn, fmt.Sprintf(`SELECT pg_notify('%s', '{"ID":"%s"}')`, cluster.ChannelMachines, id))
 	select {
 	case <-fenced:
-	case <-time.After(5 * time.Second):
+	case <-time.After(waitFor):
 		t.Fatal("the listener took no notify within 5 s")
 	}
 }
