@@ -1161,6 +1161,7 @@ func offload() async {
         }
     }
     if sub == "secrets" { return secrets() }
+    if let named = value(of: "--kind"), OffloadKind(rawValue: named) == nil { fail("--kind is claude, codex or cursor") }
     if flags.contains("--handover-prompt") {
         let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) ?? .codex
         do {
@@ -1218,7 +1219,6 @@ func offload() async {
                 print("#\(entry.seq) \(entry.kind) at \(time)\n\(entry.body)\n")
             }
         default:
-            if let named = value(of: "--kind"), OffloadKind(rawValue: named) == nil { fail("--kind is claude, codex or cursor") }
             guard let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) else {
                 fail("name the box CLI with --kind claude, codex or cursor")
             }
