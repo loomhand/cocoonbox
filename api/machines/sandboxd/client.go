@@ -66,12 +66,14 @@ type row struct {
 	Restarts   int               `json:"restarts,omitzero"`
 	Failed     string            `json:"failed,omitempty"`
 	ClaimedAt  time.Time         `json:"claimed_at,omitzero"`
+	EnvMissing bool              `json:"env_missing,omitzero"`
 }
 
 type envVar struct {
-	Value  string  `json:"value"`
-	Guest  *bool   `json:"guest,omitempty"`
-	Inject *inject `json:"inject,omitempty"`
+	Value   string  `json:"value"`
+	Guest   *bool   `json:"guest,omitempty"`
+	Inject  *inject `json:"inject,omitempty"`
+	Missing bool    `json:"missing,omitzero"`
 }
 
 type inject struct {
@@ -133,12 +135,12 @@ func newClient(rawURL, token string) (*client, error) {
 	if err != nil || base.Host == "" {
 		return nil, fmt.Errorf("sandboxd url %q must be an absolute URL", rawURL)
 	}
-	return &client{base: base, token: token, http: &http.Client{}}, nil
+	return &client{base: base, token: token, http: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {
 	var resp claimResponse
-	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
+	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", req, &resp)
 	return resp, err
 }
 
@@ -147,7 +149,7 @@ func (c *client) peers(ctx context.Context) ([]string, error) {
 	var resp struct {
 		Peers []string `json:"peers"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/peers", nil, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/peers", nil, &resp)
 	return resp.Peers, err
 }
 
@@ -156,7 +158,7 @@ func (c *client) advertised(ctx context.Context) (string, error) {
 	var resp struct {
 		AdvertiseAddr string `json:"advertise_addr"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/info", nil, &resp)
 	return resp.AdvertiseAddr, err
 }
 
@@ -168,7 +170,7 @@ func (c *client) full(ctx context.Context) (string, error) {
 		Running          int    `json:"running"`
 		MaxRunning       int    `json:"max_running"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp); err != nil {
+	if err := c.do(ctx, http.MethodGet, "/v1/info", nil, &resp); err != nil {
 		return "", err
 	}
 	switch {
@@ -185,45 +187,45 @@ func (c *client) owner(ctx context.Context, id, token string) (string, error) {
 	var resp struct {
 		OwnerAddr string `json:"owner_addr"`
 	}
-	err := c.request(ctx, token, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/owner", nil, nil, &resp)
+	err := c.request(ctx, token, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/owner", nil, &resp)
 	return resp.OwnerAddr, err
 }
 
-func (c *client) sandboxes(ctx context.Context, query url.Values) ([]row, error) {
+func (c *client) sandboxes(ctx context.Context) ([]row, error) {
 	var resp struct {
 		Sandboxes []row `json:"sandboxes"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", query, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes", nil, &resp)
 	return resp.Sandboxes, err
 }
 
 func (c *client) get(ctx context.Context, id string) (row, error) {
 	var r row
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id), nil, nil, &r)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id), nil, &r)
 	return r, err
 }
 
 func (c *client) verb(ctx context.Context, id, verb string, body any) error {
-	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, nil, body, nil)
+	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, body, nil)
 }
 
 func (c *client) env(ctx context.Context, id string) (map[string]envVar, error) {
 	var resp struct {
 		Env map[string]envVar `json:"env"`
 	}
-	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/env", nil, nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/env", nil, &resp)
 	return resp.Env, err
 }
 
 // patchEnv merges entries into the claim's env; a nil entry removes the name.
 func (c *client) patchEnv(ctx context.Context, id string, entries map[string]*envVar) error {
-	return c.do(ctx, http.MethodPatch, "/v1/sandboxes/"+url.PathEscape(id)+"/env", nil, map[string]any{"env": entries}, nil)
+	return c.do(ctx, http.MethodPatch, "/v1/sandboxes/"+url.PathEscape(id)+"/env", map[string]any{"env": entries}, nil)
 }
 
 // exec runs a buffered command as the guest's root with the sandbox's own token.
 func (c *client) exec(ctx context.Context, id, token string, req execRequest) (execResponse, error) {
 	var resp execResponse
-	err := c.request(ctx, token, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/exec", nil, req, &resp)
+	err := c.request(ctx, token, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/exec", req, &resp)
 	return resp, err
 }
 
@@ -259,11 +261,11 @@ func (c *client) dialPort(ctx context.Context, id string, port int) (net.Conn, e
 	return &bufferedConn{Conn: conn, r: br}, nil
 }
 
-func (c *client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
-	return c.request(ctx, c.token, method, path, query, body, out)
+func (c *client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.request(ctx, c.token, method, path, body, out)
 }
 
-func (c *client) request(ctx context.Context, token, method, path string, query url.Values, body, out any) error {
+func (c *client) request(ctx context.Context, token, method, path string, body, out any) error {
 	var payload io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body, json.Deterministic(true))
@@ -273,7 +275,6 @@ func (c *client) request(ctx context.Context, token, method, path string, query 
 		payload = bytes.NewReader(raw)
 	}
 	u := c.base.JoinPath(path)
-	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), payload)
 	if err != nil {
 		return fmt.Errorf("build %s %s: %w", method, path, err)

@@ -154,6 +154,8 @@ type Sandboxd struct {
 	TokenFile string `json:"token_file"`
 	// TenantEgressClass gives every user's tenant this egress class and turns on claims with the user's tenant; empty keeps root claims.
 	TenantEgressClass string `json:"tenant_egress_class"`
+	// Nodes lists the node addresses, as the mesh names them, that the api may call besides the entry node; empty allows every node the mesh names.
+	Nodes []string `json:"nodes"`
 }
 
 // Accounts names the users database and the master key that seals each user's gw key, tenant token and state key.

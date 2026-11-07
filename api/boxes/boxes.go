@@ -240,7 +240,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		logger.Info(ctx, "waking box")
 		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_WAKING), nil
 	}
-	if s.ready(m) {
+	if s.reachable(m) {
 		return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, m)}, nil
 	}
 	phase := controlv1.Phase_PHASE_CREATING
@@ -340,7 +340,7 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 	}
 }
 
-// Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is ready.
+// Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is reachable.
 func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	var none machines.Endpoint
 	if !s.registry.HasBox(user, boxID) {
@@ -348,7 +348,7 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	}
 	cur, err := s.current(ctx, user, boxID)
 	var ep machines.Endpoint
-	if err == nil && !s.ready(cur) && cur.State == machines.StateRunning {
+	if err == nil && !s.reachable(cur) && cur.State == machines.StateRunning {
 		err = &machines.NotRunningError{State: machines.StateStarting}
 	}
 	if err == nil {
@@ -549,9 +549,9 @@ func (s *Service) follow(op *operation, machine string) {
 		if m.State == machines.StateFailed {
 			log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Warnf(op.ctx, "machine %s failed: %s (%s)", machine, m.Reason, m.Detail)
 		}
-		if m.State == machines.StateRunning && !s.ready(m) {
+		if m.State == machines.StateRunning && !s.reachable(m) {
 			op.record(observation{state: controlv1.BoxState_BOX_STATE_STARTING, detail: "provisioning"})
-			if err := s.provisionMachine(op.ctx, m); err != nil {
+			if err := s.provisionMachine(op.ctx, m, false); err != nil {
 				log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Error(op.ctx, err, "provision "+machine)
 				op.fail(cmp.Or(failureWords[op.phase], "machine failed"))
 				return
@@ -568,7 +568,7 @@ func (s *Service) follow(op *operation, machine string) {
 func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machine) *controlv1.Box {
 	b := toBox(box, m)
 	b.Name = s.boxName(user, box)
-	if m.State == machines.StateRunning && !s.ready(m) {
+	if m.State == machines.StateRunning && !s.reachable(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}
 	b.LatestImage = s.defaults.upgrade(s.ownImage(user), m.Image)

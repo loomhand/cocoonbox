@@ -8,6 +8,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const wakePushTimeout = 30 * time.Second
@@ -25,7 +26,7 @@ func (s *Service) EnableConnect(c Connect) {
 	s.connect = c
 }
 
-// ApplyCredentials brings the machines of user's own boxes in line with the user's credentials; flags change only on running ones.
+// ApplyCredentials brings the running machines of user's own boxes in line with the user's credentials; a hibernated one gets them when it wakes.
 func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	if s.connect == nil {
 		return nil
@@ -40,7 +41,9 @@ func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for _, m := range s.ownerMachines(ms) {
-		errs = append(errs, s.machines.SetCredentials(ctx, m.ID, creds))
+		if m.State == machines.StateRunning {
+			errs = append(errs, s.setCredentials(ctx, m, users.PushConnect, creds))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -102,21 +105,21 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 		logger.Error(ctx, err, "list machines")
 		return
 	}
-	running := map[string][]string{}
+	running := map[string][]machines.Machine{}
 	for _, m := range s.ownerMachines(ms) {
 		if m.State == machines.StateRunning {
-			running[m.Owner] = append(running[m.Owner], m.ID)
+			running[m.Owner] = append(running[m.Owner], m)
 		}
 	}
-	for owner, ids := range running {
+	for owner, owned := range running {
 		creds, err := s.connect.Credentials(ctx, owner)
 		if err != nil {
 			logger.Warnf(ctx, "read the credentials of %s: %v", owner, err)
 			continue
 		}
-		for _, id := range ids {
-			if err := s.machines.SetCredentials(ctx, id, creds); err != nil {
-				logger.WithField("machine", id).Warnf(ctx, "push credentials: %v", err)
+		for _, m := range owned {
+			if err := s.setCredentials(ctx, m, users.PushConnect, creds); err != nil {
+				logger.WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)
 			}
 		}
 	}
@@ -134,34 +137,41 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 	go func() {
 		pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wakePushTimeout)
 		defer cancel()
+		logger := log.WithFunc("boxes.Service.wakeCredentials").WithField("machine", m.ID)
 		if s.connect != nil {
-			s.pushCredentials(pushCtx, m)
+			if _, err := s.pushCredentials(pushCtx, m); err != nil {
+				logger.Warnf(pushCtx, "push credentials: %v", err)
+			}
 		}
 		if vault {
 			if err := s.syncVault(pushCtx, m.ID); err != nil {
-				log.WithFunc("boxes.Service.wakeCredentials").WithField("machine", m.ID).Warnf(pushCtx, "push keys: %v", err)
+				logger.Warnf(pushCtx, "push keys: %v", err)
 			}
 		}
 	}()
 }
 
-// pushCredentials applies the credentials of m's owner to m; a failure is logged, and the next push retries.
-func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) {
+// pushCredentials applies the credentials of m's owner to m and returns them.
+func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) (machines.Credentials, error) {
 	creds, err := s.connect.Credentials(ctx, m.Owner)
-	if err == nil {
-		err = s.machines.SetCredentials(ctx, m.ID, creds)
-	}
 	if err != nil {
-		log.WithFunc("boxes.Service.pushCredentials").WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)
+		return creds, err
 	}
+	return creds, s.setCredentials(ctx, m, users.PushConnect, creds)
 }
 
 func (s *Service) deleteMachine(ctx context.Context, id string) error {
 	err := s.machines.Delete(ctx, id)
-	if s.connect != nil && (err == nil || errors.Is(err, machines.ErrNotFound)) {
+	if err != nil && !errors.Is(err, machines.ErrNotFound) {
+		return err
+	}
+	if s.connect != nil {
 		if dropErr := s.connect.DropDoorKey(ctx, id); dropErr != nil {
 			log.WithFunc("boxes.Service.deleteMachine").WithField("machine", id).Warnf(ctx, "drop the box door key: %v", dropErr)
 		}
+	}
+	if s.accounts != nil {
+		s.revokeMachineKeys(ctx, id)
 	}
 	return err
 }

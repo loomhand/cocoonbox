@@ -8,15 +8,20 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
-// Accounts holds each user's backend tenant token and gw key.
+// Accounts holds each user's backend tenant token and the gw key of each machine incarnation.
 type Accounts interface {
 	Tenant(user string) (string, error)
-	GWKey(user string) (string, error)
+	IssueMachineKey(ctx context.Context, owner, machine, incarnation string) (string, string, error)
+	MachineKeys(ctx context.Context, machine string) ([]users.MachineKey, error)
+	RevokeMachineKey(ctx context.Context, id string) error
+	InstallMachineKey(ctx context.Context, machine, id string) error
+	RecordPushes(ctx context.Context, machine, owner, node string, kinds []string) error
 }
 
-// EnableAccounts makes new machines claim with their user's tenant and carry their user's gw key.
+// EnableAccounts makes new machines claim with their user's tenant and gives each running incarnation its own gw key.
 func (s *Service) EnableAccounts(accounts Accounts) {
 	s.accounts = accounts
 }
@@ -52,10 +57,43 @@ func (s *Service) HibernateAll(ctx context.Context, user string) error {
 	return errors.Join(errs...)
 }
 
+// setCredentials records a push of kind to m's node when creds carry a secret, then applies creds to m there only.
+func (s *Service) setCredentials(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
+	if len(secretNames(creds.Secrets)) > 0 {
+		if err := s.recordPushes(ctx, m, kind); err != nil {
+			return err
+		}
+	}
+	creds.Node = m.Node
+	return s.machines.SetCredentials(ctx, m.ID, creds)
+}
+
+// recordPushes records that secrets of kinds go to m before they do; without accounts nothing records them.
+func (s *Service) recordPushes(ctx context.Context, m machines.Machine, kinds ...string) error {
+	if s.accounts == nil || len(kinds) == 0 {
+		return nil
+	}
+	if err := s.accounts.RecordPushes(ctx, m.ID, m.Owner, m.Node, kinds); err != nil {
+		return fmt.Errorf("record pushes: %w", err)
+	}
+	return nil
+}
+
 // tenantOf returns user's tenant token, empty without accounts.
 func (s *Service) tenantOf(user string) (string, error) {
 	if s.accounts == nil {
 		return "", nil
 	}
 	return s.accounts.Tenant(user)
+}
+
+// secretNames lists the names that secrets sets to a value.
+func secretNames(secrets map[string]*machines.Secret) []string {
+	var names []string
+	for name, sec := range secrets {
+		if sec != nil {
+			names = append(names, name)
+		}
+	}
+	return names
 }

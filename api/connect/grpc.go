@@ -3,6 +3,7 @@ package connect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/projecteru2/core/log"
@@ -181,6 +182,26 @@ func (s *Service) RevokeAll(ctx context.Context, user string) error {
 		s.dropConn(g.id)
 	}
 	return nil
+}
+
+// CutOff revokes user's grants at the vendors where it can and marks them for a reconnect, so no box gets their tokens again; it returns the connectors no vendor revoked.
+func (s *Service) CutOff(ctx context.Context, user string) ([]string, error) {
+	grants, err := s.store.grants(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	var unrevoked []string
+	for _, g := range grants {
+		if !s.revokeGrant(ctx, g) {
+			unrevoked = append(unrevoked, g.connector)
+		}
+		if err := s.store.setStatus(ctx, g.id, statusReconnect); err != nil {
+			return unrevoked, fmt.Errorf("mark grant %s for a reconnect: %w", g.id, err)
+		}
+		s.dropConn(g.id)
+		s.changed(ctx, g)
+	}
+	return unrevoked, nil
 }
 
 // Pending lists user's unanswered approvals, the oldest first.

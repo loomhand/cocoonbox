@@ -48,7 +48,7 @@ func TestTheProvisionerPushesKeysOnceAndAgainOnlyWhenTheDigestMoves(t *testing.T
 	}
 }
 
-func TestApplyVaultReachesHibernatedMachinesWithoutTheGuestList(t *testing.T) {
+func TestApplyVaultReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
@@ -64,8 +64,8 @@ func TestApplyVaultReachesHibernatedMachinesWithoutTheGuestList(t *testing.T) {
 	for _, c := range fake.credCalls() {
 		flags[c.machine] = c.flags != nil
 	}
-	if len(flags) != 2 || !flags[aliceBox] || flags[aliceBox+"-2"] {
-		t.Errorf("pushes = %v, want both of alice's machines and the guest list only on the running one", flags)
+	if len(flags) != 1 || !flags[aliceBox] {
+		t.Errorf("pushes = %v, want alice's running machine only", flags)
 	}
 	running, _ := fake.Get(t.Context(), aliceBox)
 	hibernated, _ := fake.Get(t.Context(), aliceBox+"-2")
@@ -113,6 +113,7 @@ func lastPushTo(fake *fakeMachines, machine string) credCall {
 type fakeVault struct {
 	mu      sync.Mutex
 	digests map[string]string
+	err     error
 }
 
 func (v *fakeVault) Digests(context.Context) (map[string]string, error) {
@@ -124,6 +125,9 @@ func (v *fakeVault) Digests(context.Context) (map[string]string, error) {
 func (v *fakeVault) Credentials(_ context.Context, owner string) (machines.Credentials, string, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.err != nil {
+		return machines.Credentials{}, "", v.err
+	}
 	c := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{vaultFlag: ""}, Prune: "CBV_"}
 	if d := v.digests[owner]; d != "" {
 		c.Secrets["CBV_1"] = &machines.Secret{Value: "v-" + owner}

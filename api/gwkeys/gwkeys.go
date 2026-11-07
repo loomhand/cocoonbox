@@ -1,4 +1,4 @@
-// Package gwkeys issues and revokes gw keys, one per owner, and reads their usage and sets their owners' budgets through gw's admin API.
+// Package gwkeys issues and revokes gw keys, one per owner and one per machine incarnation, and reads their usage and sets their owners' budgets through gw's admin API.
 package gwkeys
 
 import (
@@ -47,7 +47,7 @@ type Usage struct {
 	CostMicros       int64  `json:"cost_micros"`
 }
 
-// Client manages keys in tenant cocoonbox-boxes, one per owner.
+// Client manages keys in tenant cocoonbox-boxes, all bound to their owner.
 type Client struct {
 	base  *url.URL
 	token string
@@ -68,9 +68,17 @@ func (c *Client) Add(ctx context.Context, owner string) (string, string, error) 
 	if err := c.Revoke(ctx, owner); err != nil {
 		return "", "", err
 	}
+	return c.AddMachine(ctx, owner, true)
+}
+
+// AddMachine adds a gw key of owner for one machine, expired unless enabled, and returns it with its ak_id.
+func (c *Client) AddMachine(ctx context.Context, owner string, enabled bool) (string, string, error) {
 	body := map[string]any{
 		"product": product, "tenant": tenant, "owner": owner,
 		"qps": qps, "daily_token_quota": dailyTokens, "tokens_per_minute": tokensPerMinute,
+	}
+	if !enabled {
+		body["expires_at_epoch_secs"] = pastExpiry
 	}
 	var created struct {
 		AK   string `json:"ak"`
@@ -85,6 +93,15 @@ func (c *Client) Add(ctx context.Context, owner string) (string, string, error) 
 	return created.AK, created.AKID, nil
 }
 
+// Delete revokes the gw key with ak_id id; revoking an absent key succeeds.
+func (c *Client) Delete(ctx context.Context, id string) error {
+	status, err := c.request(ctx, http.MethodDelete, keysPath+"/"+id, nil, nil, nil)
+	if status == http.StatusNotFound {
+		return nil
+	}
+	return err
+}
+
 // Revoke removes owner's gw keys; revoking an absent key succeeds.
 func (c *Client) Revoke(ctx context.Context, owner string) error {
 	ids, err := c.keysOf(ctx, owner)
@@ -92,7 +109,7 @@ func (c *Client) Revoke(ctx context.Context, owner string) error {
 		return err
 	}
 	for _, id := range ids {
-		if err := c.delete(ctx, id); err != nil {
+		if err := c.Delete(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -199,14 +216,6 @@ func (c *Client) keysOf(ctx context.Context, owner string) ([]string, error) {
 		}
 	}
 	return ids, nil
-}
-
-func (c *Client) delete(ctx context.Context, id string) error {
-	status, err := c.request(ctx, http.MethodDelete, keysPath+"/"+id, nil, nil, nil)
-	if status == http.StatusNotFound {
-		return nil
-	}
-	return err
 }
 
 func (c *Client) request(ctx context.Context, method, path string, query url.Values, body, out any) (int, error) {

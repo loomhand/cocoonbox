@@ -99,7 +99,7 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 	}
 }
 
-func TestApplyCredentialsReachesEveryMachineOfTheUser(t *testing.T) {
+func TestApplyCredentialsReachesOnlyTheRunningMachinesOfTheUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateHibernated})
@@ -114,8 +114,8 @@ func TestApplyCredentialsReachesEveryMachineOfTheUser(t *testing.T) {
 	for _, c := range fake.credCalls() {
 		flags[c.machine] = c.flags != nil
 	}
-	if len(flags) != 2 || !flags[aliceBox] || flags[aliceBox+"-2"] {
-		t.Errorf("pushes = %v, want both of alice's machines and flags only on the running one", flags)
+	if len(flags) != 1 || !flags[aliceBox] {
+		t.Errorf("pushes = %v, want alice's running machine only", flags)
 	}
 }
 

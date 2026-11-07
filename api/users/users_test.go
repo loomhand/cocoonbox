@@ -211,7 +211,7 @@ func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 
 func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
 	dsn := clustertest.EmptyDSN(t)
-	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}
+	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, machine: map[string]bool{}}
 	tenants := &fakeTenants{tenants: map[string]tenant{}}
 	u, err := url.Parse(dsn)
 	if err != nil {
@@ -676,6 +676,7 @@ type fakeGW struct {
 	keys     map[string]string
 	caps     map[string]int64
 	disabled map[string]bool
+	machine  map[string]bool
 }
 
 func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
@@ -729,6 +730,21 @@ func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) err
 	return nil
 }
 
+func (g *fakeGW) AddMachine(_ context.Context, owner string, enabled bool) (string, string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id := "ak-" + utils.RandomHex(4)
+	g.machine[id] = enabled
+	return "gw-" + owner + "-" + id, id, nil
+}
+
+func (g *fakeGW) Delete(_ context.Context, id string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.machine, id)
+	return nil
+}
+
 type queryCounter struct {
 	n atomic.Int64
 }
@@ -771,7 +787,7 @@ func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
 func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
 	t.Helper()
 	dsn := clustertest.EmptyDSN(t)
-	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}
+	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, machine: map[string]bool{}}
 	tenants := &fakeTenants{tenants: map[string]tenant{}}
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
 }

@@ -245,7 +245,7 @@ func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, env := range []*stateEnv{a, b} {
 		wg.Go(func() {
-			if err := env.svc.provisionMachine(t.Context(), m); err != nil {
+			if err := env.svc.provisionMachine(t.Context(), m, false); err != nil {
 				t.Errorf("provisionMachine: %v", err)
 			}
 		})

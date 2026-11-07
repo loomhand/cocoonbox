@@ -7,6 +7,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const metaVault = "vault"
@@ -22,7 +23,7 @@ func (s *Service) EnableVault(v Vault) {
 	s.vault = v
 }
 
-// ApplyVault puts user's keys on the machines of user's own boxes at once: host-only entries on all, the guest list on running ones.
+// ApplyVault puts user's keys on the running machines of user's own boxes at once; a hibernated one gets them when it wakes.
 func (s *Service) ApplyVault(ctx context.Context, user string) error {
 	if s.vault == nil || s.provision == nil {
 		return nil
@@ -33,7 +34,9 @@ func (s *Service) ApplyVault(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for _, m := range s.ownerMachines(ms) {
-		errs = append(errs, s.syncVault(ctx, m.ID))
+		if m.State == machines.StateRunning {
+			errs = append(errs, s.syncVault(ctx, m.ID))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -64,20 +67,21 @@ func (s *Service) syncVault(ctx context.Context, machine string) error {
 	if err != nil {
 		return err
 	}
-	return s.pushVault(ctx, m)
+	_, err = s.pushVault(ctx, m)
+	return err
 }
 
-// pushVault applies the keys of m's owner to m and records their digest on a running m; the caller holds m's lock.
-func (s *Service) pushVault(ctx context.Context, m machines.Machine) error {
+// pushVault applies the keys of m's owner to m, records their digest on a running m and returns them; the caller holds m's lock.
+func (s *Service) pushVault(ctx context.Context, m machines.Machine) (machines.Credentials, error) {
 	creds, digest, err := s.vault.Credentials(ctx, m.Owner)
 	if err != nil {
-		return err
+		return creds, err
 	}
-	if err := s.machines.SetCredentials(ctx, m.ID, creds); err != nil {
-		return err
+	if err := s.setCredentials(ctx, m, users.PushVault, creds); err != nil {
+		return creds, err
 	}
 	if m.State != machines.StateRunning || m.Meta[metaVault] == digest {
-		return nil
+		return creds, nil
 	}
-	return s.machines.SetMeta(ctx, m.ID, metaVault, digest)
+	return creds, s.machines.SetMeta(ctx, m.ID, metaVault, digest)
 }

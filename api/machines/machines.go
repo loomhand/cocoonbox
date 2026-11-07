@@ -80,6 +80,10 @@ type Machine struct {
 	Routed bool
 	// Squeezed reports that the machine's node has no room for another running machine.
 	Squeezed bool
+	// EnvMissing reports host-only entries the backend lost the values of; they need a push again.
+	EnvMissing bool
+	// Node names the backend node that holds the machine.
+	Node string
 }
 
 // Identity tells a box agent which box and wake it serves and which edge key signs its credentials; the guest takes Name as its hostname.
@@ -108,6 +112,8 @@ type Credentials struct {
 	Flags map[string]string
 	// Prune removes the machine's names that start with it and that Secrets lacks.
 	Prune string
+	// Node, when set, is the node the caller recorded the push for; the backend refuses to write anywhere else.
+	Node string
 }
 
 // DialFunc opens a connection to one port of a machine.
@@ -153,10 +159,12 @@ type Machines interface {
 	Delete(ctx context.Context, id string) error
 	// SetMeta stores value under key in the machine's Meta.
 	SetMeta(ctx context.Context, id, key, value string) error
-	// Deliver installs keys as host-only secrets on the running machine, then hands its agent the identity.
-	Deliver(ctx context.Context, id string, identity Identity, keys map[string]*Secret) error
+	// Deliver hands the running machine's agent the identity.
+	Deliver(ctx context.Context, id string, identity Identity) error
 	// SetCredentials applies c to the machine; flags change only while it runs.
 	SetCredentials(ctx context.Context, id string, c Credentials) error
+	// DropMissing removes the host-only entries the backend lost the values of and returns their names; it fails with ErrConflict while keep names one of them.
+	DropMissing(ctx context.Context, id string, keep []string) ([]string, error)
 	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.
 	SetEgress(ctx context.Context, id, upstream string) error
 }

@@ -506,29 +506,34 @@ type credCall struct {
 
 // fakeMachines keeps machines in memory; each pushed event reaches exactly one live Watch.
 type fakeMachines struct {
-	mu        sync.Mutex
-	machines  map[string]machines.Machine
-	deleted   []string
-	clock     int64
-	specs     []machines.Spec
-	pending   []machines.Machine
-	pushed    chan struct{}
-	changed   chan struct{}
-	lists     int
-	revision  int64
-	ensureErr error
-	deleteErr error
-	onDeliver func()
-	addr      string
-	addrErr   error
-	execErr   error
-	execs     []execCall
-	egress    []string
-	creds     []credCall
+	mu          sync.Mutex
+	machines    map[string]machines.Machine
+	deleted     []string
+	clock       int64
+	specs       []machines.Spec
+	pending     []machines.Machine
+	pushed      chan struct{}
+	changed     chan struct{}
+	lists       int
+	revision    int64
+	ensureErr   error
+	deleteErr   error
+	onDeliver   func()
+	addr        string
+	addrErr     error
+	execErr     error
+	execs       []execCall
+	egress      []string
+	creds       []credCall
+	keyPushes   []credCall
+	credErr     error
+	held        map[string]map[string]string
+	drops       int
+	keepMissing bool
 }
 
 func newFakeMachines() *fakeMachines {
-	return &fakeMachines{machines: map[string]machines.Machine{}, pushed: make(chan struct{}), changed: make(chan struct{})}
+	return &fakeMachines{machines: map[string]machines.Machine{}, held: map[string]map[string]string{}, pushed: make(chan struct{}), changed: make(chan struct{})}
 }
 
 func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.Machine, machines.Action, error) {
@@ -651,7 +656,7 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 	return nil
 }
 
-func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
+func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity) error {
 	if f.onDeliver != nil {
 		f.onDeliver()
 	}
@@ -660,14 +665,10 @@ func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.I
 	if f.execErr != nil {
 		return f.execErr
 	}
-	call := execCall{machine: id, identity: identity}
-	if k := keys[gwKeyEnv]; k != nil {
-		call.gwKey = strings.TrimPrefix(k.Value, "Bearer ")
-	}
-	if k := keys[connectKeyEnv]; k != nil {
-		call.connectKey = strings.TrimPrefix(k.Value, "Bearer ")
-	}
+	held := f.held[id]
+	call := execCall{machine: id, identity: identity, gwKey: strings.TrimPrefix(held[gwKeyEnv], "Bearer "), connectKey: strings.TrimPrefix(held[connectKeyEnv], "Bearer ")}
 	f.execs = append(f.execs, call)
+	f.filled(id)
 	return nil
 }
 
@@ -678,17 +679,43 @@ func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.C
 	if !ok {
 		return machines.ErrNotFound
 	}
+	if f.credErr != nil {
+		return f.credErr
+	}
+	if f.held[id] == nil {
+		f.held[id] = map[string]string{}
+	}
 	call := credCall{machine: id, secrets: map[string]string{}}
 	for name, sec := range c.Secrets {
 		if sec != nil {
-			call.secrets[name] = sec.Value
+			call.secrets[name], f.held[id][name] = sec.Value, sec.Value
+		} else {
+			delete(f.held[id], name)
 		}
 	}
 	if m.State == machines.StateRunning {
 		call.flags = c.Flags
 	}
-	f.creds = append(f.creds, call)
+	if c.Flags == nil && c.Prune == "" {
+		f.keyPushes = append(f.keyPushes, call)
+	} else {
+		f.creds = append(f.creds, call)
+	}
+	f.filled(id)
 	return nil
+}
+
+func (f *fakeMachines) DropMissing(_ context.Context, id string, _ []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[id]
+	if !ok {
+		return nil, machines.ErrNotFound
+	}
+	f.drops++
+	m.EnvMissing = false
+	f.machines[id] = m
+	return []string{"STALE"}, nil
 }
 
 func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {
@@ -715,6 +742,13 @@ func (f *fakeMachines) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeMachines) filled(id string) {
+	if m, ok := f.machines[id]; ok && !f.keepMissing {
+		m.EnvMissing = false
+		f.machines[id] = m
+	}
+}
+
 func (f *fakeMachines) execCalls() []execCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -725,6 +759,12 @@ func (f *fakeMachines) credCalls() []credCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.creds)
+}
+
+func (f *fakeMachines) keyCalls() []credCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.keyPushes)
 }
 
 func (f *fakeMachines) egressCalls() []string {

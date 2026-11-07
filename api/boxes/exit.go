@@ -28,18 +28,18 @@ func (s *Service) ApplyExit(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for _, m := range ms {
-		errs = append(errs, s.syncExit(ctx, m))
+		errs = append(errs, s.syncExit(ctx, m, false))
 	}
 	return errors.Join(errs...)
 }
 
-// syncExit points m's egress at the exit its owner's switch names when it differs.
-func (s *Service) syncExit(ctx context.Context, m machines.Machine) error {
+// syncExit points m's egress at the exit its owner's switch names when it differs or force asks.
+func (s *Service) syncExit(ctx context.Context, m machines.Machine, force bool) error {
 	if s.exit == nil {
 		return nil
 	}
 	on := s.exit.residential(m.Owner)
-	if on == m.Routed {
+	if on == m.Routed && !force {
 		return nil
 	}
 	var upstream string

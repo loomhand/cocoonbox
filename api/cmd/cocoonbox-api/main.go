@@ -544,6 +544,7 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, db *cluster.S
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
+		Nodes:             cfg.Sandboxd.Nodes,
 		Store:             db,
 	}, nil
 }

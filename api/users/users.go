@@ -125,9 +125,11 @@ type Settings struct {
 	NoGC   *bool   `json:"no_gc,omitempty"`
 }
 
-// GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
+// GWKeys issues, revokes and meters each user's gw keys and keeps the user's own daily cap, found by owner = user id.
 type GWKeys interface {
 	Add(ctx context.Context, owner string) (string, string, error)
+	AddMachine(ctx context.Context, owner string, enabled bool) (string, string, error)
+	Delete(ctx context.Context, id string) error
 	Revoke(ctx context.Context, owner string) error
 	SetEnabled(ctx context.Context, owner string, enabled bool) error
 	Usage(ctx context.Context, owner string, since time.Time) ([]gwkeys.Usage, error)
