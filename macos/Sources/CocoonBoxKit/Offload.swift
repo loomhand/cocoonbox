@@ -107,7 +107,7 @@ public enum Handover {
         let lines = text.components(separatedBy: "\n").map { $0.hasSuffix("\r") ? String($0.dropLast()) : $0 }
         if !(lines.first ?? "").hasPrefix(title) { problems.append("the first line does not start with \"\(title)\"") }
         for heading in headings {
-            let count = lines.filter { $0.trimmingCharacters(in: .whitespaces) == heading }.count
+            let count = lines.filter { $0.hasPrefix(heading) && $0.dropFirst(heading.count).allSatisfy(\.isWhitespace) }.count
             if count == 0 { problems.append("missing \"\(heading)\"") }
             if count > 1 { problems.append("\"\(heading)\" appears \(count) times") }
         }

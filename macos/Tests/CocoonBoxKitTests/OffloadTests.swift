@@ -188,6 +188,7 @@ import Testing
             try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: thin, yes: true))
         }
         #expect(Handover.problems(thin) == ["missing \"## Gotchas learned\""])
+        #expect(Handover.problems(Self.handover.replacingOccurrences(of: "## Gotchas learned\n", with: " ## Gotchas learned \n")) == ["missing \"## Gotchas learned\""])
         #expect(Handover.problems("x\n" + Self.handover).contains("the first line does not start with \"# Hand-over: \""))
         #expect(Handover.problems(Self.handover + "## Commands\n").contains("\"## Commands\" appears 2 times"))
         let full = Self.handover + String(repeating: "x", count: 65_536 - Self.handover.utf8.count)
