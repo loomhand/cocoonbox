@@ -2236,6 +2236,40 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
 }
 
 #[tokio::test]
+async fn a_computer_subagent_reply_cut_at_its_limit_fails_the_delegation() {
+    let h = Harness::with_desk(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_d",
+                "delegate_computer",
+                &json!({"task": "type the essay"}),
+            ),
+        ),
+        (
+            "chat/completions",
+            chat_cut_call(
+                "toolu_1",
+                "computer_act",
+                r#"{"action":"type","text":"Once"#,
+            ),
+        ),
+        ("chat/completions", chat_text("Done.")),
+    ])
+    .await;
+    let mut agents = h.agents().await;
+    let (_, entries) = ask(&mut agents, "type it").await;
+    assert!(turn_end(&entries).ok);
+    let delegate = tool_result(&entries, "call_d");
+    assert!(delegate.is_error, "{}", delegate.text);
+    assert!(
+        delegate.text.contains("cut at its 2048-token limit"),
+        "{}",
+        delegate.text
+    );
+}
+
+#[tokio::test]
 async fn a_reply_without_a_call_or_text_gets_one_continuation() {
     let h = Harness::start(vec![
         ("chat/completions", chat_reasoning("plan: list it")),

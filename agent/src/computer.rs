@@ -104,6 +104,11 @@ async fn drive(
         }
         steps += 1;
         let step = rt.step(ctx, &req, SUBAGENT, usage).await?;
+        if step.cut {
+            return Err(format!(
+                "the computer subagent's reply was cut at its {MAX_TOKENS}-token limit"
+            ));
+        }
         if step.calls.is_empty() {
             break Ok(step.text);
         }
