@@ -126,7 +126,7 @@ if verb == "begin":
     index[key] = entry
     save(index_path, index)
     reply({"ok": True, "dir": entry["dir"], "copy": copy, "refs": refs, "ignored": ignored,
-           "cli": {"kind": opt["kind"], "version": "9.9.9", "signed_in": True, "account": "stub@box"}, "findings": findings})
+           "cli": {"kind": opt["kind"], "version": "9.9.9", "signed_in": True, "account": "stub@box"}})
 
 elif verb == "send" and ("message" in flags or "back" in flags):
     if not session or session.get("status") == "stopped":

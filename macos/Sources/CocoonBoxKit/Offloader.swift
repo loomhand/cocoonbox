@@ -159,9 +159,7 @@ public struct Offloader: Sendable {
             let refusal = Self.findings(reply)
             throw OffloadError.refused(findings + (refusal.isEmpty ? [Finding(check: "box", outcome: .block, detail: message)] : refusal))
         }
-        findings += Self.findings(begin)
         mark("begin")
-        guard !findings.contains(where: { $0.outcome == .block }) else { throw OffloadError.refused(findings) }
         guard request.yes || findings.isEmpty else { throw OffloadError.needsYes(findings) }
         guard let dir = begin["dir"] as? String, !dir.isEmpty else { throw OffloadError.failed("begin named no directory") }
         if let ignored = begin["ignored"] as? [String], !ignored.isEmpty, let handle = try? FileHandle(forWritingTo: excludes) {
