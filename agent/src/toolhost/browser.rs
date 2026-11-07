@@ -471,10 +471,10 @@ impl Browser {
             let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
                 continue;
             };
-            match cdp
-                .eval(FIELD_JS)
+            match tokio::time::timeout(TAB_WAIT, cdp.eval(FIELD_JS))
                 .await
                 .ok()
+                .and_then(Result::ok)
                 .as_ref()
                 .and_then(Value::as_str)
             {
@@ -2496,6 +2496,19 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn a_web_page_that_does_not_answer_costs_the_card_check_one_tab_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = web_chrome(&[
+            ("page", "https://stuck.test/", "hang"),
+            ("page", "https://shop.test/checkout", "field"),
+        ])
+        .await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        let got = tokio::time::timeout(TAB_WAIT * 2, b.page_field()).await;
+        assert_eq!(got, Ok(Ok(())));
+    }
+
+    #[tokio::test]
     async fn close_records_whether_chrome_ran_and_start_follows_the_record() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join(RUNNING_MARKER);
@@ -3342,6 +3355,9 @@ pub(super) mod tests {
                 while let Ok((stream, _)) = ws.accept().await {
                     let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                     while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        if value == "hang" {
+                            continue;
+                        }
                         let v: Value = serde_json::from_str(&text).unwrap();
                         let reply = json!({"id": v["id"], "result": {"result": {"value": value}}});
                         ws.send(WsMessage::text(reply.to_string())).await.unwrap();
