@@ -654,6 +654,28 @@ async fn end_stops_the_session_and_returns_the_copy() {
 }
 
 #[tokio::test]
+async fn a_new_offload_starts_with_an_empty_inbox_and_outbox_and_seqs_go_on() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "OLD"}))
+        .await;
+    std::fs::remove_file(b.fake.join(format!("sessions/cb-off-{REPO}-claude"))).unwrap();
+    packer::end(&b.layout, REPO).await.unwrap();
+    b.start_session("SECOND").await;
+    let read = b.call(json!({"op": "read", "repo": REPO})).await;
+    assert_eq!(read["entries"], json!([]), "{read}");
+    let inbox = std::fs::read_to_string(b.layout.state.join(REPO).join("inbox.jsonl")).unwrap();
+    assert!(
+        !inbox.contains("FIRST") && inbox.contains("SECOND"),
+        "{inbox}"
+    );
+    let posted = b
+        .call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "NEW"}))
+        .await;
+    assert_eq!(posted["seq"], 2, "{posted}");
+}
+
+#[tokio::test]
 async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
     let b = TestBox::start(false).await;
     let mac = b.dir.path().join("mac");

@@ -355,6 +355,10 @@ impl Inbox {
         rec.cli = req.cli;
         rec.offload_id = req.offload_id;
         rec.dir = copy.dir;
+        let dir = self.layout.repo_dir(&rec.repo);
+        for file in [INBOX_FILE, OUTBOX_FILE] {
+            let _ = tokio::fs::remove_file(dir.join(file)).await;
+        }
         let started = self.first_prompt(&mut rec, &req.body).await;
         let saved = self.save(&rec).await;
         self.publish(&rec, None);
