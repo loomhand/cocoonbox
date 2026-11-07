@@ -1009,11 +1009,7 @@ impl StateEngine {
         );
         let size = body.len() as u64;
         send_retrying(&format!("put {}", put.chunk_id), || {
-            let mut req = self.http.put(&put.url).body(body.clone());
-            for (k, v) in &put.headers {
-                req = req.header(k, v);
-            }
-            req
+            self.http.put(&put.url).body(body.clone())
         })
         .await?;
         Ok(size)

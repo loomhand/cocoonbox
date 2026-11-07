@@ -1617,7 +1617,6 @@ async fn upload_missing(
     let put = |id: &str| pb::PresignedPut {
         chunk_id: id.into(),
         url: format!("{base}/{id}"),
-        headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
     };
     let stream = state_client(h)
         .await
@@ -5671,7 +5670,6 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
     let put = |id: &str| pb::PresignedPut {
         chunk_id: id.into(),
         url: format!("{base}/{id}"),
-        headers: HashMap::new(),
     };
     let (first, rest) = ids.split_at(ids.len() / 2);
     let call = |puts: Vec<pb::PresignedPut>, manifest: Option<pb::PresignedPut>| {

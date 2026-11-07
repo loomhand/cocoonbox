@@ -1,6 +1,5 @@
 //! boxgate: a test harness that drives a box's serve directly, as the edge and the api would, for gates without them.
 
-use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -656,7 +655,6 @@ async fn upload(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String>
         .map(|id| pb::PresignedPut {
             chunk_id: id.to_owned(),
             url: format!("{url}/{id}"),
-            headers: HashMap::new(),
         })
         .collect::<Vec<_>>();
     let sent = puts.len();
@@ -666,7 +664,6 @@ async fn upload(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String>
             manifest: Some(pb::PresignedPut {
                 url: format!("{url}/{snapshot_id}"),
                 chunk_id: snapshot_id.clone(),
-                headers: HashMap::new(),
             }),
             snapshot_id,
             key: Some(edge.state_key()),
