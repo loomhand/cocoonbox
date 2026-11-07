@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
@@ -81,7 +82,7 @@ func TestAgentBoxesStayOutsideMaxBoxesAndRaiseTheTenantCap(t *testing.T) {
 			t.Fatalf("AddBox of an agent with max boxes 1 used = %v", err)
 		}
 	}
-	if got := tenants.tenants[u.ID].max; got != 4 {
+	if got := tenants.Max[u.ID]; got != 4 {
 		t.Errorf("tenant cap = %d, want max boxes 1 + 2 agent boxes + 1", got)
 	}
 	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-o", Owner: u.ID, Name: "own"}); !errors.Is(err, ErrQuota) {
@@ -96,7 +97,7 @@ func TestAgentBoxesStayOutsideMaxBoxesAndRaiseTheTenantCap(t *testing.T) {
 	if err := svc.RemoveBox(t.Context(), u.ID, "cb-a1"); err != nil {
 		t.Fatalf("RemoveBox: %v", err)
 	}
-	if got := tenants.tenants[u.ID].max; got != 3 {
+	if got := tenants.Max[u.ID]; got != 3 {
 		t.Errorf("tenant cap after a removal = %d, want 3", got)
 	}
 }
@@ -141,7 +142,7 @@ func TestRenameAndRemoveBox(t *testing.T) {
 		t.Errorf("share %s of the other box ended", kept.ID)
 	}
 	var revoked, sealed bool
-	if err := query(t, dsn, "SELECT revoked_at IS NOT NULL, secret_sealed IS NOT NULL FROM shares WHERE id = $1", gone.ID).Scan(&revoked, &sealed); err != nil || !revoked || sealed {
+	if err := userstest.Query(t, dsn, "SELECT revoked_at IS NOT NULL, secret_sealed IS NOT NULL FROM shares WHERE id = $1", gone.ID).Scan(&revoked, &sealed); err != nil || !revoked || sealed {
 		t.Errorf("share row revoked = %t, keeps its secret = %t, %v", revoked, sealed, err)
 	}
 	reopened := openTestService(t, dsn, gw, tenants)
@@ -175,7 +176,7 @@ func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 		t.Fatalf("back to the default: %v, limit %d", err, svc.MaxRunning(u.ID))
 	}
 	var stored *int
-	if err := query(t, dsn, "SELECT max_running FROM users WHERE id = $1", u.ID).Scan(&stored); err != nil || stored != nil {
+	if err := userstest.Query(t, dsn, "SELECT max_running FROM users WHERE id = $1", u.ID).Scan(&stored); err != nil || stored != nil {
 		t.Errorf("max_running after inherit = %v, %v, want NULL", stored, err)
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxRunning: new(-1)}); !errors.Is(err, ErrInvalid) {
@@ -186,10 +187,10 @@ func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 func TestTheUsersAgentBoxCapBoundsEveryGrantAndTheTenantCap(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", IDP: "github", MaxAgentBoxes: new(1), DailyCapMicros: new(int64(1_000_000))})
-	if err != nil || u.IDP != "github" || u.MaxAgentBoxes == nil || *u.MaxAgentBoxes != 1 || gw.caps[u.ID] != 1_000_000 {
-		t.Fatalf("Create = %+v, %v; gw caps %v", u, err, gw.caps)
+	if err != nil || u.IDP != "github" || u.MaxAgentBoxes == nil || *u.MaxAgentBoxes != 1 || gw.Caps[u.ID] != 1_000_000 {
+		t.Fatalf("Create = %+v, %v; gw caps %v", u, err, gw.Caps)
 	}
-	if got := tenants.tenants[u.ID].max; got != 2 {
+	if got := tenants.Max[u.ID]; got != 2 {
 		t.Errorf("tenant cap of a new user = %d, want max boxes 1 + 0 agent boxes + 1", got)
 	}
 	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a1", Owner: u.ID, Name: "a1", Agent: true}); err != nil {
@@ -204,11 +205,11 @@ func TestTheUsersAgentBoxCapBoundsEveryGrantAndTheTenantCap(t *testing.T) {
 	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a2", Owner: u.ID, Name: "a2", Agent: true}); err != nil {
 		t.Fatalf("an agent box with no cap: %v", err)
 	}
-	if got := tenants.tenants[u.ID].max; got != 4 {
+	if got := tenants.Max[u.ID]; got != 4 {
 		t.Errorf("tenant cap with two agent boxes and no cap = %d, want 4", got)
 	}
-	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(1)}); err != nil || tenants.tenants[u.ID].max != 3 || *got.MaxAgentBoxes != 1 {
-		t.Errorf("cap 1 over two agent boxes = %+v, %v; tenant cap %d, want min(2, 1) counted, 3", got, err, tenants.tenants[u.ID].max)
+	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(1)}); err != nil || tenants.Max[u.ID] != 3 || *got.MaxAgentBoxes != 1 {
+		t.Errorf("cap 1 over two agent boxes = %+v, %v; tenant cap %d, want min(2, 1) counted, 3", got, err, tenants.Max[u.ID])
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(17)}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a cap over the limit = %v, want ErrInvalid", err)

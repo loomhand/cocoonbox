@@ -962,21 +962,12 @@ func TestAPreregisteredClientSignsInRefreshesAndFollowsItsSecret(t *testing.T) {
 }
 
 func TestAPreregisteredEntryWithoutItsClientIsHidden(t *testing.T) {
-	ids := func(opts Options) map[string]*controlv1.CatalogEntry {
-		svc := &Service{catalog: newCatalog(opts)}
-		catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
-		out := map[string]*controlv1.CatalogEntry{}
-		for _, e := range catalog.GetEntries() {
-			out[e.GetId()] = e
-		}
-		return out
-	}
 	for name, opts := range map[string]Options{
 		"no client":    {},
 		"no secret":    {HubSpot: Credentials{ClientID: "h"}, Slack: Credentials{ClientID: "s"}},
 		"no client id": {HubSpot: Credentials{ClientSecret: "h"}, Slack: Credentials{ClientSecret: "s"}},
 	} {
-		got := ids(opts)
+		got := catalogOf(t, opts)
 		if got["hubspot"] != nil || got["slack"] != nil || got["github"] == nil || got["notion"] == nil {
 			t.Errorf("%s: catalog = %v", name, got)
 		}
@@ -985,7 +976,7 @@ func TestAPreregisteredEntryWithoutItsClientIsHidden(t *testing.T) {
 			t.Errorf("%s: Start slack = %v", name, err)
 		}
 	}
-	got := ids(Options{HubSpot: Credentials{ClientID: "h", ClientSecret: "hs"}, Slack: Credentials{ClientID: "s", ClientSecret: "ss"}})
+	got := catalogOf(t, Options{HubSpot: Credentials{ClientID: "h", ClientSecret: "hs"}, Slack: Credentials{ClientID: "s", ClientSecret: "ss"}})
 	for _, id := range []string{"hubspot", "slack"} {
 		if e := got[id]; e == nil || !e.GetAvailable() {
 			t.Errorf("%s = %v", id, e)
@@ -1056,19 +1047,12 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 	if got := activity.GetEntries()[0].GetCaller(); got != "mcp:claude-code" {
 		t.Errorf("caller = %q", got)
 	}
-	streamReq, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
-	streamReq.Header.Set("Authorization", "Bearer alice")
-	streamReq.Header.Set("Accept", "text/event-stream")
-	stream, err := http.DefaultClient.Do(streamReq)
-	if err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	defer func() { _ = stream.Body.Close() }()
+	stream := openStream(t, t.Context(), srv.URL)
 	if _, err := env.svc.Remove(t.Context(), alice, mockName); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	buf := make([]byte, 256)
-	n, _ := stream.Body.Read(buf)
+	n, _ := stream.Read(buf)
 	if !strings.Contains(string(buf[:n]), "notifications/tools/list_changed") {
 		t.Errorf("stream = %q", buf[:n])
 	}
@@ -1146,14 +1130,7 @@ func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 	t.Cleanup(srv.Close)
 	modeBWatch, stop := env.svc.watchers.add(alice, false)
 	defer stop()
-	streamReq, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
-	streamReq.Header.Set("Authorization", "Bearer alice")
-	streamReq.Header.Set("Accept", "text/event-stream")
-	stream, err := http.DefaultClient.Do(streamReq)
-	if err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	defer func() { _ = stream.Body.Close() }()
+	stream := openStream(t, t.Context(), srv.URL)
 	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
 	approvalID := approvalOf(t, out)
 	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: approvalID, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_DENY}); err != nil {
@@ -1161,7 +1138,7 @@ func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 	}
 	want := `data: {"jsonrpc":"2.0","method":"notifications/cocoonbox/approval_answered","params":{"approval_id":"` + approvalID + `","decision":"deny"}}`
 	buf := make([]byte, 512)
-	n, _ := stream.Body.Read(buf)
+	n, _ := stream.Read(buf)
 	if !strings.Contains(string(buf[:n]), want) {
 		t.Errorf("box stream = %q, want %q", buf[:n], want)
 	}
@@ -1197,18 +1174,11 @@ func TestABoxDoorStreamReplaysTheAnswersNotYetUsed(t *testing.T) {
 	env.exec(t, "UPDATE connect_approvals SET expires_at = now() - interval '1 second' WHERE id = $1", expired)
 	streamCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	streamReq, _ := http.NewRequestWithContext(streamCtx, http.MethodGet, srv.URL, nil)
-	streamReq.Header.Set("Authorization", "Bearer alice")
-	streamReq.Header.Set("Accept", "text/event-stream")
-	stream, err := http.DefaultClient.Do(streamReq)
-	if err != nil {
-		t.Fatalf("stream: %v", err)
-	}
-	defer func() { _ = stream.Body.Close() }()
+	stream := openStream(t, streamCtx, srv.URL)
 	var got strings.Builder
 	buf := make([]byte, 1024)
 	for !strings.Contains(got.String(), denied) {
-		n, err := stream.Body.Read(buf)
+		n, err := stream.Read(buf)
 		got.Write(buf[:n])
 		if err != nil {
 			break
@@ -1664,6 +1634,30 @@ func (b *bindingAuthn) Bind(ctx context.Context, user, credential string) (conte
 	defer b.mu.Unlock()
 	b.bound = append(b.bound, user+" "+credential)
 	return context.WithCancel(ctx)
+}
+
+func catalogOf(t *testing.T, opts Options) map[string]*controlv1.CatalogEntry {
+	t.Helper()
+	svc := &Service{catalog: newCatalog(opts)}
+	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
+	out := map[string]*controlv1.CatalogEntry{}
+	for _, e := range catalog.GetEntries() {
+		out[e.GetId()] = e
+	}
+	return out
+}
+
+func openStream(t *testing.T, ctx context.Context, url string) io.Reader {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer alice")
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp.Body
 }
 
 func approvalOf(t *testing.T, out *callResult) string {

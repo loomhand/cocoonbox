@@ -11,6 +11,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 func TestShareLifecycle(t *testing.T) {
@@ -36,7 +37,7 @@ func TestShareLifecycle(t *testing.T) {
 	}
 	var stored string
 	var sealed []byte
-	if err := query(t, dsn, "SELECT secret_sha256, secret_sealed FROM shares WHERE id = $1", sh.ID).Scan(&stored, &sealed); err != nil || stored != sum(secret) {
+	if err := userstest.Query(t, dsn, "SELECT secret_sha256, secret_sealed FROM shares WHERE id = $1", sh.ID).Scan(&stored, &sealed); err != nil || stored != sum(secret) {
 		t.Errorf("stored %q, %v; want the secret's sha256", stored, err)
 	}
 	if len(sealed) == 0 || bytes.Contains(sealed, []byte(secret)) {
@@ -148,7 +149,7 @@ func TestShareExpiresAndDiesWithItsOwner(t *testing.T) {
 	if sealedSecret(t, dsn, sh.ID) {
 		t.Error("an expired share keeps its sealed secret")
 	}
-	if err := exec(t, dsn, "UPDATE shares SET expires_at = now() - interval '1 second' WHERE id = $1", sh.ID); err != nil {
+	if err := userstest.Exec(t, dsn, "UPDATE shares SET expires_at = now() - interval '1 second' WHERE id = $1", sh.ID); err != nil {
 		t.Fatalf("expire row: %v", err)
 	}
 	if _, err := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-1"}); err != nil {
@@ -168,7 +169,7 @@ func TestShareExpiresAndDiesWithItsOwner(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	var rows int
-	if err := query(t, dsn, "SELECT count(*) FROM shares WHERE id = $1", again.ID).Scan(&rows); err != nil || rows != 0 {
+	if err := userstest.Query(t, dsn, "SELECT count(*) FROM shares WHERE id = $1", again.ID).Scan(&rows); err != nil || rows != 0 {
 		t.Errorf("%d share rows outlive their owner, %v", rows, err)
 	}
 	svc.mu.RLock()
@@ -184,7 +185,7 @@ func TestASealedShareSecretOpensOnlyOnItsOwnRow(t *testing.T) {
 	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
 	a, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-1"})
 	b, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-2"})
-	if err := exec(t, dsn, "UPDATE shares SET secret_sealed = (SELECT secret_sealed FROM shares WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
+	if err := userstest.Exec(t, dsn, "UPDATE shares SET secret_sealed = (SELECT secret_sealed FROM shares WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
 		t.Fatalf("copy sealed secret: %v", err)
 	}
 	links := map[string]string{}
@@ -197,7 +198,7 @@ func TestASealedShareSecretOpensOnlyOnItsOwnRow(t *testing.T) {
 }
 
 func TestShareSecretOpensOnlyWithItsIDAndBox(t *testing.T) {
-	seal, err := newSealer(masterKeyFile(t))
+	seal, err := newSealer(userstest.MasterKeyFile(t))
 	if err != nil {
 		t.Fatalf("newSealer: %v", err)
 	}
@@ -226,11 +227,7 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 		t.Fatalf("CreateShare: %v", err)
 	}
 	var seen auth.Share
-	clustertest.WaitFor(t, "the other api knows the new share", func() bool {
-		var found bool
-		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
-		return found
-	})
+	clustertest.WaitFor(t, "the other api knows the new share", func() bool { var found bool; seen, found = b.ShareBySecretSHA256(sum(sh.Secret)); return found })
 	if _, err := a.SetShareWrite(t.Context(), owner.ID, sh.ID, true); err != nil {
 		t.Fatalf("SetShareWrite: %v", err)
 	}
@@ -279,11 +276,7 @@ func TestDisablingAnOwnerCutsItsSharesInEveryApi(t *testing.T) {
 		t.Fatalf("CreateShare: %v", err)
 	}
 	var seen auth.Share
-	clustertest.WaitFor(t, "the other api knows the share", func() bool {
-		var found bool
-		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
-		return found
-	})
+	clustertest.WaitFor(t, "the other api knows the share", func() bool { var found bool; seen, found = b.ShareBySecretSHA256(sum(sh.Secret)); return found })
 	if _, err := a.Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -306,7 +299,7 @@ func closed(ch <-chan struct{}) bool {
 func sealedSecret(t *testing.T, dsn, id string) bool {
 	t.Helper()
 	var sealed bool
-	if err := query(t, dsn, "SELECT secret_sealed IS NOT NULL FROM shares WHERE id = $1", id).Scan(&sealed); err != nil {
+	if err := userstest.Query(t, dsn, "SELECT secret_sealed IS NOT NULL FROM shares WHERE id = $1", id).Scan(&sealed); err != nil {
 		t.Fatalf("read share %s: %v", id, err)
 	}
 	return sealed

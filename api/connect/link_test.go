@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/connect/connecttest"
-	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 const linkRecords = "LINK_ACCESS_TOKEN=cbc_link;api.link.com;Authorization:%20Bearer%20{} LINK_NO_REFRESH=1;;"
@@ -75,34 +74,23 @@ func TestLinkGrantInjectsRefreshesAndDisconnects(t *testing.T) {
 }
 
 func TestLinkIsHiddenWithoutItsCredentials(t *testing.T) {
-	full := Credentials{ClientID: "id", ClientSecret: "secret", Key: "pk_live_x"}
 	for name, creds := range map[string]Credentials{
 		"none":      {},
 		"no key":    {ClientID: "id", ClientSecret: "secret"},
 		"no secret": {ClientID: "id", Key: "pk_live_x"},
 		"no id":     {ClientSecret: "secret", Key: "pk_live_x"},
 	} {
-		svc := &Service{catalog: newCatalog(Options{Link: creds})}
-		catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
-		for _, e := range catalog.GetEntries() {
-			if e.GetId() == linkID {
-				t.Errorf("%s: catalog offers %v", name, e)
-			}
+		if e := catalogOf(t, Options{Link: creds})[linkID]; e != nil {
+			t.Errorf("%s: catalog offers %v", name, e)
 		}
+		svc := &Service{catalog: newCatalog(Options{Link: creds})}
 		if _, err := svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: linkID}); status.Code(err) != codes.FailedPrecondition {
 			t.Errorf("%s: Start = %v", name, err)
 		}
 	}
-	svc := &Service{catalog: newCatalog(Options{Link: full})}
-	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
-	var found *controlv1.CatalogEntry
-	for _, e := range catalog.GetEntries() {
-		if e.GetId() == linkID {
-			found = e
-		}
-	}
-	if found == nil || !found.GetAvailable() || !found.GetGrantOnly() || !found.GetCheckable() {
-		t.Errorf("link = %v", found)
+	full := Credentials{ClientID: "id", ClientSecret: "secret", Key: "pk_live_x"}
+	if e := catalogOf(t, Options{Link: full})[linkID]; e == nil || !e.GetAvailable() || !e.GetGrantOnly() || !e.GetCheckable() {
+		t.Errorf("link = %v", e)
 	}
 }
 

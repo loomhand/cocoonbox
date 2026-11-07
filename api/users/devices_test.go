@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 func TestDeviceTokensServeBesideTheAPITokenUntilRevoked(t *testing.T) {
@@ -102,7 +103,7 @@ func TestDisablingOrDeletingAUserStopsItsDeviceTokens(t *testing.T) {
 		t.Error("a deleted user's device token resolves")
 	}
 	var rows int
-	if err := query(t, dsn, "SELECT count(*) FROM user_tokens").Scan(&rows); err != nil || rows != 0 {
+	if err := userstest.Query(t, dsn, "SELECT count(*) FROM user_tokens").Scan(&rows); err != nil || rows != 0 {
 		t.Errorf("user_tokens rows after Delete = %d, %v", rows, err)
 	}
 }
@@ -229,7 +230,7 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 	u := mustCreate(t, a, NewUser{Name: "qa1"})
 	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
 	call := lifetime(b, u.ID, "oag_missed")
-	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
+	if err := userstest.Exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
 	}
 	gone.Store(true)

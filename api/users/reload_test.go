@@ -10,8 +10,8 @@ import (
 )
 
 func TestLoadCannotRestoreRevokedTokens(t *testing.T) {
-	for _, remote := range []bool{false, true} {
-		t.Run(map[bool]string{false: "local revoke", true: "newer reload"}[remote], func(t *testing.T) {
+	for name, remote := range map[string]bool{"local revoke": false, "newer reload": true} {
+		t.Run(name, func(t *testing.T) {
 			svc, gw, tenants, dsn := newTestService(t)
 			u := mustCreate(t, svc, NewUser{Name: "alice"})
 			token, err := svc.RegenerateToken(t.Context(), u.ID)

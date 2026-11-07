@@ -2,14 +2,11 @@ package users
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +19,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
@@ -33,7 +31,7 @@ const (
 func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
-	if err := exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = $1", u.ID); err != nil {
+	if err := userstest.Exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = $1", u.ID); err != nil {
 		t.Fatalf("set the policy behind the cache: %v", err)
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(1)}); err != nil {
@@ -76,15 +74,15 @@ func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
 		t.Errorf("user = %+v", u)
 	}
 	key, err := svc.GWKey(u.ID)
-	if err != nil || key != gw.keys[u.ID] {
+	if err != nil || key != gw.Keys[u.ID] {
 		t.Errorf("GWKey = %q, %v, want the key gw issued for owner %s", key, err, u.ID)
 	}
 	token, err := svc.Tenant(u.ID)
-	if err != nil || token == "" || tenants.tenants[u.ID] != (tenant{token: token, max: 2}) {
-		t.Errorf("Tenant = %q, %v; sandboxd holds %+v", token, err, tenants.tenants)
+	if err != nil || token == "" || tenants.Tokens[u.ID] != token || tenants.Max[u.ID] != 2 {
+		t.Errorf("Tenant = %q, %v; sandboxd holds %v %v", token, err, tenants.Tokens, tenants.Max)
 	}
 	var sealedKey, sealedToken []byte
-	if err := query(t, dsn, "SELECT gw_key_sealed, tenant_token_sealed FROM users WHERE id = $1", u.ID).Scan(&sealedKey, &sealedToken); err != nil {
+	if err := userstest.Query(t, dsn, "SELECT gw_key_sealed, tenant_token_sealed FROM users WHERE id = $1", u.ID).Scan(&sealedKey, &sealedToken); err != nil {
 		t.Fatalf("read row: %v", err)
 	}
 	if strings.Contains(string(sealedKey), key) || strings.Contains(string(sealedToken), token) {
@@ -105,12 +103,12 @@ func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
 
 func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
 	svc, gw, tenants, _ := newTestService(t)
-	tenants.err = errors.New("sandboxd 503")
+	tenants.Err = errors.New("sandboxd 503")
 	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1"}); err == nil {
 		t.Fatal("Create succeeded with sandboxd down")
 	}
-	if len(gw.keys) != 0 || len(svc.List()) != 0 {
-		t.Errorf("after a failed Create: gw keys %v, users %v", gw.keys, svc.List())
+	if len(gw.Keys) != 0 || len(svc.List()) != 0 {
+		t.Errorf("after a failed Create: gw keys %v, users %v", gw.Keys, svc.List())
 	}
 	for _, nu := range []NewUser{{Name: "Q"}, {Name: "qa1", Password: "short"}, {Name: "qa1", ID: "bad/id"}} {
 		if _, err := svc.Create(t.Context(), nu); !errors.Is(err, ErrInvalid) {
@@ -126,12 +124,12 @@ func TestEnsureCreatesAnOutsideUserUnderItsOwnIDOnce(t *testing.T) {
 	if err != nil || u.ID != id || u.Name != id || u.IDP != "firebase" || u.Admin {
 		t.Fatalf("Ensure = %+v, %v", u, err)
 	}
-	key := gw.keys[u.ID]
-	if again, err := svc.Ensure(t.Context(), "firebase", id); err != nil || again.ID != u.ID || gw.keys[u.ID] != key {
-		t.Errorf("a second Ensure = %+v, %v; gw key %q, want %q kept", again, err, gw.keys[u.ID], key)
+	key := gw.Keys[u.ID]
+	if again, err := svc.Ensure(t.Context(), "firebase", id); err != nil || again.ID != u.ID || gw.Keys[u.ID] != key {
+		t.Errorf("a second Ensure = %+v, %v; gw key %q, want %q kept", again, err, gw.Keys[u.ID], key)
 	}
-	if boxes := svc.Boxes(u.ID); len(boxes) != 1 || len(tenants.tenants) != 1 {
-		t.Errorf("boxes %+v, tenants %v, want one of each", boxes, tenants.tenants)
+	if boxes := svc.Boxes(u.ID); len(boxes) != 1 || len(tenants.Max) != 1 {
+		t.Errorf("boxes %+v, tenants %v, want one of each", boxes, tenants.Max)
 	}
 	if _, err := svc.Ensure(t.Context(), "firebase", ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("Ensure without an id = %v, want ErrInvalid", err)
@@ -148,7 +146,7 @@ func TestEnsureNeverHandsOutAUserAnotherSourceHolds(t *testing.T) {
 		if u, err := svc.Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
 			t.Errorf("Ensure of %s, held by another source = %+v, %v, want ErrExists", id, u, err)
 		}
-		if u, err := openTestService(t, dsn, &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, &fakeTenants{tenants: map[string]tenant{}}).Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
+		if u, err := openTestService(t, dsn, userstest.NewGW(), userstest.NewTenants()).Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
 			t.Errorf("Ensure of %s, held by another source and not yet loaded = %+v, %v, want ErrExists", id, u, err)
 		}
 	}
@@ -165,8 +163,8 @@ func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 
 func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	dsn := clustertest.EmptyDSN(t)
-	gw := &gatedGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, open: make(chan struct{})}
-	svc := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}})
+	gw := &gatedGW{GW: userstest.NewGW(), open: make(chan struct{})}
+	svc := openTestService(t, dsn, gw, userstest.NewTenants())
 	var wg sync.WaitGroup
 	for i := range 16 {
 		wg.Go(func() {
@@ -201,18 +199,17 @@ func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	token, err := svc.Tenant(id)
-	if err != nil || tenants.tenants[id].token != token {
-		t.Errorf("sandboxd holds tenant %+v, the row %q, %v", tenants.tenants[id], token, err)
+	if err != nil || tenants.Tokens[id] != token {
+		t.Errorf("sandboxd holds tenant %q, the row %q, %v", tenants.Tokens[id], token, err)
 	}
-	if key, err := svc.GWKey(id); err != nil || gw.keys[id] != key {
-		t.Errorf("gw holds key %q, the row %q, %v", gw.keys[id], key, err)
+	if key, err := svc.GWKey(id); err != nil || gw.Keys[id] != key {
+		t.Errorf("gw holds key %q, the row %q, %v", gw.Keys[id], key, err)
 	}
 }
 
 func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
 	dsn := clustertest.EmptyDSN(t)
-	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, machine: map[string]bool{}}
-	tenants := &fakeTenants{tenants: map[string]tenant{}}
+	gw, tenants := userstest.NewGW(), userstest.NewTenants()
 	u, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatalf("parse dsn: %v", err)
@@ -419,11 +416,9 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(replaced)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	start := time.Now()
 	clustertest.WaitFor(t, "the replaced token stops working", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
-	t.Logf("the replaced token stopped working %s after the write", time.Since(start))
 
-	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
+	if err := userstest.Exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
 	}
 	missed := TokenPrefix + utils.RandomHex(secretBytes)
@@ -474,11 +469,11 @@ func TestUpdateKeepsBoxesUnderTheCapAndMovesTheTenant(t *testing.T) {
 	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(2), Residential: new(true)}); err != nil || got.MaxBoxes != 2 || !got.Residential {
 		t.Fatalf("Update = %+v, %v", got, err)
 	}
-	if tenants.tenants[u.ID].max != 3 || !svc.Residential(u.ID) {
-		t.Errorf("tenant cap %d, residential %t", tenants.tenants[u.ID].max, svc.Residential(u.ID))
+	if tenants.Max[u.ID] != 3 || !svc.Residential(u.ID) {
+		t.Errorf("tenant cap %d, residential %t", tenants.Max[u.ID], svc.Residential(u.ID))
 	}
-	if got, _ := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(1)}); got.MaxBoxes != 1 || tenants.tenants[u.ID].max != 2 {
-		t.Errorf("lowering the cap left max boxes %d, tenant cap %d", got.MaxBoxes, tenants.tenants[u.ID].max)
+	if got, _ := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(1)}); got.MaxBoxes != 1 || tenants.Max[u.ID] != 2 {
+		t.Errorf("lowering the cap left max boxes %d, tenant cap %d", got.MaxBoxes, tenants.Max[u.ID])
 	}
 	if svc.Residential("u-unknown") || len(flips) != 1 || !flips[0] {
 		t.Errorf("residential flips = %v", flips)
@@ -495,17 +490,17 @@ func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
 	if err := svc.Delete(t.Context(), u.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, ok := gw.keys[u.ID]; ok {
+	if _, ok := gw.Keys[u.ID]; ok {
 		t.Error("gw key kept")
 	}
-	if _, ok := tenants.tenants[u.ID]; ok {
+	if _, ok := tenants.Max[u.ID]; ok {
 		t.Error("tenant kept")
 	}
 	if _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); ok {
 		t.Error("the deleted user's token still works")
 	}
 	var sessions int
-	if err := query(t, dsn, "SELECT count(*) FROM sessions").Scan(&sessions); err != nil || sessions != 0 {
+	if err := userstest.Query(t, dsn, "SELECT count(*) FROM sessions").Scan(&sessions); err != nil || sessions != 0 {
 		t.Errorf("sessions left = %d, %v", sessions, err)
 	}
 	if err := svc.Delete(t.Context(), u.ID); !errors.Is(err, ErrNotFound) {
@@ -517,7 +512,7 @@ func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	a := mustCreate(t, svc, NewUser{Name: "alice"})
 	b := mustCreate(t, svc, NewUser{Name: "bob"})
-	if err := exec(t, dsn, "UPDATE users SET gw_key_sealed = (SELECT gw_key_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
+	if err := userstest.Exec(t, dsn, "UPDATE users SET gw_key_sealed = (SELECT gw_key_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
 		t.Fatalf("copy sealed key: %v", err)
 	}
 	reopened := openTestService(t, dsn, gw, tenants)
@@ -537,12 +532,12 @@ func TestStateKeyIsSealedToItsUser(t *testing.T) {
 		t.Fatalf("StateKey of a new user = %d bytes, id %q, %v", len(created.Secret), created.ID, err)
 	}
 	var sealed []byte
-	if err := query(t, dsn, "SELECT state_key_sealed FROM users WHERE id = $1", u.ID).Scan(&sealed); err != nil || bytes.Contains(sealed, created.Secret) {
+	if err := userstest.Query(t, dsn, "SELECT state_key_sealed FROM users WHERE id = $1", u.ID).Scan(&sealed); err != nil || bytes.Contains(sealed, created.Secret) {
 		t.Errorf("state key column holds the key in the clear or is unreadable: %v", err)
 	}
 
 	other := mustCreate(t, svc, NewUser{Name: "qa2"})
-	if err := exec(t, dsn, "UPDATE users SET state_key_sealed = (SELECT state_key_sealed FROM users WHERE id = $1) WHERE id = $2", u.ID, other.ID); err != nil {
+	if err := userstest.Exec(t, dsn, "UPDATE users SET state_key_sealed = (SELECT state_key_sealed FROM users WHERE id = $1) WHERE id = $2", u.ID, other.ID); err != nil {
 		t.Fatalf("copy sealed state key: %v", err)
 	}
 	if _, err := openTestService(t, dsn, gw, tenants).StateKey(t.Context(), other.ID); err == nil {
@@ -574,7 +569,7 @@ func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
 	if err := svc.Delete(t.Context(), u.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, ok := gw.caps[u.ID]; ok {
+	if _, ok := gw.Caps[u.ID]; ok {
 		t.Error("the deleted user's gw cap stayed")
 	}
 }
@@ -590,22 +585,22 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if !gw.disabled[u.ID] || life.Err() == nil || lifetime(svc, u.ID, "").Err() == nil {
-		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.disabled[u.ID], life.Err(), lifetime(svc, u.ID, "").Err())
+	if !gw.Disabled[u.ID] || life.Err() == nil || lifetime(svc, u.ID, "").Err() == nil {
+		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.Disabled[u.ID], life.Err(), lifetime(svc, u.ID, "").Err())
 	}
 	if err := other.Load(t.Context()); err != nil || elsewhere.Err() == nil {
 		t.Errorf("another api reloading the disable = %v, its lifetime %v", err, elsewhere.Err())
 	}
-	clear(gw.disabled)
-	if err := svc.Reconcile(t.Context()); err != nil || !gw.disabled[u.ID] {
-		t.Errorf("Reconcile = %v, the disabled user's gw key off %t", err, gw.disabled[u.ID])
+	clear(gw.Disabled)
+	if err := svc.Reconcile(t.Context()); err != nil || !gw.Disabled[u.ID] {
+		t.Errorf("Reconcile = %v, the disabled user's gw key off %t", err, gw.Disabled[u.ID])
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
 	life = lifetime(svc, u.ID, "")
-	if gw.disabled[u.ID] || life.Err() != nil {
-		t.Errorf("after enable: gw key off %t, lifetime %v", gw.disabled[u.ID], life.Err())
+	if gw.Disabled[u.ID] || life.Err() != nil {
+		t.Errorf("after enable: gw key off %t, lifetime %v", gw.Disabled[u.ID], life.Err())
 	}
 	if err := svc.Delete(t.Context(), u.ID); err != nil || life.Err() == nil {
 		t.Errorf("Delete = %v, lifetime %v", err, life.Err())
@@ -623,8 +618,8 @@ func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	want := map[string]int64{onDefault.ID: gwkeys.Unlimited, capped.ID: 7}
-	if !maps.Equal(gw.caps, want) {
-		t.Errorf("gw caps after Reconcile = %v, want %v and none for %s", gw.caps, want, u.ID)
+	if !maps.Equal(gw.Caps, want) {
+		t.Errorf("gw caps after Reconcile = %v, want %v and none for %s", gw.Caps, want, u.ID)
 	}
 }
 
@@ -632,10 +627,10 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	svc, gw, _, dsn := newTestService(t)
 	root := mustCreate(t, svc, NewUser{Name: "root", Admin: true})
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
-	if got, err := svc.Update(t.Context(), u.ID, Settings{Admin: new(true)}); err != nil || !got.Admin || gw.caps[u.ID] != gwkeys.Unlimited {
-		t.Fatalf("promote = %+v, %v; gw cap %v", got, err, gw.caps[u.ID])
+	if got, err := svc.Update(t.Context(), u.ID, Settings{Admin: new(true)}); err != nil || !got.Admin || gw.Caps[u.ID] != gwkeys.Unlimited {
+		t.Fatalf("promote = %+v, %v; gw cap %v", got, err, gw.Caps[u.ID])
 	}
-	if got, err := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}}).Get(u.ID); err != nil || !got.Admin {
+	if got, err := openTestService(t, dsn, gw, userstest.NewTenants()).Get(u.ID); err != nil || !got.Admin {
 		t.Errorf("a fresh service reads %+v, %v; want the promotion stored", got, err)
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
@@ -650,14 +645,13 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	if got, err := svc.Update(t.Context(), root.ID, Settings{Admin: new(false)}); err != nil || got.Admin {
 		t.Fatalf("demote with another admin = %+v, %v", got, err)
 	}
-	if _, ok := gw.caps[root.ID]; ok {
-		t.Errorf("a demoted admin keeps gw cap %d, want the tenant's default", gw.caps[root.ID])
+	if _, ok := gw.Caps[root.ID]; ok {
+		t.Errorf("a demoted admin keeps gw cap %d, want the tenant's default", gw.Caps[root.ID])
 	}
 }
 
-// gatedGW holds every Add until open closes and counts the Adds running at once.
 type gatedGW struct {
-	fakeGW
+	*userstest.GW
 	open         chan struct{}
 	active, most atomic.Int32
 }
@@ -668,81 +662,7 @@ func (g *gatedGW) Add(ctx context.Context, owner string) (string, string, error)
 	for m := g.most.Load(); n > m && !g.most.CompareAndSwap(m, n); m = g.most.Load() {
 	}
 	<-g.open
-	return g.fakeGW.Add(ctx, owner)
-}
-
-type fakeGW struct {
-	mu       sync.Mutex
-	keys     map[string]string
-	caps     map[string]int64
-	disabled map[string]bool
-	machine  map[string]bool
-}
-
-func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.keys[owner] = "gw-" + utils.RandomHex(8)
-	return g.keys[owner], "sha256:" + owner, nil
-}
-
-func (g *fakeGW) Revoke(_ context.Context, owner string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.keys, owner)
-	return nil
-}
-
-func (g *fakeGW) SetEnabled(_ context.Context, owner string, enabled bool) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.disabled[owner] = !enabled
-	return nil
-}
-
-func (g *fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) {
-	return nil, nil
-}
-
-func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros, ok := g.caps[owner]; ok {
-		return &micros, nil
-	}
-	return nil, nil
-}
-
-func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return maps.Clone(g.caps), nil
-}
-
-func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros == nil {
-		delete(g.caps, owner)
-	} else {
-		g.caps[owner] = *micros
-	}
-	return nil
-}
-
-func (g *fakeGW) AddMachine(_ context.Context, owner string, enabled bool) (string, string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	id := "ak-" + utils.RandomHex(4)
-	g.machine[id] = enabled
-	return "gw-" + owner + "-" + id, id, nil
-}
-
-func (g *fakeGW) Delete(_ context.Context, id string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.machine, id)
-	return nil
+	return g.GW.Add(ctx, owner)
 }
 
 type queryCounter struct {
@@ -756,45 +676,16 @@ func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.T
 
 func (c *queryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
-type tenant struct {
-	token string
-	max   int
-}
-
-type fakeTenants struct {
-	mu      sync.Mutex
-	tenants map[string]tenant
-	err     error
-}
-
-func (f *fakeTenants) PutTenant(_ context.Context, name, token string, maxClaims int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.err != nil {
-		return f.err
-	}
-	f.tenants[name] = tenant{token: cmp.Or(token, f.tenants[name].token), max: maxClaims}
-	return nil
-}
-
-func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.tenants, name)
-	return nil
-}
-
-func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
+func newTestService(t *testing.T) (*Service, *userstest.GW, *userstest.Tenants, string) {
 	t.Helper()
 	dsn := clustertest.EmptyDSN(t)
-	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, machine: map[string]bool{}}
-	tenants := &fakeTenants{tenants: map[string]tenant{}}
+	gw, tenants := userstest.NewGW(), userstest.NewTenants()
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
 }
 
-func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *fakeTenants) *Service {
+func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *userstest.Tenants) *Service {
 	t.Helper()
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: masterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -816,36 +707,6 @@ func trace[T pgx.QueryTracer](t *testing.T, svc *Service, dsn string, tracer T) 
 	svc.store.pool.Close()
 	svc.store.pool = pool
 	return tracer
-}
-
-func masterKeyFile(t *testing.T) string {
-	t.Helper()
-	keyFile := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", masterKeySize)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	return keyFile
-}
-
-func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
-	return conn.QueryRow(t.Context(), sql, args...)
-}
-
-func exec(t *testing.T, dsn, sql string, args ...any) error {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	_, err = conn.Exec(t.Context(), sql, args...)
-	return err
 }
 
 func mustCreate(t *testing.T, svc *Service, nu NewUser) User {

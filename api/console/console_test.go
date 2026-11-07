@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"maps"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,9 +21,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/users"
-	"github.com/loomhand/cocoonbox/api/utils"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 const password = "correct horse battery"
@@ -133,7 +129,7 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if env.boxes.listedFor != created.ID {
 		t.Errorf("boxes listed for %q, want %q", env.boxes.listedFor, created.ID)
 	}
-	for _, leak := range []string{"gw-", env.gw.keys[created.ID]} {
+	for _, leak := range []string{"gw-", env.gw.Keys[created.ID]} {
 		if strings.Contains(body, leak) {
 			t.Errorf("me shows a backing key: %s", body)
 		}
@@ -159,8 +155,8 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if code := env.do(t, http.MethodPatch, "api/users/"+created.ID, root, `{"max_boxes_cap":3,"max_boxes":2}`).Code; code != http.StatusOK {
 		t.Errorf("admin cap change = %d", code)
 	}
-	if env.tenants.tenants[created.ID] != 3 {
-		t.Errorf("tenant cap = %d, want 3", env.tenants.tenants[created.ID])
+	if env.tenants.Max[created.ID] != 3 {
+		t.Errorf("tenant cap = %d, want 3", env.tenants.Max[created.ID])
 	}
 }
 
@@ -233,8 +229,8 @@ func TestAdminSetsADailyCapThatTheUserSees(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &me); err != nil || me.DailyCap != nil || me.DefaultDailyCap != 5_000_000 || me.SpentToday != 5 {
 		t.Errorf("me before a cap = %d %s", resp.Code, resp.Body)
 	}
-	if want := "0|" + strconv.FormatInt(time.Now().UTC().Truncate(24*time.Hour).Unix(), 10) + "|"; env.gw.since != want {
-		t.Errorf("usage windows read = %q, want all time and today, %q", env.gw.since, want)
+	if want := "0|" + strconv.FormatInt(time.Now().UTC().Truncate(24*time.Hour).Unix(), 10) + "|"; env.gw.Since != want {
+		t.Errorf("usage windows read = %q, want all time and today, %q", env.gw.Since, want)
 	}
 	if code := env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", qa1, `{"micros":1}`).Code; code != http.StatusForbidden {
 		t.Errorf("non-admin cap change = %d, want 403", code)
@@ -253,7 +249,7 @@ func TestAdminSetsADailyCapThatTheUserSees(t *testing.T) {
 		if code := env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", root, tt.body).Code; code != http.StatusOK {
 			t.Fatalf("cap %s = %d", tt.body, code)
 		}
-		if got := env.gw.capOf(u.ID); got != tt.want {
+		if got := capOf(env.gw, u.ID); got != tt.want {
 			t.Errorf("gw cap after %s = %s, want %s", tt.body, got, tt.want)
 		}
 	}
@@ -302,7 +298,7 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	if env.boxes.stateGone != u.ID {
 		t.Errorf("state deleted for %q, want %q", env.boxes.stateGone, u.ID)
 	}
-	if _, ok := env.tenants.tenants[u.ID]; ok {
+	if _, ok := env.tenants.Max[u.ID]; ok {
 		t.Error("tenant kept")
 	}
 	if code := env.do(t, http.MethodGet, "api/me", qa1, "").Code; code != http.StatusUnauthorized {
@@ -369,19 +365,15 @@ type env struct {
 	dsn     string
 	users   *users.Service
 	boxes   *fakeBoxes
-	gw      *fakeGW
-	tenants *fakeTenants
+	gw      *userstest.GW
+	tenants *userstest.Tenants
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := clustertest.EmptyDSN(t)
-	keyFile := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]int{}}}
-	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
+	e := &env{boxes: &fakeBoxes{}, gw: userstest.NewGW(), tenants: userstest.NewTenants()}
+	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -469,94 +461,11 @@ func (f *fakeBoxes) DeleteState(ctx context.Context, user string) error {
 	return nil
 }
 
-type fakeGW struct {
-	mu    sync.Mutex
-	keys  map[string]string
-	caps  map[string]int64
-	since string
-}
-
-func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.keys[owner] = "gw-" + utils.RandomHex(8)
-	return g.keys[owner], "sha256:" + owner, nil
-}
-
-func (g *fakeGW) Revoke(_ context.Context, owner string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	delete(g.keys, owner)
-	return nil
-}
-
-func (*fakeGW) SetEnabled(context.Context, string, bool) error { return nil }
-
-func (g *fakeGW) Usage(_ context.Context, _ string, since time.Time) ([]gwkeys.Usage, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.since += strconv.FormatInt(since.Unix(), 10) + "|"
-	return []gwkeys.Usage{{Model: "m1", Requests: 1, TotalTokens: 10, CostMicros: 5}}, nil
-}
-
-func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros, ok := g.caps[owner]; ok {
-		return &micros, nil
-	}
-	return nil, nil
-}
-
-func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return maps.Clone(g.caps), nil
-}
-
-func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros == nil {
-		delete(g.caps, owner)
-	} else {
-		g.caps[owner] = *micros
-	}
-	return nil
-}
-
-func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
-	return "gw-machine", "ak-machine", nil
-}
-
-func (*fakeGW) Delete(context.Context, string) error { return nil }
-
-func (g *fakeGW) capOf(owner string) string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros, ok := g.caps[owner]; ok {
+func capOf(gw *userstest.GW, owner string) string {
+	if micros, ok := gw.Caps[owner]; ok {
 		return strconv.FormatInt(micros, 10)
 	}
 	return "inherit"
-}
-
-type fakeTenants struct {
-	mu      sync.Mutex
-	tenants map[string]int
-}
-
-func (f *fakeTenants) PutTenant(_ context.Context, name, _ string, maxClaims int) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.tenants[name] = maxClaims
-	return nil
-}
-
-func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.tenants, name)
-	return nil
 }
 
 func exec(t *testing.T, dsn, sql string) error {

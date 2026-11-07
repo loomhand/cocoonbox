@@ -6,11 +6,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,9 +21,9 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/console"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 const rootPassword = "root-password"
@@ -57,7 +54,7 @@ func TestDisablingAUserHibernatesItsBoxesEndsItsStreamsAndStopsItsKeysUntilEnabl
 	if status.Code(err) != codes.Canceled {
 		t.Errorf("the open Watch after disable ended with %v, want Canceled", err)
 	}
-	if !e.gw.disabled(e.user) {
+	if !e.gw.Off(e.user) {
 		t.Error("the gw key still works after disable")
 	}
 	e.svc.refreshCredentials(t.Context())
@@ -69,7 +66,7 @@ func TestDisablingAUserHibernatesItsBoxesEndsItsStreamsAndStopsItsKeysUntilEnabl
 	}
 
 	e.setDisabled(t, false)
-	if e.gw.disabled(e.user) {
+	if e.gw.Off(e.user) {
 		t.Error("the gw key stays off after enable")
 	}
 	if m, _ := e.fake.Get(t.Context(), e.box); m.State != machines.StateHibernating {
@@ -88,7 +85,7 @@ type disableEnv struct {
 	svc     *Service
 	fake    *fakeMachines
 	connect *fakeConnect
-	gw      *fakeGW
+	gw      *userstest.GW
 	web     *console.Server
 	client  controlv1.BoxesClient
 	session *http.Cookie
@@ -99,8 +96,8 @@ type disableEnv struct {
 
 func newDisableEnv(t *testing.T) *disableEnv {
 	t.Helper()
-	gw := &fakeGW{off: map[string]bool{}}
-	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: masterKey(t), GW: gw, Tenants: fakeTenants{}, FirstBoxID: BoxID})
+	gw := userstest.NewGW()
+	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: userstest.NewTenants(), FirstBoxID: BoxID})
 	if err != nil {
 		t.Fatalf("open users: %v", err)
 	}
@@ -172,57 +169,4 @@ func (e *disableEnv) consoleCall(t *testing.T, method, path, body string) *httpt
 	rec := httptest.NewRecorder()
 	e.web.ServeHTTP(rec, req)
 	return rec
-}
-
-type fakeGW struct {
-	mu  sync.Mutex
-	off map[string]bool
-}
-
-func (*fakeGW) Add(_ context.Context, owner string) (string, string, error) {
-	return "gw-" + owner, "sha256:" + owner, nil
-}
-
-func (*fakeGW) Revoke(context.Context, string) error { return nil }
-
-func (g *fakeGW) SetEnabled(_ context.Context, owner string, enabled bool) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.off[owner] = !enabled
-	return nil
-}
-
-func (*fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) { return nil, nil }
-
-func (*fakeGW) DailyCap(context.Context, string) (*int64, error) { return nil, nil }
-
-func (*fakeGW) DailyCaps(context.Context) (map[string]int64, error) { return nil, nil }
-
-func (*fakeGW) SetDailyCap(context.Context, string, *int64) error { return nil }
-
-func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
-	return "gw-machine", "ak-machine", nil
-}
-
-func (*fakeGW) Delete(context.Context, string) error { return nil }
-
-func (g *fakeGW) disabled(owner string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.off[owner]
-}
-
-type fakeTenants struct{}
-
-func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
-
-func (fakeTenants) DeleteTenant(context.Context, string) error { return nil }
-
-func masterKey(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(path, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	return path
 }

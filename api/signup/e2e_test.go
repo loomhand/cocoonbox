@@ -10,13 +10,10 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +29,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
@@ -122,7 +120,7 @@ func TestLinkingAQueuedGitHubAccountDropsItsPlace(t *testing.T) {
 	}
 	admin.setSignup(t, signup.Settings{Enabled: true, Seats: 5, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
 	var accounts int
-	if err := query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
+	if err := userstest.Query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
 		t.Errorf("signup accounts after the link and a raised cap = %d, %v, want 0", accounts, err)
 	}
 }
@@ -143,7 +141,7 @@ func TestLinkingWhileAdmissionCreatesTheAccountKeepsOneIdentityOwner(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(admission.Close)
-	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
+	if err := userstest.Exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
 		t.Fatal(err)
 	}
 	admitted := make(chan error, 1)
@@ -201,8 +199,8 @@ func TestInviteOnlySignupAdmitsAtOnceThenQueuesAndAFreedSeatAdmitsTheFront(t *te
 		t.Fatalf("an invited signup with a free seat ends at %q, want signed in", loc)
 	}
 	b, err := e.users.ByName("bob")
-	if err != nil || b.IDP != "github" || b.MaxAgentBoxes == nil || *b.MaxAgentBoxes != 1 || e.gw.cap(b.ID) != 1_000_000 {
-		t.Fatalf("bob = %+v, %v; gw cap %d", b, err, e.gw.cap(b.ID))
+	if err != nil || b.IDP != "github" || b.MaxAgentBoxes == nil || *b.MaxAgentBoxes != 1 || e.gw.Cap(b.ID) != 1_000_000 {
+		t.Fatalf("bob = %+v, %v; gw cap %d", b, err, e.gw.Cap(b.ID))
 	}
 	carol := e.browser(t)
 	if loc := carol.githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"invite": made.Code}); loc != "/cb/queue" {
@@ -321,7 +319,7 @@ func TestOneFreedSeatAdmitsOnePersonWhileTwoApisAdmitAtOnce(t *testing.T) {
 		e.browser(t).githubAs(t, name, "/cb/api/auth/github/begin", nil)
 	}
 	other := e.openSignup(t)
-	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = seats + 1"); err != nil {
+	if err := userstest.Exec(t, e.dsn, "UPDATE signup_settings SET seats = seats + 1"); err != nil {
 		t.Fatalf("raise seats: %v", err)
 	}
 	var wg sync.WaitGroup
@@ -335,11 +333,11 @@ func TestOneFreedSeatAdmitsOnePersonWhileTwoApisAdmitAtOnce(t *testing.T) {
 	}
 	wg.Wait()
 	var admitted int
-	if err := query(t, e.dsn, "SELECT count(*) FROM signup_queue WHERE status = 'admitted'").Scan(&admitted); err != nil || admitted != 1 {
+	if err := userstest.Query(t, e.dsn, "SELECT count(*) FROM signup_queue WHERE status = 'admitted'").Scan(&admitted); err != nil || admitted != 1 {
 		t.Errorf("admitted = %d, %v; want the one freed seat to admit one person", admitted, err)
 	}
 	var accounts int
-	if err := query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 1 {
+	if err := userstest.Query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 1 {
 		t.Errorf("signup accounts = %d, %v, want 1", accounts, err)
 	}
 }
@@ -353,7 +351,7 @@ func TestAnAccountAnAdmissionMadeOnAnotherApiBeforeItFailedTakesNoSeatAndIsReuse
 		t.Fatalf("bob: %q", loc)
 	}
 	var entry string
-	if err := query(t, e.dsn, "SELECT id FROM signup_queue WHERE email = 'bob@example.com'").Scan(&entry); err != nil {
+	if err := userstest.Query(t, e.dsn, "SELECT id FROM signup_queue WHERE email = 'bob@example.com'").Scan(&entry); err != nil {
 		t.Fatalf("read bob's entry: %v", err)
 	}
 	made := "u-" + strings.TrimPrefix(entry, "sq_")
@@ -361,14 +359,14 @@ func TestAnAccountAnAdmissionMadeOnAnotherApiBeforeItFailedTakesNoSeatAndIsReuse
 	if _, err := other.Create(t.Context(), users.NewUser{ID: made, Name: "bob", IDP: "github"}); err != nil {
 		t.Fatalf("make the account of the failed admission: %v", err)
 	}
-	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
+	if err := userstest.Exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
 		t.Fatalf("raise seats: %v", err)
 	}
 	if err := e.signup.Admit(t.Context()); err != nil {
 		t.Fatalf("Admit: %v", err)
 	}
 	var status, user string
-	if err := query(t, e.dsn, "SELECT status, coalesce(user_id, '') FROM signup_queue WHERE id = $1", entry).Scan(&status, &user); err != nil || status != "admitted" || user != made {
+	if err := userstest.Query(t, e.dsn, "SELECT status, coalesce(user_id, '') FROM signup_queue WHERE id = $1", entry).Scan(&status, &user); err != nil || status != "admitted" || user != made {
 		t.Errorf("bob's entry = %s as %q, %v; want admitted as %s", status, user, err, made)
 	}
 }
@@ -381,7 +379,7 @@ func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingW
 	written := func() (int, int) {
 		t.Helper()
 		var queued, accounts int
-		if err := query(t, e.dsn, "SELECT (SELECT count(*) FROM signup_queue), (SELECT count(*) FROM users WHERE idp = 'github')").Scan(&queued, &accounts); err != nil {
+		if err := userstest.Query(t, e.dsn, "SELECT (SELECT count(*) FROM signup_queue), (SELECT count(*) FROM users WHERE idp = 'github')").Scan(&queued, &accounts); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		return queued, accounts
@@ -405,14 +403,14 @@ func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingW
 	}
 	var expired madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 5, "days": 1}, &expired)
-	if err := exec(t, e.dsn, "UPDATE signup_invites SET expires_at = now() - interval '1 second' WHERE id = $1", expired.Invite.ID); err != nil {
+	if err := userstest.Exec(t, e.dsn, "UPDATE signup_invites SET expires_at = now() - interval '1 second' WHERE id = $1", expired.Invite.ID); err != nil {
 		t.Fatalf("expire: %v", err)
 	}
 	if loc := e.browser(t).githubAs(t, "dave", "/cb/api/auth/github/begin", map[string]string{"invite": expired.Code}); loc != "/cb/?login_error=invite_required" {
 		t.Errorf("an expired invite ends at %q", loc)
 	}
 	var usesLeft int
-	if err := query(t, e.dsn, "SELECT uses_left FROM signup_invites WHERE id = $1", expired.Invite.ID).Scan(&usesLeft); err != nil || usesLeft != 5 {
+	if err := userstest.Query(t, e.dsn, "SELECT uses_left FROM signup_invites WHERE id = $1", expired.Invite.ID).Scan(&usesLeft); err != nil || usesLeft != 5 {
 		t.Errorf("the expired invite's uses = %d, %v, want 5 untouched", usesLeft, err)
 	}
 	if queued, accounts := written(); queued != 1 || accounts != 1 {
@@ -448,15 +446,15 @@ func TestDemotingASignupAccountRestoresTheSignupCap(t *testing.T) {
 		} `json:"seats"`
 	}
 	admin.json(t, http.MethodGet, "signup", nil, &before)
-	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": true}); status != http.StatusOK || e.gw.cap(bob.ID) != gwkeys.Unlimited {
-		t.Fatalf("promote: %d %s; gw cap %d", status, body, e.gw.cap(bob.ID))
+	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": true}); status != http.StatusOK || e.gw.Cap(bob.ID) != gwkeys.Unlimited {
+		t.Fatalf("promote: %d %s; gw cap %d", status, body, e.gw.Cap(bob.ID))
 	}
 	admin.json(t, http.MethodGet, "signup", nil, &after)
 	if after.Seats.Used != before.Seats.Used-1 {
 		t.Errorf("seats used %d with bob an admin, %d before; an admin takes no seat", after.Seats.Used, before.Seats.Used)
 	}
-	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": false}); status != http.StatusOK || e.gw.cap(bob.ID) != 1_000_000 {
-		t.Fatalf("demote: %d %s; gw cap %d, want the signup cap", status, body, e.gw.cap(bob.ID))
+	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": false}); status != http.StatusOK || e.gw.Cap(bob.ID) != 1_000_000 {
+		t.Fatalf("demote: %d %s; gw cap %d, want the signup cap", status, body, e.gw.Cap(bob.ID))
 	}
 	root, _ := e.users.ByName("admin")
 	if status, _ := admin.call(t, http.MethodPatch, "users/"+root.ID, map[string]bool{"admin": false}); status != http.StatusBadRequest {
@@ -481,7 +479,7 @@ func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) 
 		t.Fatalf("the consent page's sign-in without an invite ends at %q", loc)
 	}
 	var accounts int
-	if err := query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
+	if err := userstest.Query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
 		t.Fatalf("accounts after the refusal = %d, %v", accounts, err)
 	}
 	withInvite := authorize.Clone()
@@ -532,7 +530,7 @@ func TestAnInviteTokenMakesOnlyOneUseInvitesAndListsOnlyItsOwn(t *testing.T) {
 		t.Fatalf("minted = %+v", minted)
 	}
 	var hashed, plain int
-	if err := query(t, e.dsn, "SELECT count(*) FILTER (WHERE sha256 = $1), count(*) FILTER (WHERE sha256 = $2 OR label = $2) FROM invite_tokens",
+	if err := userstest.Query(t, e.dsn, "SELECT count(*) FILTER (WHERE sha256 = $1), count(*) FILTER (WHERE sha256 = $2 OR label = $2) FROM invite_tokens",
 		utils.HashHex(minted.Token), minted.Token).Scan(&hashed, &plain); err != nil || hashed != 1 || plain != 0 {
 		t.Errorf("stored as its sha256: %d, in the clear: %d, %v", hashed, plain, err)
 	}
@@ -580,7 +578,7 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 	counts := func() string {
 		t.Helper()
 		var accounts, inviteTokens, invites, sessions, devices int
-		if err := query(t, e.dsn, `SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM invite_tokens), (SELECT count(*) FROM signup_invites),
+		if err := userstest.Query(t, e.dsn, `SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM invite_tokens), (SELECT count(*) FROM signup_invites),
 			(SELECT count(*) FROM sessions), (SELECT count(*) FROM user_tokens)`).Scan(&accounts, &inviteTokens, &invites, &sessions, &devices); err != nil {
 			t.Fatalf("count: %v", err)
 		}
@@ -726,13 +724,13 @@ type env struct {
 	github *httptest.Server
 	users  *users.Service
 	signup *signup.Service
-	gw     *fakeGW
+	gw     *userstest.GW
 	dsn    string
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{dsn: clustertest.EmptyDSN(t), gw: &fakeGW{caps: map[string]int64{}}}
+	e := &env{dsn: clustertest.EmptyDSN(t), gw: userstest.NewGW()}
 	us := e.openUsers(t)
 	e.users = us
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "alice", Password: alicePassword}); err != nil {
@@ -771,7 +769,7 @@ func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, s
 func (e *env) openUsers(t *testing.T) *users.Service {
 	t.Helper()
 	us, err := users.Open(t.Context(), users.Options{
-		DSN: e.dsn, MasterKeyFile: masterKeyFile(t), GW: e.gw, Tenants: fakeTenants{},
+		DSN: e.dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: userstest.NewTenants(),
 		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
 	})
 	if err != nil {
@@ -929,59 +927,6 @@ func (fakeBoxes) HibernateAll(context.Context, string) error { return nil }
 
 func (fakeBoxes) DeleteState(context.Context, string) error { return nil }
 
-type fakeGW struct {
-	mu   sync.Mutex
-	caps map[string]int64
-}
-
-func (*fakeGW) Add(context.Context, string) (string, string, error)              { return "gw-key", "ak", nil }
-func (*fakeGW) Revoke(context.Context, string) error                             { return nil }
-func (*fakeGW) SetEnabled(context.Context, string, bool) error                   { return nil }
-func (*fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) { return nil, nil }
-
-func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if c, ok := g.caps[owner]; ok {
-		return &c, nil
-	}
-	return nil, nil
-}
-
-func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return maps.Clone(g.caps), nil
-}
-
-func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if micros == nil {
-		delete(g.caps, owner)
-	} else {
-		g.caps[owner] = *micros
-	}
-	return nil
-}
-
-func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
-	return "gw-machine", "ak-machine", nil
-}
-
-func (*fakeGW) Delete(context.Context, string) error { return nil }
-
-func (g *fakeGW) cap(owner string) int64 {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.caps[owner]
-}
-
-type fakeTenants struct{}
-
-func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
-func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
-
 func send(t *testing.T, client *http.Client, method, target, token string, body any) (int, string) {
 	t.Helper()
 	var reader io.Reader
@@ -1003,34 +948,4 @@ func send(t *testing.T, client *http.Client, method, target, token string, body 
 	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(data)
-}
-
-func masterKeyFile(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(path, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	return path
-}
-
-func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
-	return conn.QueryRow(t.Context(), sql, args...)
-}
-
-func exec(t *testing.T, dsn, sql string, args ...any) error {
-	t.Helper()
-	conn, err := pgx.Connect(t.Context(), dsn)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	_, err = conn.Exec(t.Context(), sql, args...)
-	return err
 }

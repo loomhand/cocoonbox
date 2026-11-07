@@ -3,6 +3,8 @@ package users
 import (
 	"encoding/json/jsontext"
 	"testing"
+
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 )
 
 func TestToolListFallsBackToTheNewestOfItsFamily(t *testing.T) {
@@ -22,7 +24,7 @@ func TestToolListFallsBackToTheNewestOfItsFamily(t *testing.T) {
 			t.Fatalf("PutToolList %s: %v", put.list.Image, err)
 		}
 	}
-	reopened := openTestService(t, dsn, &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, &fakeTenants{tenants: map[string]tenant{}})
+	reopened := openTestService(t, dsn, userstest.NewGW(), userstest.NewTenants())
 	for _, tt := range []struct{ image, family, want, tools string }{
 		{"cbcore:v1", "cbcore", "cbcore:v1", `[{"name":"shell"}]`},
 		{"cbcore:v3", "cbcore", "cbcore:v2", `[{"name":"shell"},{"name":"gui_plan"}]`},

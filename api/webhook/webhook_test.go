@@ -175,11 +175,11 @@ func TestARedirectIsAnOutageAndIsNeverFollowed(t *testing.T) {
 		leaked.Store(true)
 		_, _ = w.Write([]byte(`{"authenticated":true,"allowed":true,"idp":"example","user":"alice","credential":"c"}`))
 	}))
-	defer plain.Close()
+	t.Cleanup(plain.Close)
 	ep := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, plain.URL, http.StatusTemporaryRedirect)
 	}))
-	defer ep.Close()
+	t.Cleanup(ep.Close)
 	hook, err := New(Options{URL: ep.URL, TokenFile: tokenFile(t), Timeout: time.Second}, &fakeAccounts{})
 	if err != nil {
 		t.Fatalf("New: %v", err)

@@ -16,8 +16,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -39,10 +37,10 @@ import (
 	"github.com/loomhand/cocoonbox/api/controlmcp"
 	"github.com/loomhand/cocoonbox/api/edge"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
@@ -694,7 +692,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := clustertest.EmptyDSN(t)
 	us, err := users.Open(t.Context(), users.Options{
-		DSN: dsn, MasterKeyFile: masterKeyFile(t), GW: &fakeGW{}, Tenants: fakeTenants{},
+		DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: userstest.NewTenants(),
 		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
 	})
 	if err != nil {
@@ -1244,29 +1242,6 @@ func (fakeCredentials) ShareCredential(box, _, principal string) string {
 	return "share:" + box + ":" + principal
 }
 
-type fakeGW struct{}
-
-func (*fakeGW) Add(context.Context, string) (string, string, error)              { return "gw-key", "ak", nil }
-func (*fakeGW) Revoke(context.Context, string) error                             { return nil }
-func (*fakeGW) SetEnabled(context.Context, string, bool) error                   { return nil }
-func (*fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) { return nil, nil }
-
-func (*fakeGW) DailyCap(context.Context, string) (*int64, error) { return nil, nil }
-
-func (*fakeGW) DailyCaps(context.Context) (map[string]int64, error) { return nil, nil }
-func (*fakeGW) SetDailyCap(context.Context, string, *int64) error   { return nil }
-
-func (*fakeGW) AddMachine(context.Context, string, bool) (string, string, error) {
-	return "gw-machine", "ak-machine", nil
-}
-
-func (*fakeGW) Delete(context.Context, string) error { return nil }
-
-type fakeTenants struct{}
-
-func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
-func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
-
 func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1314,15 +1289,6 @@ func readEvent(t *testing.T, stream io.Reader) string {
 func challenge(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func masterKeyFile(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(path, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	return path
 }
 
 func lifetime(us *users.Service, id, credential string) context.Context {
