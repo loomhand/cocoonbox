@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use super::act;
+use super::act::{self, ask};
 use super::rpc::{self, Client, Output};
 use super::script::Scripts;
 use super::timing;
@@ -81,13 +81,13 @@ pub async fn act(
     scripts: &Scripts,
     args: Value,
 ) -> Result<Output, String> {
-    let k = act::scale(shuttle, owner, &args["session"]).await?;
     let mut a: TargetArgs = rpc::parse(args)?;
     let press = match a.action.as_str() {
         "click" => true,
         "locate" => false,
         other => return Err(format!("target takes action click or locate, not {other}")),
     };
+    let k = act::scale(shuttle, owner, &a.session).await?;
     let start = Instant::now();
     let mut found = scripts
         .locate(&a.target.description, press)
@@ -124,7 +124,7 @@ pub async fn act(
     }
     let mut out = match place.err().filter(|_| found["found"] == true) {
         Some(why) => json!({"a11y": {"element": element, "no_point": why, "ms": a11y_ms}}),
-        None => json!({"a11y": {"why": found["why"], "ms": a11y_ms}}),
+        None => json!({"a11y": {"why": found["why"].take(), "ms": a11y_ms}}),
     };
     if found["served"].is_array() {
         out["a11y"]["served"] = found["served"].take();
@@ -236,7 +236,8 @@ async fn finish(
 ) -> Output {
     let image_b64 = match rect {
         Some(rect) => {
-            let args = json!({"region": crop_region(rect, k), "session": session});
+            let mut args = json!({"session": session});
+            args["region"] = crop_region(rect, k);
             ask(shuttle, owner, "desk_look", args)
                 .await
                 .ok()
@@ -248,10 +249,8 @@ async fn finish(
         out["crop"] = json!({"w": CROP[0], "h": CROP[1], "bytes": b64.len() / 4 * 3});
     }
     Output {
-        text: out.to_string(),
-        is_error: false,
         image_b64,
-        ..Output::default()
+        ..Output::text(out.to_string())
     }
 }
 
@@ -273,12 +272,10 @@ async fn not_found(
     out["ms"] = json!(start.elapsed().as_millis());
     let look = json!({"max_edge": a.max_edge, "session": a.session});
     Ok(Output {
-        text: format!(
-            "{out}\nnot found by its accessibility name or a unique match of its text; give x,y from the screenshot"
-        ),
-        is_error: true,
         image_b64: ask(shuttle, owner, "desk_look", look).await?.image_b64,
-        ..Output::default()
+        ..Output::error(format!(
+            "{out}\nnot found by its accessibility name or a unique match of its text; give x,y from the screenshot"
+        ))
     })
 }
 
@@ -527,15 +524,6 @@ async fn at_point(shuttle: &Client, x: f64, y: f64) -> Result<Value, String> {
     let args = json!({"x": x.round() as i32, "y": y.round() as i32});
     let out = ask(shuttle, "", "desk_at", args).await?;
     serde_json::from_str(&out.text).map_err(|e| format!("at: {e}"))
-}
-
-/// Shuttle's answer to desk call `tool` with `args` as agent `owner`; an error answer is an error.
-async fn ask(shuttle: &Client, owner: &str, tool: &str, args: Value) -> Result<Output, String> {
-    let out = act::call(shuttle, owner, tool, args, 1).await?;
-    if out.is_error {
-        return Err(out.text);
-    }
-    Ok(out)
 }
 
 /// The size and RGB rows of PNG `png`.

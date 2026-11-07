@@ -28,17 +28,13 @@ pub async fn run(
 
 /// Screen pixels per pixel of the latest screenshot of `session`, as shuttle maps x,y.
 pub(super) async fn scale(shuttle: &Client, owner: &str, session: &Value) -> Result<f64, String> {
-    let out = call(
+    let out = ask(
         shuttle,
         owner,
         "desk_computer_scale",
         json!({"session": session}),
-        1,
     )
     .await?;
-    if out.is_error {
-        return Err(out.text);
-    }
     let reply: Value =
         serde_json::from_str(&out.text).map_err(|e| format!("decode the scale: {e}"))?;
     reply["scale"]
@@ -46,8 +42,22 @@ pub(super) async fn scale(shuttle: &Client, owner: &str, session: &Value) -> Res
         .ok_or_else(|| format!("no scale in {}", out.text))
 }
 
+/// Shuttle's answer to desk call `tool` with `args` as agent `owner`; an error answer is an error.
+pub(super) async fn ask(
+    shuttle: &Client,
+    owner: &str,
+    tool: &str,
+    args: Value,
+) -> Result<Output, String> {
+    let out = call(shuttle, owner, tool, args, 1).await?;
+    if out.is_error {
+        return Err(out.text);
+    }
+    Ok(out)
+}
+
 /// Sends `tool` with `args` to shuttle as agent `owner`, waiting for each of `steps` actions as for one desk call.
-pub(super) async fn call(
+async fn call(
     shuttle: &Client,
     owner: &str,
     tool: &str,
@@ -149,7 +159,9 @@ async fn list(
     let total = actions.len();
     let mut lines = Vec::with_capacity(total);
     let mut out = Output::default();
-    let shared = json!({"session": session, "max_edge": max_edge, "scale": scale});
+    let mut shared = json!({"scale": scale});
+    shared["session"] = session;
+    shared["max_edge"] = max_edge;
     for (i, mut step) in actions.into_iter().enumerate() {
         carry(&mut step, &shared, &["session", "max_edge", "scale"]);
         let action = step["action"].as_str().unwrap_or_default().to_owned();
@@ -237,10 +249,8 @@ async fn type_from_file(
             shot = look(shuttle, owner, &args["session"], &args["max_edge"]).await?;
         }
         return Ok(Output {
-            text: e,
-            is_error: true,
             image_b64: shot,
-            ..Output::default()
+            ..Output::error(e)
         });
     }
     let typed = value.chars().count();
@@ -277,17 +287,14 @@ async fn chrome(
     let image_b64 = look(shuttle, owner, &args["session"], &args["max_edge"]).await?;
     Ok(match shown {
         Ok(title) => Output {
-            text: format!(
-                "brought this agent's window \"{title}\" of the box's Chrome to the front; the browser tools and type_from_file see it"
-            ),
             image_b64,
-            ..Output::default()
+            ..Output::text(format!(
+                "brought this agent's window \"{title}\" of the box's Chrome to the front; the browser tools and type_from_file see it"
+            ))
         },
         Err(e) => Output {
-            text: format!("opening the box's Chrome failed: {e}"),
-            is_error: true,
             image_b64,
-            ..Output::default()
+            ..Output::error(format!("opening the box's Chrome failed: {e}"))
         },
     })
 }
@@ -299,18 +306,8 @@ async fn look(
     session: &Value,
     max_edge: &Value,
 ) -> Result<Option<String>, String> {
-    let out = call(
-        shuttle,
-        owner,
-        "desk_look",
-        json!({"session": session, "max_edge": max_edge}),
-        1,
-    )
-    .await?;
-    if out.is_error {
-        return Err(out.text);
-    }
-    Ok(out.image_b64)
+    let args = json!({"session": session, "max_edge": max_edge});
+    Ok(ask(shuttle, owner, "desk_look", args).await?.image_b64)
 }
 
 /// Whether the toolhost runs action `a` itself: a card field typed from a file, or Chrome by any name.
