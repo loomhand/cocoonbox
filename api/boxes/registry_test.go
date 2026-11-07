@@ -144,7 +144,6 @@ func TestCreateRefusals(t *testing.T) {
 	}{
 		{&controlv1.CreateBoxRequest{Name: "main"}, codes.AlreadyExists},
 		{&controlv1.CreateBoxRequest{Name: "x", Image: "desktop:v9"}, codes.InvalidArgument},
-		{&controlv1.CreateBoxRequest{Name: "x", Flavor: &controlv1.Flavor{Vcpus: 64}}, codes.InvalidArgument},
 	} {
 		if _, err := svc.Create(ctx, tt.req); status.Code(err) != tt.want {
 			t.Errorf("Create(%v) = %v, want %s", tt.req, err, tt.want)

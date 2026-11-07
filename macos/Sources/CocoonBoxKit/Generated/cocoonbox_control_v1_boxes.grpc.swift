@@ -296,7 +296,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+        /// > Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Control_V1_EnsureRequest` messages.
@@ -611,7 +611,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+        /// > Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -924,7 +924,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+        /// > Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -1861,7 +1861,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+        /// > Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -2269,7 +2269,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+        /// > Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -2843,7 +2843,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-    /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+    /// > Progress arrives on WatchOperation.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -3331,7 +3331,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-    /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
+    /// > Progress arrives on WatchOperation.
     ///
     /// - Parameters:
     ///   - message: request message to send.

@@ -88,11 +88,9 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 		return &controlv1.Box{Id: box}
 	}
 	return &controlv1.Box{
-		Id:          box,
-		State:       boxStates[m.State],
-		Image:       m.Image,
-		Flavor:      toFlavor(m.Flavor),
-		CreatedAtMs: m.CreatedAt.UnixMilli(),
+		Id:    box,
+		State: boxStates[m.State],
+		Image: m.Image,
 	}
 }
 
@@ -116,18 +114,6 @@ func startFailure(err error) string {
 		return machines.ErrCapacity.Error()
 	}
 	return "new machine did not start"
-}
-
-func toFlavor(f machines.Flavor) *controlv1.Flavor {
-	return &controlv1.Flavor{Vcpus: f.VCPUs, MemoryMib: f.MemoryMiB, DiskGib: f.DiskGiB}
-}
-
-func resolveFlavor(req *controlv1.Flavor, def machines.Flavor) machines.Flavor {
-	return machines.Flavor{
-		VCPUs:     cmp.Or(req.GetVcpus(), def.VCPUs),
-		MemoryMiB: cmp.Or(req.GetMemoryMib(), def.MemoryMiB),
-		DiskGiB:   cmp.Or(req.GetDiskGib(), def.DiskGiB),
-	}
 }
 
 func every(ctx context.Context, interval time.Duration, fn func()) {

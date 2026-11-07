@@ -22,10 +22,6 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, err
 	}
-	flavor, err := s.flavor(req.GetFlavor())
-	if err != nil {
-		return nil, err
-	}
 	image, ok := s.defaults.offered(cmp.Or(req.GetImage(), s.ownImage(user)))
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered; choose %s", req.GetImage(), s.defaults.choices())
@@ -64,7 +60,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
-	spec := machines.Spec{ID: b.ID, Owner: user, Tenant: tenant, Flavor: flavor}
+	spec := machines.Spec{ID: b.ID, Owner: user, Tenant: tenant, Flavor: s.defaults.Flavor}
 	if image != s.defaults.Image {
 		spec.Image = image
 	}

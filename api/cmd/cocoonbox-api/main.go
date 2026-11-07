@@ -128,7 +128,6 @@ func main() {
 	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
-		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
 		MaxRunning:   cfg.MaxRunningBoxes,

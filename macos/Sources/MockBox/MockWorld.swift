@@ -99,10 +99,6 @@ actor MockWorld {
         box.image = "cbdesk:v22"
         box.latestImage = "cbdesk:v23"
         box.lastSavedAtMs = Self.now() - 12 * 60_000
-        box.flavor.vcpus = 4
-        box.flavor.memoryMib = 8192
-        box.flavor.diskGib = 40
-        box.createdAtMs = Self.now()
         seed = box
         boxes = [box]
         if externalHistory {
@@ -204,7 +200,6 @@ actor MockWorld {
         if let target { created.latestImage = target }
         created.image = created.latestImage
         created.lastSavedAtMs = 0
-        created.createdAtMs = Self.now()
         boxes.append(created)
         let id = newOperation(created.id)
         boot(id, phase: .creating, image: created.image)

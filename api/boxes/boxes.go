@@ -36,7 +36,6 @@ var (
 // Defaults size new boxes, name their images, and bound how many boxes of one user run at once.
 type Defaults struct {
 	Flavor       machines.Flavor
-	Flavors      []machines.Flavor
 	Image        string
 	RebaseImages []string
 	MaxRunning   int
@@ -159,10 +158,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	flavor, err := s.flavor(req.GetFlavor())
-	if err != nil {
-		return nil, err
-	}
 	unlock, err := s.admitStart(ctx, user)
 	if err != nil {
 		return nil, err
@@ -188,7 +183,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
-	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: flavor}
+	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: s.defaults.Flavor}
 	current, err := s.startable(ctx, user, box)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "get box")
@@ -204,10 +199,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	case ok:
 		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
 			return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
-		}
-		if req.GetFlavor() != nil && cur.Flavor != flavor {
-			return nil, status.Errorf(codes.FailedPrecondition, "box exists with flavor vcpus:%d memory_mib:%d disk_gib:%d",
-				cur.Flavor.VCPUs, cur.Flavor.MemoryMiB, cur.Flavor.DiskGiB)
 		}
 		spec.ID = cur.ID
 	default:
@@ -442,15 +433,6 @@ func (s *Service) checkRunning(user, box string, current map[string]machines.Mac
 		return status.Errorf(codes.FailedPrecondition, "boxes %s are running, and %d may run at a time; hibernate one first", strings.Join(names, ", "), limit)
 	}
 	return status.Errorf(codes.FailedPrecondition, "box %s is running, and %d may run at a time; hibernate it first", names[0], limit)
-}
-
-func (s *Service) flavor(req *controlv1.Flavor) (machines.Flavor, error) {
-	flavor := resolveFlavor(req, s.defaults.Flavor)
-	if flavor != s.defaults.Flavor && !slices.Contains(s.defaults.Flavors, flavor) {
-		return flavor, status.Errorf(codes.InvalidArgument, "flavor vcpus:%d memory_mib:%d disk_gib:%d is not offered",
-			flavor.VCPUs, flavor.MemoryMiB, flavor.DiskGiB)
-	}
-	return flavor, nil
 }
 
 func (s *Service) boxName(user, box string) string {

@@ -46,7 +46,7 @@ const (
 // `authorization: Bearer <user token>`.
 type BoxesClient interface {
 	// Ensure creates the caller's box, or wakes it, and returns immediately.
-	// Idempotent per (box, flavor). Progress arrives on WatchOperation.
+	// Progress arrives on WatchOperation.
 	Ensure(ctx context.Context, in *EnsureRequest, opts ...grpc.CallOption) (*EnsureResponse, error)
 	// Create adds a box to the caller's boxes and starts it, within the user's
 	// box quota and the api's running limit.
@@ -295,7 +295,7 @@ func (c *boxesClient) Usage(ctx context.Context, in *UsageRequest, opts ...grpc.
 // `authorization: Bearer <user token>`.
 type BoxesServer interface {
 	// Ensure creates the caller's box, or wakes it, and returns immediately.
-	// Idempotent per (box, flavor). Progress arrives on WatchOperation.
+	// Progress arrives on WatchOperation.
 	Ensure(context.Context, *EnsureRequest) (*EnsureResponse, error)
 	// Create adds a box to the caller's boxes and starts it, within the user's
 	// box quota and the api's running limit.

@@ -8,7 +8,7 @@ option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;
 // `authorization: Bearer <user token>`.
 service Boxes {
   // Ensure creates the caller's box, or wakes it, and returns immediately.
-  // Idempotent per (box, flavor). Progress arrives on WatchOperation.
+  // Progress arrives on WatchOperation.
   rpc Ensure(EnsureRequest) returns (EnsureResponse);
   // Create adds a box to the caller's boxes and starts it, within the user's
   // box quota and the api's running limit.
@@ -90,20 +90,12 @@ message BoxRef {
   string box_id = 1;
 }
 
-message Flavor {
-  uint32 vcpus = 1;
-  uint32 memory_mib = 2;
-  uint32 disk_gib = 3;
-}
-
 message Box {
-  reserved 5;
-  reserved "failure_reason";
+  reserved 4, 5, 6;
+  reserved "flavor", "failure_reason", "created_at_ms";
   string id = 1;
   BoxState state = 2;
   string image = 3;
-  Flavor flavor = 4;
-  int64 created_at_ms = 6;
   // Time of the latest user-state snapshot in object storage; 0 before the first.
   int64 last_saved_at_ms = 7;
   // The default Rebase target: the user's own image of the box's family, else that family's newest offered image.
@@ -118,16 +110,18 @@ message Operation {
 }
 
 message EnsureRequest {
-  Flavor flavor = 1;
+  reserved 1;
+  reserved "flavor";
   // Empty selects the user's first box, and creates one when the user has none.
   string box_id = 2;
 }
 
 message CreateBoxRequest {
+  reserved 3;
+  reserved "flavor";
   string name = 1;
   // Empty selects the user's own image, else the default image; a family selects its newest offered image.
   string image = 2;
-  Flavor flavor = 3;
 }
 
 message RenameBoxRequest {

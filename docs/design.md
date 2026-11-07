@@ -1626,7 +1626,7 @@ The app's **+ → Local agent** starts the CLI through the bridge (stdio) instea
 
 ### 19.3 Control plane
 
-- `Boxes.Create{name, image, flavor}` and `Boxes.Delete{box_id}`. `Box.name` is unique per user. `Ensure{box_id}` wakes or creates that box; an empty `box_id` keeps today's meaning, the user's first box, for old clients.
+- `Boxes.Create{name, image}` and `Boxes.Delete{box_id}`. `Box.name` is unique per user. `Ensure{box_id}` wakes or creates that box; an empty `box_id` keeps today's meaning, the user's first box, for old clients.
 - **Quota** (as built, 19.6): the total is the per-user max boxes setting (§22.4), the running limit is api config `max_running_boxes`, default 1. Waking or creating a box beyond the running limit fails with `FailedPrecondition` naming the running box; the caller hibernates it first. The api never hibernates a box on its own to make room.
 - **Delete:** a quiesced save first, then the machine is removed with its incarnation's gw key (19.6). The state prefix stays until a retention sweep, so a mistaken delete can be restored from the store (as built: `state.gc.deleted_retention`, 19.6).
 - Hibernated boxes cost disk only: on sandboxd, the memory file and the disk on the node's NVMe.
