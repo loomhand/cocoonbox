@@ -40,7 +40,7 @@ func TestIdleHibernatesOnlyAnAgentBoxWithNoCallForTheThreshold(t *testing.T) {
 			if tt.open {
 				svc.Reached(box)
 			}
-			*clock = clock.Add(tt.elapsed)
+			clock.advance(tt.elapsed)
 			svc.hibernateIdle(t.Context())
 			if got := fake.state(box); got != tt.want {
 				t.Errorf("state = %v, want %v", got, tt.want)
@@ -52,14 +52,14 @@ func TestIdleHibernatesOnlyAnAgentBoxWithNoCallForTheThreshold(t *testing.T) {
 func TestIdleCountsFromTheEndOfTheLastCall(t *testing.T) {
 	svc, fake, clock, box := newIdleService(t, true)
 	left := svc.Reached(box)
-	*clock = clock.Add(2 * idleAfter)
+	clock.advance(2 * idleAfter)
 	left()
-	*clock = clock.Add(idleAfter - time.Second)
+	clock.advance(idleAfter - time.Second)
 	svc.hibernateIdle(t.Context())
 	if got := fake.state(box); got != machines.StateRunning {
 		t.Fatalf("state = %v right under the threshold after the call ended", got)
 	}
-	*clock = clock.Add(time.Second)
+	clock.advance(time.Second)
 	svc.hibernateIdle(t.Context())
 	if got := fake.state(box); got != machines.StateHibernating {
 		t.Errorf("state = %v at the threshold after the call ended", got)
@@ -70,7 +70,7 @@ func TestIdleStartsAgainAtAWake(t *testing.T) {
 	svc, fake, clock, box := newIdleService(t, true)
 	svc.hibernateIdle(t.Context())
 	fake.setState(box, machines.StateHibernated)
-	*clock = clock.Add(2 * idleAfter)
+	clock.advance(2 * idleAfter)
 	svc.hibernateIdle(t.Context())
 	fake.setState(box, machines.StateRunning)
 	svc.hibernateIdle(t.Context())
@@ -160,15 +160,15 @@ func TestAReachWrittenAfterTheSweepsReadKeepsAnAgentBoxUp(t *testing.T) {
 	db := clustertest.Open(t)
 	svc.EnableLedger(t.Context(), db)
 	svc.EnableShared(t.Context(), db)
-	if svc.idle.idleAt(box, *clock, idleAfter, time.Time{}) {
+	if svc.idle.idleAt(box, clock.read(), idleAfter, time.Time{}) {
 		t.Fatal("a box seen for the first time is idle")
 	}
-	*clock = clock.Add(idleAfter)
+	clock.advance(idleAfter)
 	svc.readReaches(t.Context())
-	if err := db.PutActivity(t.Context(), map[string]time.Time{box: *clock}); err != nil {
+	if err := db.PutActivity(t.Context(), map[string]time.Time{box: clock.read()}); err != nil {
 		t.Fatalf("PutActivity: %v", err)
 	}
-	if !svc.idle.idleAt(box, *clock, idleAfter, svc.reachedElsewhere(box)) {
+	if !svc.idle.idleAt(box, clock.read(), idleAfter, svc.reachedElsewhere(box)) {
 		t.Fatal("the sweep's read already saw the reach")
 	}
 	if svc.stillIdle(t.Context(), box, idleAfter) {
@@ -176,7 +176,7 @@ func TestAReachWrittenAfterTheSweepsReadKeepsAnAgentBoxUp(t *testing.T) {
 	}
 }
 
-func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *time.Time, string) {
+func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *clockSigner, string) {
 	t.Helper()
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
@@ -186,9 +186,9 @@ func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *time.Ti
 		box = addAgentBox(t, svc, fake)
 	}
 	svc.EnableIdle(idleAfter, 0, 0)
-	clock := time.Unix(1_000_000, 0)
-	svc.idle.now = func() time.Time { return clock }
-	return svc, fake, &clock, box
+	clock := &clockSigner{now: time.Unix(1_000_000, 0)}
+	svc.idle.now = clock.read
+	return svc, fake, clock, box
 }
 
 func newCredentialService(t *testing.T) (*Service, *fakeMachines) {
