@@ -28,7 +28,7 @@ sha2 = "0.11"
 shuttle-desk-core = { git = "https://github.com/loomhand/shuttle", tag = "v0.1.40" }
 tar = { version = "0.4", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time", "fs", "signal"] }
-tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
+tokio-stream = { version = "0.1", default-features = false }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tonic = { version = "0.14", default-features = false, features = ["transport", "router", "codegen"] }
@@ -67,7 +67,6 @@ expect_used = "deny"
 undocumented_unsafe_blocks = "deny"
 
 [profile.release]
-opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
