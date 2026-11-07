@@ -102,7 +102,7 @@ public struct BackOutcome: Sendable {
 
 // Offloader is the Mac packer: preflight, snapshot, transfer and back, over Session.Exec, rsync and git.
 public struct Offloader: Sendable {
-    // backWait is how long back waits for the hand-over: one read's longest wait.
+    // backWait is how long back waits for the hand-over, under the box's 600 s longest read.
     static let backWait: TimeInterval = 540
 
     public let connection: BoxConnection
@@ -398,7 +398,7 @@ public struct Offloader: Sendable {
         return (code, out.withLock { $0 }, err.withLock { $0 })
     }
 
-    // findings reads a box reply's findings, in begin's output and in its refusal.
+    // findings reads the findings of a begin refusal.
     static func findings(_ reply: [String: Any]) -> [Finding] {
         (reply["findings"] as? [[String: Any]] ?? []).map {
             Finding(check: $0["check"] as? String ?? "box", outcome: Finding.Outcome(rawValue: $0["outcome"] as? String ?? "") ?? .warn, detail: $0["detail"] as? String ?? "")

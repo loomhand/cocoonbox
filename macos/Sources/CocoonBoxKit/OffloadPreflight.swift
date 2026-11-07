@@ -219,7 +219,7 @@ enum Preflight {
             findings.append(Finding(check: "lfs", outcome: .block, detail: "the repo uses Git LFS, which the box lacks, so the box copy cannot match this repo"))
         }
         if FileManager.default.fileExists(atPath: top.appendingPathComponent(".gitmodules").path) {
-            findings.append(Finding(check: "submodules", outcome: .warn, detail: "submodule contents are not carried; the box copy holds only their commits"))
+            findings.append(Finding(check: "submodules", outcome: .warn, detail: "back fetches only this repo's branches, so commits made inside its submodules on the box do not come back"))
         }
         return findings
     }

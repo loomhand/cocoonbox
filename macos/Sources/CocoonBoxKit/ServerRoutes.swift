@@ -1,6 +1,6 @@
 import Foundation
 
-// ServerRoutes holds a server's token, revoke and MCP URLs from its RFC 8414 metadata; a 404 or no protected_resources means the default routes.
+// ServerRoutes holds a server's token, revoke and MCP URLs from its RFC 8414 metadata; a 404 means the default routes.
 public struct ServerRoutes: Sendable, Equatable {
     public enum Failure: Error, CustomStringConvertible {
         case metadata(Int)

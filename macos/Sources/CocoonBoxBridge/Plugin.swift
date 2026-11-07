@@ -5,7 +5,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.16.0"
+    static let version = "0.17.0"
     static let summary = "Drive your cocoonbox, a cloud desktop or Android phone: its shell, files and screen, a desktop's browser, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -68,7 +68,7 @@ public enum Plugin {
     The cocoonbox tools act on the user's cocoonbox, a cloud desktop or Android phone, not on this Mac. Local files are not the target.
 
     - Check `box_status` first when the state matters. A box tool wakes a hibernated box by itself; `box_ensure` wakes it on purpose.
-    - The user may have several boxes. `box_list` lists them; the tools that act on one box take `box`, a box name or id, and acts on the session's default box without it. Only a limited number of boxes run at once: hibernate one before waking another when a tool says so.
+    - The user may have several boxes. `box_list` lists them; the tools that act on one box take `box`, a box name or id, and act on the session's default box without it. Only a limited number of boxes run at once: hibernate one before waking another when a tool says so.
     - `box_create` adds a box. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser where the box has them, and `computer_state`, `computer_act` and `screenshot` for its screen. On an Android box, `shell` runs on the Ubuntu host with `adb` connected to the phone.
     - After a GUI action, take a `screenshot` to confirm it worked.
