@@ -124,7 +124,6 @@ func main() {
 		go broker.RunSignals(ctx)
 	}
 	svc := boxes.New(backend, boxes.Defaults{
-		Flavor:       machineFlavor(cfg.Flavor),
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
 		MaxRunning:   cfg.MaxRunningBoxes,
@@ -516,6 +515,7 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 		Tenants:       tenants,
 		TenantClaims:  cfg.Sandboxd.TenantEgressClass != "",
 		FirstBoxID:    boxes.BoxID,
+		BoxFlavor:     machineFlavor(cfg.Flavor),
 		EnsureLimit:   cfg.Accounts.EnsureLimit,
 	})
 }
@@ -538,7 +538,6 @@ func backendOptions(cfg *config.Config, db *cluster.Store) (sandboxd.Options, er
 		Token:             token,
 		Image:             cfg.Image,
 		Flavor:            machineFlavor(cfg.Flavor),
-		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
 		Nodes:             cfg.Sandboxd.Nodes,

@@ -29,6 +29,7 @@ var tiers = []struct {
 }{
 	{"small", machines.Flavor{VCPUs: 1, MemoryMiB: 512}},
 	{"medium", machines.Flavor{VCPUs: 2, MemoryMiB: 1024}},
+	{"medium-4g", machines.Flavor{VCPUs: 2, MemoryMiB: 4096}},
 	{"large", machines.Flavor{VCPUs: 4, MemoryMiB: 4096}},
 	{"xlarge", machines.Flavor{VCPUs: 4, MemoryMiB: 8192}},
 	{"2xlarge", machines.Flavor{VCPUs: 8, MemoryMiB: 16384}},
@@ -134,7 +135,7 @@ func (e *entry) begin(op string, now time.Time, lease time.Duration) {
 	e.revision++
 }
 
-func (e *entry) machine(disk uint32) machines.Machine {
+func (e *entry) machine() machines.Machine {
 	state, reason := e.state()
 	m := machines.Machine{
 		ID:       e.id,
@@ -159,7 +160,6 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	}
 	m.Image = e.row.Key.Template
 	m.EnvMissing = e.row.EnvMissing
-	m.Flavor = flavorOf(e.row.Key.Size, disk)
 	m.CreatedAt = e.row.ClaimedAt
 	m.Incarnation = fmt.Sprintf("%d.%d.%d", e.row.ClaimedAt.UnixMilli(), e.row.Restarts, e.wakes)
 	m.Detail = fmt.Sprintf("sandbox=%s hibernated=%t archived=%t restarts=%d ready=%t op=%s", e.row.ID,
@@ -190,15 +190,4 @@ func sizeOf(f machines.Flavor) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func flavorOf(size string, disk uint32) machines.Flavor {
-	for _, t := range tiers {
-		if t.size == size {
-			f := t.flavor
-			f.DiskGiB = disk
-			return f
-		}
-	}
-	return machines.Flavor{DiskGiB: disk}
 }

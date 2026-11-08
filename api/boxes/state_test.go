@@ -181,21 +181,21 @@ func TestSchedulerRetriesAFailedSaveAfterAnIntervalNotEveryTick(t *testing.T) {
 	env.agent.chunks = []string{hexID("c1")}
 	env.fake.addrErr = errors.New("no route")
 	env.svc.saveStale(env.ctx, time.Hour)
-	op := env.svc.ops.activeFor(aliceBox)
-	if op == nil {
-		t.Fatal("scheduler started no save")
+	saves := savesOf(env.svc, aliceBox)
+	if len(saves) != 1 {
+		t.Fatalf("scheduler started %d saves, want 1", len(saves))
 	}
-	if events := watch(t, env.svc, env.ctx, op.id, ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED {
+	if events := watch(t, env.svc, env.ctx, saves[0], ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED {
 		t.Fatalf("save with no address = %v", events)
 	}
 	env.fake.addrErr = nil
 	env.svc.saveStale(env.ctx, time.Hour)
-	if active := env.svc.ops.activeFor(aliceBox); active != nil {
-		t.Errorf("scheduler retried a failed save within the interval: %s", active.id)
+	if saves := savesOf(env.svc, aliceBox); len(saves) != 1 {
+		t.Errorf("scheduler retried a failed save within the interval: %v", saves)
 	}
 	env.svc.saveStale(env.ctx, time.Nanosecond)
-	if env.svc.ops.activeFor(aliceBox) == nil {
-		t.Error("scheduler did not retry a failed save once the interval passed")
+	if saves := savesOf(env.svc, aliceBox); len(saves) != 2 {
+		t.Errorf("scheduler started %d saves once the interval passed, want the retry as the 2nd", len(saves))
 	}
 }
 
@@ -350,7 +350,7 @@ func TestSaveCapsEachUploadAtAPage(t *testing.T) {
 func TestSaveSendsEachAgentCallAFreshCredential(t *testing.T) {
 	env := newStateEnv(t)
 	env.fake.put(machines.Machine{
-		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1,
+		ID: aliceBox, Owner: alice, State: machines.StateRunning, Image: "desktop:v1", Revision: 1,
 		Incarnation: "pod0/vm0", Meta: map[string]string{metaWake: "pod0/vm0|w0"},
 	})
 	signer := &clockSigner{now: time.Unix(1_000_000, 0)}
@@ -659,7 +659,7 @@ func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 			if tt.owner {
 				env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{Image: "cbcore:v8"})
 			}
-			env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
+			env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Image: tt.image, Revision: 1})
 			env.agent.chunks = []string{hexID("c1")}
 			env.save(t)
 			p := statePath{user: alice, box: aliceBox}
@@ -1137,7 +1137,7 @@ type stateEnv struct {
 func newStateEnv(t *testing.T) *stateEnv {
 	t.Helper()
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Image: "desktop:v1", Revision: 1})
 	st := newFakeStore()
 	agent := newFakeAgent(st)
 	keys := &fakeKeys{}
@@ -1207,7 +1207,7 @@ func (e *stateEnv) addBox(t *testing.T, box string) {
 	if _, err := e.svc.registry.AddBox(e.ctx, users.Box{ID: box, Owner: alice, Name: box}); err != nil {
 		t.Fatalf("AddBox: %v", err)
 	}
-	e.fake.put(machines.Machine{ID: box, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1})
+	e.fake.put(machines.Machine{ID: box, Owner: alice, State: machines.StateRunning, Image: "desktop:v1", Revision: 1})
 }
 
 func (e *stateEnv) collect(t *testing.T, opts GCOptions, ahead time.Duration) gcReport {
@@ -1290,7 +1290,7 @@ func saveLive(t *testing.T, l *stateLayer, p statePath, key string) {
 func newFamilyEnv(t *testing.T, image, defaultImage string, rebaseImages ...string) (*fakeMachines, *Service, context.Context) {
 	t.Helper()
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: image, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Image: image, Revision: 1})
 	st := newFakeStore()
 	defaults := testDefaults
 	defaults.Image, defaults.RebaseImages = defaultImage, rebaseImages
@@ -1863,4 +1863,14 @@ func expiringGets(skew *atomic.Int64) http.HandlerFunc {
 			http.Error(w, "ExpiredToken", http.StatusBadRequest)
 		}
 	}
+}
+
+func savesOf(svc *Service, box string) []string {
+	var ids []string
+	for _, op := range svc.ops.all() {
+		if op.boxID == box && op.phase == controlv1.Phase_PHASE_SAVING {
+			ids = append(ids, op.id)
+		}
+	}
+	return ids
 }

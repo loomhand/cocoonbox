@@ -44,7 +44,7 @@ const (
 	defaultDiskGiB   = 40
 )
 
-// Flavor is the default box size.
+// Flavor is the size a new box takes and keeps.
 type Flavor struct {
 	VCPUs     uint32 `json:"vcpus"`
 	MemoryMiB uint32 `json:"memory_mib"`

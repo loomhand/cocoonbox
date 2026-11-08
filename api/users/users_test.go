@@ -29,6 +29,11 @@ const (
 	outsideID = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
 )
 
+var (
+	oldFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
+	newFlavor = machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+)
+
 func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
@@ -624,6 +629,59 @@ func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
 	}
 }
 
+func TestNewBoxesTakeTheConfiguredFlavorAndKeepItWhenTheFlavorChanges(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3), MaxBoxes: new(3)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-000000000001", Owner: u.ID, Name: "second"}); err != nil {
+		t.Fatalf("AddBox: %v", err)
+	}
+	later := openFlavored(t, dsn, gw, tenants, newFlavor)
+	if _, err := later.AddBox(t.Context(), Box{ID: "cb-000000000002", Owner: u.ID, Name: "third"}); err != nil {
+		t.Fatalf("AddBox on the new flavor: %v", err)
+	}
+	v := mustCreate(t, later, NewUser{Name: "qa2"})
+	got := map[string]machines.Flavor{}
+	for _, b := range append(later.Boxes(u.ID), later.Boxes(v.ID)...) {
+		got[b.Name+"@"+b.Owner] = b.Flavor
+	}
+	want := map[string]machines.Flavor{
+		FirstBoxName + "@" + u.ID: oldFlavor, "second@" + u.ID: oldFlavor,
+		"third@" + u.ID: newFlavor, FirstBoxName + "@" + v.ID: newFlavor,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("box flavors = %v, want %v", got, want)
+	}
+}
+
+func TestTheBoxFlavorMigrationGivesEveryExistingBoxTheOldFlavorAndNewRowsNone(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	svc.Close()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	for _, sql := range []string{
+		"ALTER TABLE boxes DROP COLUMN vcpus, DROP COLUMN memory_mib, DROP COLUMN disk_gib",
+		"DELETE FROM schema_migrations WHERE version = 15",
+	} {
+		if _, err := conn.Exec(t.Context(), sql); err != nil {
+			t.Fatalf("%s: %v", sql, err)
+		}
+	}
+	reopened := openFlavored(t, dsn, gw, tenants, newFlavor)
+	if boxes := reopened.Boxes(u.ID); len(boxes) != 1 || boxes[0].Flavor != oldFlavor {
+		t.Errorf("boxes after the migration = %+v, want the one box on %+v", boxes, oldFlavor)
+	}
+	if _, err := conn.Exec(t.Context(), "INSERT INTO boxes (id, owner, name) VALUES ('cb-000000000009', $1, 'bare')", u.ID); err == nil {
+		t.Error("a box row without a flavor was inserted, want the column without a default to refuse it")
+	}
+}
+
 func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
@@ -756,7 +814,12 @@ func newTestService(t *testing.T) (*Service, *userstest.GW, *userstest.Tenants, 
 
 func openTestService(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenants) *Service {
 	t.Helper()
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4})
+	return openFlavored(t, dsn, gw, tenants, oldFlavor)
+}
+
+func openFlavored(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenants, flavor machines.Flavor) *Service {
+	t.Helper()
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, BoxFlavor: flavor})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

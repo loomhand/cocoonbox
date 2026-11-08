@@ -65,7 +65,7 @@ func TestEnsureClaimsAndReportsRunningOnceTheAgentAnswers(t *testing.T) {
 		t.Fatalf("Ensure = %+v, %v, %v", m, action, err)
 	}
 	got := waitState(t, b, boxID, m.Revision, machines.StateRunning)
-	if got.Image != template || got.Flavor != xlarge || got.Owner != owner || got.Incarnation == "" || got.CreatedAt.IsZero() {
+	if got.Image != template || got.Owner != owner || got.Incarnation == "" || got.CreatedAt.IsZero() {
 		t.Errorf("running machine = %+v", got)
 	}
 	claim := fake.lastClaim()
@@ -189,7 +189,7 @@ func TestAnAPIWithNodesCallsNoOtherNode(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, peer.peers = []*fakeSandboxd{peer}, []*fakeSandboxd{entry}
 	entry.redirect = []*fakeSandboxd{peer}
-	b, err := New(t.Context(), Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t), Nodes: []string{"10.0.0.9:7777"}})
+	b, err := New(t.Context(), Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: clustertest.Open(t), Nodes: []string{"10.0.0.9:7777"}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestNodesRefuseAnEntryPosingAsANodeAndAMachineOnANodeLeftOut(t *testing.T) 
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	db := clustertest.Open(t)
-	opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: db, Nodes: []string{entry.addr()}}
+	opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: db, Nodes: []string{entry.addr()}}
 	if _, err := New(t.Context(), opts); err == nil {
 		t.Error("New accepted an entry node that advertises an address nodes lists")
 	}
@@ -545,15 +545,10 @@ func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
 	if _, err := db.DeleteMachineIf(t.Context(), "cb-b", func(cluster.Machine) bool { return true }); err != nil {
 		t.Fatalf("DeleteMachineIf: %v", err)
 	}
-	clustertest.WaitFor(t, "both notifies", func() bool {
-		b.cacheMu.Lock()
-		defer b.cacheMu.Unlock()
-		return b.stale["cb-a"] && b.stale["cb-b"]
+	clustertest.WaitFor(t, "the change and the delete in known", func() bool {
+		known, err := b.known(t.Context())
+		return err == nil && len(known) == 1 && known["cb-a"] != nil && known["cb-a"].image == "cbdesk:v9"
 	})
-	known, err := b.known(t.Context())
-	if err != nil || len(known) != 1 || known["cb-a"] == nil || known["cb-a"].image != "cbdesk:v9" {
-		t.Errorf("known after a change and a delete = %v, %v; want only cb-a on cbdesk:v9", slices.Collect(maps.Keys(known)), err)
-	}
 	b.cacheMu.Lock()
 	b.cachedAt = time.Time{}
 	b.cacheMu.Unlock()
@@ -566,7 +561,7 @@ func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
 
 func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -624,6 +619,36 @@ func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	woken := waitState(t, b, boxID, w.Revision, machines.StateRunning)
 	if woken.Incarnation == m.Incarnation {
 		t.Errorf("incarnation %q stayed after a wake", woken.Incarnation)
+	}
+}
+
+func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	small := machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: "cb-small", Owner: owner, Flavor: small})
+	if err != nil {
+		t.Fatalf("Ensure of a small box: %v", err)
+	}
+	waitState(t, b, "cb-small", m.Revision, machines.StateRunning)
+	if got := fake.lastClaim().Size; got != "medium-4g" {
+		t.Errorf("claim size of a 2 vCPU, 4 GiB flavor = %q, want medium-4g", got)
+	}
+	claimRunning(t, b)
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	claims := fake.count("claim")
+	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: small})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure of a hibernated box with another flavor = %v, %v; want a wake", action, err)
+	}
+	waitState(t, b, boxID, w.Revision, machines.StateRunning)
+	e, err := b.stored(t.Context(), boxID)
+	if err != nil || e.row.Key.Size != "xlarge" || fake.count("claim") != claims {
+		t.Errorf("after the wake: size %q, claims %d -> %d, %v; want xlarge and no new claim", e.row.Key.Size, claims, fake.count("claim"), err)
 	}
 }
 
@@ -1401,7 +1426,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 		t.Run(map[bool]string{false: "any node", true: "a configured node"}[listed], func(t *testing.T) {
 			entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 			entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
-			opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)}
+			opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: clustertest.Open(t)}
 			if listed {
 				opts.Nodes = []string{peer.addr()}
 			}
@@ -2209,7 +2234,7 @@ func newSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Back
 
 func openSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: db})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: db})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

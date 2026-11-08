@@ -17,7 +17,7 @@ import (
 func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		fake := newFakeMachines()
-		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 		svc := newService(fake, testDefaults, newFakeRegistry())
 		ctx := auth.WithUser(t.Context(), alice)
 		mine := startWatch(t, svc, alice)
@@ -60,7 +60,7 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 			return len(r.GetBoxes()) == 1 && r.GetBoxes()[0].GetName() == "work"
 		})
 
-		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 3})
+		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 3})
 		mine.next(t, stateIs(controlv1.BoxState_BOX_STATE_HIBERNATED))
 
 		again := startWatch(t, svc, alice)

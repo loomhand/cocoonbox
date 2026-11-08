@@ -115,7 +115,7 @@ func newDisableEnv(t *testing.T) *disableEnv {
 	}
 	fake := newFakeMachines()
 	box := BoxID(u.ID)
-	fake.put(machines.Machine{ID: box, Owner: u.ID, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: box, Owner: u.ID, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, us)
 	svc.EnableAccounts(us)
 	conn := &fakeConnect{}

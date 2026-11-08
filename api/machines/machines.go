@@ -60,11 +60,10 @@ type Spec struct {
 
 // Machine is a backend's view of one machine.
 type Machine struct {
-	ID     string
-	Owner  string
-	State  State
-	Image  string
-	Flavor Flavor
+	ID    string
+	Owner string
+	State State
+	Image string
 	// Reason explains StateFailed.
 	Reason string
 	// Detail summarizes the backend's raw status for logs; it may name internal hosts.

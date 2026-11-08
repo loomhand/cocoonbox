@@ -85,7 +85,7 @@ func TestSetWakeScheduleStoresTheNextTimeAndTheQuota(t *testing.T) {
 
 func TestAlarmWakesAHibernatedBoxAndHibernatesItAfterAwakeFor(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 
 	e.alarm(t, nine.Add(-61*time.Second))
@@ -137,7 +137,7 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newWakeEnv(t)
-			e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+			e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 			nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 			e.alarm(t, nine.Add(-wakeLead))
 			e.running(t)
@@ -163,7 +163,7 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 
 func TestAFailedWakeHoldsNothing(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.fake.ensureErr = machines.ErrCapacity
 	e.alarm(t, nine.Add(-wakeLead))
@@ -174,7 +174,7 @@ func TestAFailedWakeHoldsNothing(t *testing.T) {
 
 func TestAWakeOfAReplacedScheduleDoesNotHappen(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.store.replaceOnRead = users.WakeSchedule{Box: aliceBox, Owner: alice, Cron: "0 18 * * *", TZ: "UTC", AwakeFor: 15 * time.Minute, NextAt: nine.Add(9 * time.Hour)}
 	e.alarm(t, nine.Add(-wakeLead))
@@ -188,10 +188,10 @@ func TestAWakeOfAReplacedScheduleDoesNotHappen(t *testing.T) {
 
 func TestAlarmWaitsForAnOperationBeforeHibernating(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.alarm(t, nine.Add(-wakeLead))
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 2})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 2})
 
 	e.alarm(t, nine.Add(15*time.Minute))
 	if e.fake.state(aliceBox) != machines.StateRunning || e.store.get(aliceBox).SleepAt.IsZero() {
@@ -207,7 +207,7 @@ func TestAlarmWaitsForAnOperationBeforeHibernating(t *testing.T) {
 
 func TestAlarmLeavesABoxThatWasUpAlone(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.alarm(t, nine.Add(-wakeLead))
 	e.alarm(t, nine.Add(20*time.Minute))
@@ -221,7 +221,7 @@ func TestAlarmLeavesABoxThatWasUpAlone(t *testing.T) {
 
 func TestAlarmKeepsTheWakeFloor(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	w := e.store.get(aliceBox)
 	w.LastWakeAt = nine.Add(-30 * time.Minute)
@@ -237,7 +237,7 @@ func TestAlarmKeepsTheWakeFloor(t *testing.T) {
 
 func TestAnHourlyWakeHappensWhenTheNextPassRunsEarlier(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 * * * *", 15*time.Minute)
 	e.alarm(t, nine.Add(-wakeLead+time.Second))
 	e.running(t)
@@ -251,7 +251,7 @@ func TestAnHourlyWakeHappensWhenTheNextPassRunsEarlier(t *testing.T) {
 
 func TestAlarmWakesOnceForTimesMissedWhileDown(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	now := nine.Add(3*24*time.Hour + 2*time.Hour)
 	e.alarm(t, now)
@@ -265,7 +265,7 @@ func TestAlarmWakesOnceForTimesMissedWhileDown(t *testing.T) {
 
 func TestAlarmHibernatesAfterARestart(t *testing.T) {
 	e := newWakeEnv(t)
-	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.alarm(t, nine.Add(-wakeLead))
 	e.running(t)
@@ -285,7 +285,7 @@ func TestAlarmHibernatesAfterARestart(t *testing.T) {
 func TestRunAlarmsWakesOnTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newWakeEnv(t)
-		e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 1})
+		e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
 		at := time.Now().Add(3 * time.Minute)
 		e.store.put(users.WakeSchedule{Box: aliceBox, Owner: alice, Cron: "* * * * *", TZ: "UTC", AwakeFor: time.Minute, NextAt: at})
 		ctx, cancel := context.WithCancel(t.Context())

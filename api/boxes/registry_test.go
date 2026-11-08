@@ -17,9 +17,32 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
+func TestAnOldBoxIsClaimedAgainAtItsOwnFlavorWhileANewBoxTakesTheNewOne(t *testing.T) {
+	fake, registry := newFakeMachines(), newFakeRegistry()
+	defaults := testDefaults
+	defaults.MaxRunning = 2
+	svc := newService(fake, defaults, registry)
+	ctx := auth.WithUser(t.Context(), alice)
+	registry.Boxes(alice)
+	registry.flavor = machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+	created, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "new"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if spec := fake.lastSpec(); spec.ID != created.GetBox().GetId() || spec.Flavor != registry.flavor {
+		t.Errorf("new box spec = %+v, want flavor %+v", spec, registry.flavor)
+	}
+	if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure of the released old box: %v", err)
+	}
+	if spec := fake.lastSpec(); spec.ID != aliceBox || spec.Flavor != defaultFlavor {
+		t.Errorf("old box spec on its claim again = %+v, want its own flavor %+v", spec, defaultFlavor)
+	}
+}
+
 func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
@@ -30,7 +53,7 @@ func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	if list, _ := svc.List(ctx, &controlv1.ListBoxesRequest{}); len(list.GetBoxes()) != 1 {
 		t.Fatalf("a refused Create added a box: %v", list)
 	}
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 2})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 2})
 	created, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "test"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -55,7 +78,7 @@ func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	if again, err := svc.Ensure(ctx, &controlv1.EnsureRequest{BoxId: test}); err != nil || again.GetBox().GetId() != test {
 		t.Errorf("Ensure of the starting box = %v, %v", again, err)
 	}
-	fake.put(machines.Machine{ID: test, Owner: alice, State: machines.StateHibernated, Flavor: defaultFlavor, Revision: 3})
+	fake.put(machines.Machine{ID: test, Owner: alice, State: machines.StateHibernated, Revision: 3})
 	woken, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 	if err != nil || woken.GetBox().GetId() != aliceBox || woken.GetOperation().GetId() == "" {
 		t.Fatalf("Ensure without a box id = %v, %v, want main woken", woken, err)

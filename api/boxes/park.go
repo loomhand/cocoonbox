@@ -108,7 +108,8 @@ func (s *Service) startPark(ctx context.Context, box string, m machines.Machine)
 		return nil
 	}
 	op, _ := s.ops.begin(context.WithoutCancel(ctx), &operation{user: cur.Owner, boxID: box, phase: controlv1.Phase_PHASE_SAVING, park: true, gen: cur.Revision}, stateTimeout)
-	woken, action, err := s.machines.Ensure(op.ctx, machines.Spec{ID: cur.ID, Owner: cur.Owner, Flavor: cur.Flavor})
+	flavor, _ := s.flavorOf(cur.Owner, box)
+	woken, action, err := s.machines.Ensure(op.ctx, machines.Spec{ID: cur.ID, Owner: cur.Owner, Flavor: flavor})
 	if err == nil && action != machines.ActionWoken {
 		err = fmt.Errorf("machine %s did not wake (action %d)", cur.ID, action)
 		if action == machines.ActionCreated {
