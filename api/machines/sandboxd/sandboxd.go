@@ -117,7 +117,7 @@ type Backend struct {
 	stale    map[string]bool
 }
 
-// New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
+// New checks opts, learns the mesh's nodes and follows the machines notify until ctx ends.
 func New(ctx context.Context, opts Options) (*Backend, error) {
 	api, err := opts.client()
 	if err != nil {
@@ -162,6 +162,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		}
 		b.cacheMu.Unlock()
 	})
+	b.mesh(ctx)
 	return b, nil
 }
 
