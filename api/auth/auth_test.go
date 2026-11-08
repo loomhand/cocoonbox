@@ -52,6 +52,19 @@ func TestOnlyTheOperatorSocketMarksAnOperatorCall(t *testing.T) {
 	}
 }
 
+func TestOnlyTheOperatorSocketCarriesAnOperatorFlavor(t *testing.T) {
+	a := New(anyToken{}, nil)
+	flavor := func(ctx context.Context, _ any) (any, error) { return OperatorFlavor(ctx), nil }
+	got, err := a.Unary(metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderAuthorization, "Bearer cb_0123", HeaderOperatorFlavor, "2/4096/20")), nil, &grpc.UnaryServerInfo{}, flavor)
+	if err != nil || got != "" {
+		t.Errorf("a user call with the flavor header: flavor %q, %v; want none", got, err)
+	}
+	got, err = OperatorUnary(metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderOperatorUser, "u-any", HeaderOperatorFlavor, "2/4096/20")), nil, &grpc.UnaryServerInfo{}, flavor)
+	if err != nil || got != "2/4096/20" {
+		t.Errorf("an operator socket call: flavor %q, %v", got, err)
+	}
+}
+
 func TestAnIdentityProviderNamesTheCredentialItsCallsEndWith(t *testing.T) {
 	a := WithIdentities(provider{"ext-alice": {User: "alice", Credential: "idp:session-1"}}, nil)
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(HeaderAuthorization, "Bearer ext-alice"))

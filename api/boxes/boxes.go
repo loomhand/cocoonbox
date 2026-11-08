@@ -111,6 +111,7 @@ type Registry interface {
 	HasBox(owner, id string) bool
 	AddBox(ctx context.Context, b users.Box) (users.Box, error)
 	RenameBox(ctx context.Context, owner, id, name string) (users.Box, error)
+	SetBoxFlavor(ctx context.Context, owner, id string, flavor machines.Flavor) error
 	RemoveBox(ctx context.Context, owner, id string) error
 	// MaxRunning is the owner's own running limit, 0 for MaxRunning of the defaults.
 	MaxRunning(owner string) int

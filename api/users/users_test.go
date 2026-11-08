@@ -656,6 +656,25 @@ func TestNewBoxesTakeTheConfiguredFlavorAndKeepItWhenTheFlavorChanges(t *testing
 	}
 }
 
+func TestSetBoxFlavorReachesTheOtherApisAndRefusesAnUnknownBox(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	other := openTestService(t, dsn, gw, tenants)
+	box := svc.Boxes(u.ID)[0].ID
+	if err := svc.SetBoxFlavor(t.Context(), u.ID, box, newFlavor); err != nil {
+		t.Fatalf("SetBoxFlavor: %v", err)
+	}
+	if got := svc.Boxes(u.ID)[0].Flavor; got != newFlavor {
+		t.Errorf("flavor here = %+v, want %+v", got, newFlavor)
+	}
+	if err := other.Load(t.Context()); err != nil || other.Boxes(u.ID)[0].Flavor != newFlavor {
+		t.Errorf("another api reloading = %v, flavor %+v; want %+v", err, other.Boxes(u.ID)[0].Flavor, newFlavor)
+	}
+	if err := svc.SetBoxFlavor(t.Context(), u.ID, "cb-000000000009", newFlavor); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetBoxFlavor of an unknown box = %v, want ErrNotFound", err)
+	}
+}
+
 func TestTheBoxFlavorMigrationGivesEveryExistingBoxTheOldFlavorAndNewRowsNone(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})

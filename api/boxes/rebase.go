@@ -17,6 +17,12 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
+const (
+	gib = 1 << 30
+	// diskHeadroom is what first boot, caches and replayed packages add to a box's disk beside its saved files; the image is the overlay's lower layer, off the disk.
+	diskHeadroom = 2 * gib
+)
+
 func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*controlv1.Operation, error) {
 	box := req.GetBoxId()
 	user, err := s.ownerOf(ctx, box)
@@ -39,17 +45,25 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if Family(image) != Family(m.Image) && !auth.Operator(ctx) {
 		return nil, status.Errorf(codes.FailedPrecondition, "image %q is not of the box's family %s; only an operator moves a box to another family", image, Family(m.Image))
 	}
+	var resize *machines.Flavor
+	if raw := auth.OperatorFlavor(ctx); raw != "" {
+		flavor, err := parseFlavor(raw)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		resize = &flavor
+	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if !started {
 		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", op.id)
 	}
-	go s.runRebase(op, user, m, image)
+	go s.runRebase(op, user, m, image, resize)
 	log.WithFunc("boxes.Service.Rebase").WithField("box", box).Infof(ctx, "rebasing from %s (%s) to %s as operation %s", m.ID, m.Image, image, op.id)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
-// runRebase saves quiesced, starts a machine from image, restores into it, then deletes the old machine.
-func (s *Service) runRebase(op *operation, user string, old machines.Machine, image string) {
+// runRebase saves quiesced, starts a machine from image, restores into it, then deletes the old machine; a resize flavor sizes the new machine and becomes the box's once it serves.
+func (s *Service) runRebase(op *operation, user string, old machines.Machine, image string, resize *machines.Flavor) {
 	logger := log.WithFunc("boxes.Service.runRebase").WithField("box", op.boxID)
 	start := time.Now()
 	rec, err := s.save(op, user, old, agentv1.Consistency_CONSISTENCY_QUIESCED)
@@ -79,6 +93,13 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	if !ok {
 		op.fail("the box is gone")
 		return
+	}
+	if resize != nil {
+		if rec.LogicalBytes+diskHeadroom > uint64(resize.DiskGiB)*gib {
+			op.fail(fmt.Sprintf("the box holds %.1f GiB, which a %d GiB disk does not take with room to boot", float64(rec.LogicalBytes)/gib, resize.DiskGiB))
+			return
+		}
+		flavor = *resize
 	}
 	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Tenant: tenant, Flavor: flavor, Image: image}
 	created, _, err := s.machines.Ensure(op.ctx, spec)
@@ -123,6 +144,14 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		op.fail("superseded; the old machine stays")
 		return
 	}
+	if resize != nil {
+		if err := s.registry.SetBoxFlavor(op.ctx, user, op.boxID, *resize); err != nil {
+			logger.Error(op.ctx, err, "record the box's new flavor")
+			s.discard(op, created.ID)
+			op.fail("recording the new flavor failed; the old machine stays")
+			return
+		}
+	}
 	if err := s.deleteMachine(op.ctx, old.ID); err != nil {
 		logger.Error(op.ctx, err, "delete old machine")
 		op.fail("state restored into the new machine, but removing the old machine failed")
@@ -162,4 +191,14 @@ func (s *Service) discard(op *operation, id string) {
 	if err := s.deleteMachine(context.WithoutCancel(op.ctx), id); err != nil {
 		log.WithFunc("boxes.Service.discard").WithField("box", op.boxID).Error(op.ctx, err, "delete "+id)
 	}
+}
+
+// parseFlavor reads a flavor written vcpus/memory_mib/disk_gib.
+func parseFlavor(raw string) (machines.Flavor, error) {
+	var f machines.Flavor
+	var rest string
+	if n, _ := fmt.Sscanf(raw, "%d/%d/%d%s", &f.VCPUs, &f.MemoryMiB, &f.DiskGiB, &rest); n != 3 || f.VCPUs == 0 || f.MemoryMiB == 0 || f.DiskGiB == 0 {
+		return machines.Flavor{}, fmt.Errorf("flavor %q is not vcpus/memory_mib/disk_gib", raw)
+	}
+	return f, nil
 }

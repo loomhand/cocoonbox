@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -44,7 +45,12 @@ func serveOperator(ctx context.Context, path string, boxes controlv1.BoxesServer
 
 // rebaseBox rebases the box of a user, named or by id, to image through the running api and follows the operation to its end.
 func rebaseBox(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) (err error) {
-	if len(args) != 3 {
+	if len(args) < 3 {
+		return errors.New(cliUsage)
+	}
+	flags := flag.NewFlagSet("rebase", flag.ContinueOnError)
+	flavor := flags.String("flavor", "", "the box's new flavor, vcpus/memory_mib/disk_gib; the rebase refuses a box whose files do not fit its disk")
+	if flags.Parse(args[3:]) != nil || flags.NArg() != 0 {
 		return errors.New(cliUsage)
 	}
 	if cfg.OperatorSocket == "" {
@@ -66,11 +72,15 @@ func rebaseBox(ctx context.Context, cfg *config.Config, args []string, stdout io
 	defer func() { err = errors.Join(err, conn.Close()) }()
 	client := controlv1.NewBoxesClient(conn)
 	ctx = metadata.AppendToOutgoingContext(ctx, auth.HeaderOperatorUser, u.ID)
+	on := ""
+	if *flavor != "" {
+		ctx, on = metadata.AppendToOutgoingContext(ctx, auth.HeaderOperatorFlavor, *flavor), " on "+*flavor
+	}
 	op, err := client.Rebase(ctx, &controlv1.RebaseRequest{BoxId: args[1], Image: args[2]})
 	if err != nil {
 		return err
 	}
-	if _, err = fmt.Fprintf(stdout, "operation %s: rebase box %s of user %s (%s) to %s\n", op.GetId(), op.GetBoxId(), u.Name, u.ID, args[2]); err != nil {
+	if _, err = fmt.Fprintf(stdout, "operation %s: rebase box %s of user %s (%s) to %s%s\n", op.GetId(), op.GetBoxId(), u.Name, u.ID, args[2], on); err != nil {
 		return err
 	}
 	return followOperation(ctx, client, op.GetId(), stdout)

@@ -536,19 +536,44 @@ func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
 			t.Fatalf("UpdateMachine %s: %v", id, err)
 		}
 	}
-	write("cb-a", template)
-	write("cb-b", template)
-	if known, err := b.known(t.Context()); err != nil || len(known) != 2 {
-		t.Fatalf("first known = %d machines, %v; want both", len(known), err)
+	stale := func(ids ...string) bool {
+		b.cacheMu.Lock()
+		defer b.cacheMu.Unlock()
+		for _, id := range ids {
+			if !b.stale[id] {
+				return false
+			}
+		}
+		return true
 	}
+	for _, id := range []string{"cb-a", "cb-b", "cb-keep"} {
+		write(id, template)
+	}
+	if known, err := b.known(t.Context()); err != nil || len(known) != 3 {
+		t.Fatalf("first known = %d machines, %v; want all 3", len(known), err)
+	}
+	clustertest.WaitFor(t, "the listener to take a notify", func() bool {
+		write("cb-probe", template)
+		return stale("cb-probe")
+	})
+	if _, err := b.known(t.Context()); err != nil {
+		t.Fatalf("known after the probe: %v", err)
+	}
+	b.cacheMu.Lock()
+	read := b.cachedAt
+	b.cacheMu.Unlock()
 	write("cb-a", "cbdesk:v9")
 	if _, err := db.DeleteMachineIf(t.Context(), "cb-b", func(cluster.Machine) bool { return true }); err != nil {
 		t.Fatalf("DeleteMachineIf: %v", err)
 	}
-	clustertest.WaitFor(t, "the change and the delete in known", func() bool {
-		known, err := b.known(t.Context())
-		return err == nil && len(known) == 1 && known["cb-a"] != nil && known["cb-a"].image == "cbdesk:v9"
-	})
+	clustertest.WaitFor(t, "both notifies", func() bool { return stale("cb-a", "cb-b") })
+	known, err := b.known(t.Context())
+	b.cacheMu.Lock()
+	whole := !b.cachedAt.Equal(read)
+	b.cacheMu.Unlock()
+	if err != nil || whole || len(known) != 3 || known["cb-a"] == nil || known["cb-a"].image != "cbdesk:v9" || known["cb-b"] != nil || known["cb-keep"] == nil {
+		t.Errorf("known after a change and a delete = %v, %v, read whole %t; want cb-a on cbdesk:v9, cb-keep and the probe from the notified rows alone", slices.Sorted(maps.Keys(known)), err, whole)
+	}
 	b.cacheMu.Lock()
 	b.cachedAt = time.Time{}
 	b.cacheMu.Unlock()
