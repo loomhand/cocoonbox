@@ -181,7 +181,7 @@ func (c *client) full(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// owner asks the node which node owns sandbox id, with the sandbox's own token; a node may adopt an archived claim to answer.
+// owner asks the node which node owns sandbox id; a node may adopt an archived claim to answer.
 func (c *client) owner(ctx context.Context, id string) (string, error) {
 	var resp struct {
 		OwnerAddr string `json:"owner_addr"`
@@ -221,7 +221,7 @@ func (c *client) patchEnv(ctx context.Context, id string, entries map[string]*en
 	return c.do(ctx, http.MethodPatch, "/v1/sandboxes/"+url.PathEscape(id)+"/env", map[string]any{"env": entries}, nil)
 }
 
-// exec runs a buffered command as the guest's root with the sandbox's own token.
+// exec runs a buffered command as the guest's root.
 func (c *client) exec(ctx context.Context, id string, req execRequest) (execResponse, error) {
 	var resp execResponse
 	err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/exec", req, &resp)
