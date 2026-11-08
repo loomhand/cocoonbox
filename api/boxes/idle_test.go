@@ -82,6 +82,18 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	}
 }
 
+func TestAnEnsureOfARunningBoxDoesNotRestartItsIdleTime(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	env.svc.hibernateIdle(t.Context())
+	clock.advance(userIdleAfter - time.Second)
+	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	clock.advance(time.Second)
+	env.svc.hibernateIdle(t.Context())
+	waitState(t, env.fake, aliceBox, machines.StateHibernating)
+}
+
 func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	bobBox := BoxID(bob)
