@@ -124,7 +124,7 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, reke
 	unlock := p.locks.Lock(m.ID)
 	defer unlock()
 	if s.userLocks != nil {
-		unlockShared, err := s.userLocks.LockLong(ctx, "provision:"+m.ID)
+		unlockShared, err := s.userLocks.LockProvision(ctx, "provision:"+m.ID)
 		if err != nil {
 			return err
 		}
