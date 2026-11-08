@@ -49,6 +49,7 @@ const (
 	sharedTimeout   = 10 * time.Second
 	ownerTimeout    = 10 * time.Second
 	nodeLostAfter   = 5 * time.Minute
+	fullReadEvery   = time.Minute
 )
 
 var writeIdentity = []string{"sh", "-c", `set -e; umask 022; mkdir -p /run/cocoonbox-identity; chmod 0755 /run/cocoonbox-identity
@@ -111,6 +112,12 @@ type Backend struct {
 	// away maps a node that machines name to when the refresh first saw it out of the mesh.
 	away map[string]time.Time
 	full map[string]bool
+
+	// cached is the refreshing api's copy of the machine records, read whole at cachedAt; stale names the rows notified since.
+	cacheMu  sync.Mutex
+	cached   map[string]*entry
+	cachedAt time.Time
+	stale    map[string]bool
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -141,15 +148,29 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err = b.checkNodes(ctx, advertised); err != nil {
 		return nil, err
 	}
-	go opts.Store.Listen(ctx, cluster.ChannelMachines, b.publishAll, func(payload string) {
-		c, err := cluster.ParseChange(payload)
-		if err != nil {
-			log.WithFunc("sandboxd.New").Warnf(ctx, "take a machines notify: %v", err)
+	go opts.Store.Listen(ctx, cluster.ChannelMachines, func() {
+		b.publishAll()
+		b.cacheMu.Lock()
+		b.cachedAt = time.Time{}
+		b.cacheMu.Unlock()
+	}, func(payload string) {
+		c, parseErr := cluster.ParseChange(payload)
+		if parseErr != nil {
+			log.WithFunc("sandboxd.New").Warnf(ctx, "take a machines notify: %v", parseErr)
 			return
 		}
 		b.publish(c.ID, c.Owner)
+		b.cacheMu.Lock()
+		if b.stale != nil {
+			b.stale[c.ID] = true
+		}
+		b.cacheMu.Unlock()
 	})
-	if err := b.refresh(ctx); err != nil {
+	known, err := b.snapshot(ctx)
+	if err == nil {
+		err = b.apply(ctx, known)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
 	}
 	go b.loop(ctx, renewInterval, loopTimeout, func(ctx context.Context) error {
@@ -161,6 +182,11 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 
 // Run re-reads the claims and renews their leases until ctx ends; one api of the cluster runs it for all.
 func (b *Backend) Run(ctx context.Context) {
+	defer func() {
+		b.cacheMu.Lock()
+		b.cached, b.stale = nil, nil
+		b.cacheMu.Unlock()
+	}()
 	var wg sync.WaitGroup
 	wg.Go(func() { b.loop(ctx, refreshInterval, loopTimeout, b.refresh) })
 	wg.Go(func() { b.loop(ctx, roomInterval, loopTimeout, b.readRoom) })
@@ -962,12 +988,17 @@ func (b *Backend) sandboxOf(ctx context.Context, id string) (*entry, *client, er
 	return e, node, err
 }
 
-// refresh re-reads every claim of the mesh, drops machines whose claim is gone and probes agents not yet seen.
+// refresh applies the mesh's claims to the machine records this api caches while it refreshes.
 func (b *Backend) refresh(ctx context.Context) error {
-	known, err := b.snapshot(ctx)
+	known, err := b.known(ctx)
 	if err != nil {
 		return err
 	}
+	return b.apply(ctx, known)
+}
+
+// apply re-reads every claim of the mesh against known, drops machines whose claim is gone and probes agents not yet seen.
+func (b *Backend) apply(ctx context.Context, known map[string]*entry) error {
 	addrs := b.mesh(ctx)
 	lists, err := b.listMesh(ctx, addrs)
 	if err != nil {
@@ -1012,6 +1043,46 @@ func (b *Backend) endLapsed(ctx context.Context, id string) {
 	}); err != nil {
 		log.WithFunc("sandboxd.Backend.endLapsed").WithField("machine", id).Warnf(ctx, "end the lapsed op: %v", err)
 	}
+}
+
+// known returns a copy of the machine records: read whole every fullReadEvery and after a notify reconnect, else the cached ones with the notified rows read again.
+func (b *Backend) known(ctx context.Context) (map[string]*entry, error) {
+	b.cacheMu.Lock()
+	full := b.cached == nil || time.Since(b.cachedAt) >= fullReadEvery
+	ids := slices.Collect(maps.Keys(b.stale))
+	b.stale = map[string]bool{}
+	b.cacheMu.Unlock()
+	if full {
+		read := time.Now()
+		known, err := b.snapshot(ctx)
+		if err != nil {
+			return nil, err
+		}
+		b.cacheMu.Lock()
+		defer b.cacheMu.Unlock()
+		b.cached, b.cachedAt = known, read
+		return maps.Clone(known), nil
+	}
+	var recs []cluster.Machine
+	var err error
+	if len(ids) > 0 {
+		recs, err = b.opts.Store.MachinesIn(ctx, ids)
+	}
+	b.cacheMu.Lock()
+	defer b.cacheMu.Unlock()
+	if err != nil {
+		for _, id := range ids {
+			b.stale[id] = true
+		}
+		return nil, err
+	}
+	for _, id := range ids {
+		delete(b.cached, id)
+	}
+	for _, rec := range recs {
+		b.cached[rec.ID] = loadEntry(rec)
+	}
+	return maps.Clone(b.cached), nil
 }
 
 func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {

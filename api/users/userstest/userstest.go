@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,6 +126,21 @@ func (f *Tenants) PutTenant(_ context.Context, name, token string, maxClaims int
 	}
 	f.Max[name], f.Tokens[name] = maxClaims, cmp.Or(token, f.Tokens[name])
 	return nil
+}
+
+func (f *Tenants) StaleTenants(_ context.Context, want map[string]int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	var stale []string
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		if held, ok := f.Max[name]; !ok || held != want[name] {
+			stale = append(stale, name)
+		}
+	}
+	return stale, nil
 }
 
 func (f *Tenants) DeleteTenant(_ context.Context, name string) error {

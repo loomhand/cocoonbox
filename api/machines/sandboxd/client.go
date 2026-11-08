@@ -274,7 +274,9 @@ func (c *client) request(ctx context.Context, token, method, path string, body, 
 		}
 		payload = bytes.NewReader(raw)
 	}
-	u := c.base.JoinPath(path)
+	p, query, _ := strings.Cut(path, "?")
+	u := c.base.JoinPath(p)
+	u.RawQuery = query
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), payload)
 	if err != nil {
 		return fmt.Errorf("build %s %s: %w", method, path, err)

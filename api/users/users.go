@@ -16,6 +16,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
@@ -38,6 +39,8 @@ const (
 	defaultBoxes = 1
 
 	tokenMissInterval = 100 * time.Millisecond
+	tenantInterval    = 10 * time.Minute
+	tenantFanout      = 8
 	listenRetry       = 2 * time.Second
 	endedGrace        = 10 * time.Minute
 
@@ -368,34 +371,24 @@ func (s *Service) Listen(ctx context.Context) {
 	}
 }
 
-// Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, turns off disabled users' gw keys and lifts the gw cap of admins on the default.
-func (s *Service) Reconcile(ctx context.Context) error {
-	var errs []error
-	for _, r := range s.records() {
-		token, err := s.seal.open(r.tenantToken, userData(r.ID, columnTenant))
-		if err == nil {
-			err = s.tenants.PutTenant(ctx, r.ID, token, s.claimCap(r))
+// RunTenants rewrites, until ctx ends and every tenantInterval, the tenants sandboxd lacks or holds with another cap or egress class.
+func (s *Service) RunTenants(ctx context.Context) {
+	logger := log.WithFunc("users.Service.RunTenants")
+	tick := time.Tick(tenantInterval)
+	for {
+		n, err := s.reconcileTenants(ctx)
+		if n > 0 {
+			logger.Warnf(ctx, "rewrote %d stale sandboxd tenants", n)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("tenant of %s: %w", r.Name, err))
+			logger.Warnf(ctx, "reconcile the sandboxd tenants: %v", err)
 		}
-		if r.Disabled {
-			if err = s.gw.SetEnabled(ctx, r.ID, false); err != nil {
-				errs = append(errs, fmt.Errorf("gw key of %s: %w", r.Name, err))
-			}
-		}
-		if !r.Admin {
-			continue
-		}
-		daily, err := s.gw.DailyCap(ctx, r.ID)
-		if err == nil && daily == nil {
-			err = s.gw.SetDailyCap(ctx, r.ID, new(int64(gwkeys.Unlimited)))
-		}
-		if err != nil {
-			errs = append(errs, fmt.Errorf("gw cap of %s: %w", r.Name, err))
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
 		}
 	}
-	return errors.Join(errs...)
 }
 
 // ByTokenSHA256 returns the enabled user whose API or device token hashes to sum; a miss rechecks the tables at most once per tokenMissInterval.
@@ -1121,6 +1114,45 @@ func (s *Service) records() []record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return slices.SortedFunc(maps.Values(s.byID), func(a, b record) int { return strings.Compare(a.Name, b.Name) })
+}
+
+// reconcileTenants writes each stale tenant from the user's current record, skipping users deleted meanwhile, and returns how many it wrote.
+func (s *Service) reconcileTenants(ctx context.Context) (int, error) {
+	records := s.records()
+	want := make(map[string]int, len(records))
+	for _, r := range records {
+		want[r.ID] = s.claimCap(r)
+	}
+	stale, err := s.tenants.StaleTenants(ctx, want)
+	if err != nil {
+		return 0, err
+	}
+	errs := make([]error, len(stale))
+	var written atomic.Int32
+	var g errgroup.Group
+	g.SetLimit(tenantFanout)
+	for i, id := range stale {
+		g.Go(func() error {
+			r, err := s.record(id)
+			if errors.Is(err, ErrNotFound) {
+				return nil
+			}
+			if err == nil {
+				var token string
+				if token, err = s.seal.open(r.tenantToken, userData(id, columnTenant)); err == nil {
+					err = s.tenants.PutTenant(ctx, id, token, s.claimCap(r))
+				}
+			}
+			if err != nil {
+				errs[i] = fmt.Errorf("tenant of %s: %w", id, err)
+				return nil
+			}
+			written.Add(1)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return int(written.Load()), errors.Join(errs...)
 }
 
 // outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.

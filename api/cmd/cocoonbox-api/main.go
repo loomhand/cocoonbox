@@ -112,9 +112,7 @@ func main() {
 		logger.Fatalf(ctx, err, "open users")
 	}
 	defer accounts.Close()
-	if err = accounts.Reconcile(ctx); err != nil {
-		logger.Error(ctx, err, "reconcile sandboxd tenants and gw caps")
-	}
+	loops.add(accounts.RunTenants)
 	go accounts.Listen(ctx)
 	var broker *connect.Service
 	if cfg.Connect.PublicURL != "" {

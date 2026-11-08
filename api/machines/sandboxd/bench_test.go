@@ -8,6 +8,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -20,7 +21,10 @@ const (
 	benchSettle  = time.Minute
 )
 
-var benchSizes = []int{1, 100, 1000}
+var (
+	benchSizes   = []int{1, 100, 1000}
+	refreshSizes = []int{50000}
+)
 
 func BenchmarkListOwner(b *testing.B) {
 	benchSeeded(b, func(ctx context.Context, be *Backend) error {
@@ -55,6 +59,32 @@ func BenchmarkResolveShape(b *testing.B) {
 		_, err = be.Address(ctx, ms[0].ID)
 		return err
 	})
+}
+
+func BenchmarkStart(b *testing.B) {
+	for _, n := range refreshSizes {
+		b.Run(fmt.Sprintf("machines=%d", n), func(b *testing.B) {
+			fake, db := seedClaims(b, n)
+			for b.Loop() {
+				openSharedBackend(b, fake, db)
+			}
+		})
+	}
+}
+
+func BenchmarkRefresh(b *testing.B) {
+	for _, n := range refreshSizes {
+		b.Run(fmt.Sprintf("machines=%d", n), func(b *testing.B) {
+			fake, db := seedClaims(b, n)
+			be := openSharedBackend(b, fake, db)
+			b.ReportAllocs()
+			for b.Loop() {
+				if err := be.refresh(b.Context()); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 func benchSeeded(b *testing.B, op func(context.Context, *Backend) error) {
@@ -116,4 +146,28 @@ func seedBackend(b *testing.B, n int) *Backend {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func seedClaims(b *testing.B, n int) (*fakeSandboxd, *cluster.Store) {
+	b.Helper()
+	fake, db := newFakeSandboxd(b), clustertest.Open(b)
+	var g errgroup.Group
+	g.SetLimit(benchSeedFan)
+	for i := range n {
+		id := fmt.Sprintf("cb-%06d", i)
+		r := row{ID: fmt.Sprintf("sbx-%06d", i), Key: poolKey{Template: template, Net: netNone, Size: "xlarge"}, Metadata: map[string]string{metaMachine: id, metaOwner: owner}, ClaimedAt: time.Now().UTC().Truncate(time.Second)}
+		fake.add(&fakeSandbox{row: r, token: "claim-" + id})
+		g.Go(func() error {
+			e := &entry{id: id, owner: owner, image: template, created: r.ClaimedAt, row: &r, ownerAddr: fake.addr(), meta: map[string]string{}, ready: true}
+			_, err := db.UpdateMachine(b.Context(), id, func(m *cluster.Machine, _ bool) (bool, error) {
+				*m = e.record()
+				return true, nil
+			})
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
+		b.Fatalf("seed: %v", err)
+	}
+	return fake, db
 }
