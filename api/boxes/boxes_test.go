@@ -408,13 +408,14 @@ func newService(backend machines.Machines, defaults Defaults, registry Registry)
 
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
 type fakeRegistry struct {
-	mu       sync.Mutex
-	boxes    map[string][]users.Box
-	max      int
-	running  map[string]int
-	policies map[string]users.Policy
-	changed  func(owner string)
-	flavor   machines.Flavor
+	mu        sync.Mutex
+	boxes     map[string][]users.Box
+	max       int
+	running   map[string]int
+	policies  map[string]users.Policy
+	changed   func(owner string)
+	flavor    machines.Flavor
+	flavorErr error
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -452,6 +453,9 @@ func (r *fakeRegistry) AddBox(_ context.Context, b users.Box) (users.Box, error)
 func (r *fakeRegistry) SetBoxFlavor(_ context.Context, owner, id string, flavor machines.Flavor) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.flavorErr != nil {
+		return r.flavorErr
+	}
 	for i, b := range r.boxes[owner] {
 		if b.ID == id {
 			r.boxes[owner][i].Flavor = flavor

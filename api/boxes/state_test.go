@@ -621,6 +621,31 @@ func TestAnOperatorRebaseToAFlavorResizesTheBoxOnlyWhenItsFilesFit(t *testing.T)
 	}
 }
 
+func TestAResizeWhoseFlavorWriteFailsKeepsTheOldMachineAndFlavor(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.svc.registry.(*fakeRegistry).flavorErr = errors.New("database is restarting")
+	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(auth.HeaderOperatorUser, alice, auth.HeaderOperatorFlavor, "2/4096/20"))
+	got, err := auth.OperatorUnary(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+		return env.svc.Rebase(ctx, req.(*controlv1.RebaseRequest))
+	})
+	if err != nil {
+		t.Fatalf("operator Rebase to 2/4096/20: %v", err)
+	}
+	created := env.fake.waitSpec(t, 1)
+	env.fake.push(machines.Machine{ID: created.ID, State: machines.StateRunning})
+	last := watch(t, env.svc, env.ctx, got.(*controlv1.Operation).GetId(), "")
+	if ev := last[len(last)-1]; ev.GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(ev.GetDetail(), "the old machine stays") {
+		t.Fatalf("resize with a failing flavor write = %v, want it failed", ev)
+	}
+	if deleted := env.fake.deletedIDs(); deleted != created.ID {
+		t.Errorf("deleted machines = %q, want only the new %s", deleted, created.ID)
+	}
+	if flavor, _ := env.svc.flavorOf(alice, aliceBox); flavor != defaultFlavor {
+		t.Errorf("box flavor = %+v, want %+v", flavor, defaultFlavor)
+	}
+}
+
 func TestRebaseRefusesImagesOffTheAllowList(t *testing.T) {
 	env := newStateEnv(t)
 	for _, image := range []string{"vk-cocoonbox-cb-9f86d081884c-0-984b48", "cocoonbox-desktop-v9", "desktop:v1"} {
