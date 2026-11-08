@@ -63,9 +63,7 @@ type Options struct {
 	// Image is the default template.
 	Image string
 	// Flavor is the flavor every box takes; it must be a sandboxd tier.
-	Flavor machines.Flavor
-	// DiskGiB is the disk the node gives each claim.
-	DiskGiB           uint32
+	Flavor            machines.Flavor
 	AgentPort         int
 	TenantEgressClass string
 	// Nodes lists the node addresses the backend may call besides the entry node; empty allows every node the mesh names.
@@ -944,7 +942,7 @@ func (b *Backend) stored(ctx context.Context, id string) (*entry, error) {
 }
 
 func (b *Backend) machine(e *entry) machines.Machine {
-	m := e.machine(b.opts.DiskGiB)
+	m := e.machine()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	m.Node = cmp.Or(e.ownerAddr, b.entryAddr)

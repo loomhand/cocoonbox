@@ -178,7 +178,7 @@ func TestAReachWrittenAfterTheSweepsReadKeepsAnAgentBoxUp(t *testing.T) {
 func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *clockSigner, string) {
 	t.Helper()
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	box := aliceBox
 	if agent {
@@ -206,6 +206,6 @@ func addAgentBox(t *testing.T, svc *Service, fake *fakeMachines, wake string) st
 	if err != nil {
 		t.Fatalf("add agent box: %v", err)
 	}
-	fake.put(machines.Machine{ID: b.ID, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 1, Meta: map[string]string{metaWake: wake}})
+	fake.put(machines.Machine{ID: b.ID, Owner: alice, State: machines.StateRunning, Incarnation: "vm1", Revision: 1, Meta: map[string]string{metaWake: wake}})
 	return b.ID
 }

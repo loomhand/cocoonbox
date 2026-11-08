@@ -230,7 +230,7 @@ func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
 func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	a.fake.onDeliver = func() { time.Sleep(100 * time.Millisecond) }
-	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 2})
+	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1", Revision: 2})
 	m, err := a.fake.Get(t.Context(), aliceBox)
 	if err != nil {
 		t.Fatalf("Get: %v", err)

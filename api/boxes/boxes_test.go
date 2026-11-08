@@ -128,7 +128,7 @@ func TestTheImageOfAUsersPolicyStartsItsBoxesAndUpgradesThoseOfItsFamily(t *test
 		{"cbdesk:v24", "cbdesk:v25"},
 	} {
 		running := newFakeMachines()
-		running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
+		running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Image: tt.image, Revision: 1})
 		svc = newService(running, defaults, registry)
 		svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 		ctx := auth.WithUser(t.Context(), alice)
@@ -198,7 +198,7 @@ func TestEnsureCreatesBox(t *testing.T) {
 
 func TestHibernateAndWake(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
@@ -268,7 +268,7 @@ func TestOperationFails(t *testing.T) {
 
 func TestSupersededOperationFails(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
@@ -288,7 +288,7 @@ func TestSupersededOperationFails(t *testing.T) {
 
 func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
@@ -307,7 +307,7 @@ func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 
 func TestOwnership(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	bobCtx := auth.WithUser(t.Context(), bob)
 
@@ -551,7 +551,7 @@ func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.M
 	case !ok:
 		f.clock++
 		m = machines.Machine{
-			ID: spec.ID, Owner: spec.Owner, State: machines.StateStarting, Flavor: spec.Flavor,
+			ID: spec.ID, Owner: spec.Owner, State: machines.StateStarting,
 			Image: cmp.Or(spec.Image, "desktop:v1"), CreatedAt: time.Unix(f.clock, 0), Revision: 1, Meta: maps.Clone(spec.Meta),
 		}
 		f.machines[spec.ID] = m
@@ -808,7 +808,7 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	if m.Revision == refreshEvent {
 		return cur, true, f.pushed
 	}
-	m.Owner, m.Flavor, m.Image, m.CreatedAt = cmp.Or(m.Owner, cur.Owner), cmp.Or(m.Flavor, cur.Flavor), cmp.Or(m.Image, cur.Image), cur.CreatedAt
+	m.Owner, m.Image, m.CreatedAt = cmp.Or(m.Owner, cur.Owner), cmp.Or(m.Image, cur.Image), cur.CreatedAt
 	m.Incarnation = cmp.Or(m.Incarnation, cur.Incarnation)
 	if m.Meta == nil {
 		m.Meta = cur.Meta

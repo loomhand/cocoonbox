@@ -135,7 +135,7 @@ func (e *entry) begin(op string, now time.Time, lease time.Duration) {
 	e.revision++
 }
 
-func (e *entry) machine(disk uint32) machines.Machine {
+func (e *entry) machine() machines.Machine {
 	state, reason := e.state()
 	m := machines.Machine{
 		ID:       e.id,
@@ -160,7 +160,6 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	}
 	m.Image = e.row.Key.Template
 	m.EnvMissing = e.row.EnvMissing
-	m.Flavor = flavorOf(e.row.Key.Size, disk)
 	m.CreatedAt = e.row.ClaimedAt
 	m.Incarnation = fmt.Sprintf("%d.%d.%d", e.row.ClaimedAt.UnixMilli(), e.row.Restarts, e.wakes)
 	m.Detail = fmt.Sprintf("sandbox=%s hibernated=%t archived=%t restarts=%d ready=%t op=%s", e.row.ID,
@@ -191,15 +190,4 @@ func sizeOf(f machines.Flavor) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func flavorOf(size string, disk uint32) machines.Flavor {
-	for _, t := range tiers {
-		if t.size == size {
-			f := t.flavor
-			f.DiskGiB = disk
-			return f
-		}
-	}
-	return machines.Flavor{DiskGiB: disk}
 }

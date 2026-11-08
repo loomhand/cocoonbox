@@ -65,7 +65,7 @@ func TestEnsureClaimsAndReportsRunningOnceTheAgentAnswers(t *testing.T) {
 		t.Fatalf("Ensure = %+v, %v, %v", m, action, err)
 	}
 	got := waitState(t, b, boxID, m.Revision, machines.StateRunning)
-	if got.Image != template || got.Flavor != xlarge || got.Owner != owner || got.Incarnation == "" || got.CreatedAt.IsZero() {
+	if got.Image != template || got.Owner != owner || got.Incarnation == "" || got.CreatedAt.IsZero() {
 		t.Errorf("running machine = %+v", got)
 	}
 	claim := fake.lastClaim()
@@ -189,7 +189,7 @@ func TestAnAPIWithNodesCallsNoOtherNode(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, peer.peers = []*fakeSandboxd{peer}, []*fakeSandboxd{entry}
 	entry.redirect = []*fakeSandboxd{peer}
-	b, err := New(t.Context(), Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t), Nodes: []string{"10.0.0.9:7777"}})
+	b, err := New(t.Context(), Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: clustertest.Open(t), Nodes: []string{"10.0.0.9:7777"}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -276,7 +276,7 @@ func TestNodesRefuseAnEntryPosingAsANodeAndAMachineOnANodeLeftOut(t *testing.T) 
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	db := clustertest.Open(t)
-	opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: db, Nodes: []string{entry.addr()}}
+	opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: db, Nodes: []string{entry.addr()}}
 	if _, err := New(t.Context(), opts); err == nil {
 		t.Error("New accepted an entry node that advertises an address nodes lists")
 	}
@@ -566,7 +566,7 @@ func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
 
 func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1431,7 +1431,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 		t.Run(map[bool]string{false: "any node", true: "a configured node"}[listed], func(t *testing.T) {
 			entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 			entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
-			opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: clustertest.Open(t)}
+			opts := Options{URL: entry.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: clustertest.Open(t)}
 			if listed {
 				opts.Nodes = []string{peer.addr()}
 			}
@@ -2239,7 +2239,7 @@ func newSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Back
 
 func openSharedBackend(t testing.TB, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
-	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, Store: db})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, AgentPort: 7443, Store: db})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

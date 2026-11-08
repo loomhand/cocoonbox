@@ -538,7 +538,6 @@ func backendOptions(cfg *config.Config, db *cluster.Store) (sandboxd.Options, er
 		Token:             token,
 		Image:             cfg.Image,
 		Flavor:            machineFlavor(cfg.Flavor),
-		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
 		Nodes:             cfg.Sandboxd.Nodes,
