@@ -675,7 +675,7 @@ func TestSetBoxFlavorReachesTheOtherApisAndRefusesAnUnknownBox(t *testing.T) {
 	}
 }
 
-func TestTheBoxFlavorMigrationGivesEveryExistingBoxTheOldFlavorAndNewRowsNone(t *testing.T) {
+func TestTheBoxFlavorMigrationGivesEveryExistingBoxAndAnOldImagesInsertTheOldFlavor(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	svc.Close()
@@ -696,8 +696,17 @@ func TestTheBoxFlavorMigrationGivesEveryExistingBoxTheOldFlavorAndNewRowsNone(t 
 	if boxes := reopened.Boxes(u.ID); len(boxes) != 1 || boxes[0].Flavor != oldFlavor {
 		t.Errorf("boxes after the migration = %+v, want the one box on %+v", boxes, oldFlavor)
 	}
-	if _, err := conn.Exec(t.Context(), "INSERT INTO boxes (id, owner, name) VALUES ('cb-000000000009', $1, 'bare')", u.ID); err == nil {
-		t.Error("a box row without a flavor was inserted, want the column without a default to refuse it")
+	for id, insert := range map[string]string{
+		"cb-000000000008": "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, 'first', now())",
+		"cb-000000000009": "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, 'added', false, now())",
+	} {
+		if _, err := conn.Exec(t.Context(), insert, id, u.ID); err != nil {
+			t.Fatalf("%s, as the images before 0015 insert: %v", insert, err)
+		}
+		var got machines.Flavor
+		if err := conn.QueryRow(t.Context(), "SELECT vcpus, memory_mib, disk_gib FROM boxes WHERE id = $1", id).Scan(&got.VCPUs, &got.MemoryMiB, &got.DiskGiB); err != nil || got != oldFlavor {
+			t.Errorf("flavor of an old image's box %s = %+v, %v; want the default %+v", id, got, err, oldFlavor)
+		}
 	}
 }
 
