@@ -50,9 +50,9 @@ func TestProvisionerFollowsTheSwitch(t *testing.T) {
 
 func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
-	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateStarting})
-	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
+	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateStarting, Incarnation: "vm1"})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1"})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableResidential(residential, func(string) bool { return true })
 
@@ -63,5 +63,20 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	slices.Sort(got)
 	if want := []string{aliceBox + " " + residential, aliceBox + "-r1 " + residential}; !slices.Equal(got, want) {
 		t.Errorf("egress calls = %v, want %v", got, want)
+	}
+}
+
+func TestAMachineWithoutAClaimGetsNoEgress(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateStarting, Routed: true})
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	svc.EnableResidential(residential, func(string) bool { return false })
+
+	svc.provisionStale(t.Context())
+	if err := svc.ApplyExit(t.Context(), alice); err != nil {
+		t.Fatalf("ApplyExit: %v", err)
+	}
+	if got := fake.egressCalls(); len(got) != 0 {
+		t.Errorf("egress calls = %v, want none for a machine without a claim", got)
 	}
 }
