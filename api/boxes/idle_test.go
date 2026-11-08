@@ -82,18 +82,6 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	}
 }
 
-func TestAnEnsureOfARunningBoxDoesNotRestartItsIdleTime(t *testing.T) {
-	env, clock := newUserIdleEnv(t)
-	env.svc.hibernateIdle(t.Context())
-	clock.advance(userIdleAfter - time.Second)
-	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
-	clock.advance(time.Second)
-	env.svc.hibernateIdle(t.Context())
-	waitState(t, env.fake, aliceBox, machines.StateHibernating)
-}
-
 func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	bobBox := BoxID(bob)
@@ -141,6 +129,18 @@ func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetDetail() != "save failed; hibernating it" {
 		t.Errorf("the operation ended with %v", last)
 	}
+	waitState(t, env.fake, aliceBox, machines.StateHibernating)
+}
+
+func TestAnEnsureOfARunningBoxDoesNotRestartItsIdleTime(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	env.svc.hibernateIdle(t.Context())
+	clock.advance(userIdleAfter - time.Second)
+	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	clock.advance(time.Second)
+	env.svc.hibernateIdle(t.Context())
 	waitState(t, env.fake, aliceBox, machines.StateHibernating)
 }
 

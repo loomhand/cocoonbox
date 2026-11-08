@@ -14,6 +14,8 @@ import (
 const (
 	reachFlush   = 30 * time.Second
 	reachHorizon = 24 * time.Hour
+
+	ensuredPrefix = "ensured:"
 )
 
 // readReaches takes in the reaches of every process before a sweep, with a shared table.
@@ -34,9 +36,9 @@ func (s *Service) reachedElsewhere(box string) time.Time {
 	return s.reaches.last(box)
 }
 
-// reachedSince reports whether a client of any process reached box at or after t.
+// reachedSince reports whether a client of any process reached or ensured box at or after t.
 func (s *Service) reachedSince(box string, t time.Time) bool {
-	at := s.reachedElsewhere(box)
+	at := later(s.reachedElsewhere(box), s.reachedElsewhere(ensuredPrefix+box))
 	return s.wake.reachedSince(box, t) || !at.IsZero() && !at.Before(t)
 }
 

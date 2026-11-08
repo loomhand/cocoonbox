@@ -473,6 +473,9 @@ func (s *Service) ensureReached(ctx context.Context, box string, action machines
 		s.Reached(box)()
 	case s.wake != nil:
 		s.wake.reach(box)
+		if s.reaches != nil {
+			s.reaches.reach(ensuredPrefix+box, s.reaches.now())
+		}
 	}
 }
 
