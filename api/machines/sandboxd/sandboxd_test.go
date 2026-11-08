@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
@@ -37,6 +38,10 @@ const (
 
 	reconnectWithin = 10 * time.Second
 	waitFor         = 5 * time.Second
+
+	renewClaims  = 2000
+	renewLatency = 50 * time.Millisecond
+	renewWithin  = 30 * time.Second
 )
 
 var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
@@ -1056,6 +1061,40 @@ func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	}
 }
 
+func TestARenewPassReachesEveryLeaseOnSlowNodesWithinItsDeadline(t *testing.T) {
+	nodes := []*fakeSandboxd{newFakeSandboxd(t), newFakeSandboxd(t), newFakeSandboxd(t)}
+	b := openSharedBackend(t, nodes[0], clustertest.Open(t))
+	for _, n := range nodes {
+		n.slow(renewLatency)
+	}
+	var g errgroup.Group
+	g.SetLimit(16)
+	for i := range renewClaims {
+		node, machine := nodes[i%len(nodes)], fmt.Sprintf("cb-%04d", i)
+		r := row{ID: fmt.Sprintf("sb_%04d", i), Metadata: map[string]string{"cb_machine": machine, "cb_owner": owner}}
+		node.add(&fakeSandbox{row: r})
+		g.Go(func() error {
+			_, err := b.mutate(t.Context(), machine, func(*entry) (*entry, bool) {
+				return &entry{id: machine, owner: owner, row: &r, ownerAddr: node.addr(), meta: map[string]string{}, env: map[string]string{}}, true
+			})
+			return err
+		})
+	}
+	if err := g.Wait(); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), renewWithin)
+	defer cancel()
+	err := b.renew(ctx)
+	renewed := 0
+	for _, n := range nodes {
+		renewed += len(n.renewed())
+	}
+	if err != nil || renewed != renewClaims {
+		t.Fatalf("renewed %d of %d leases within %s: %v", renewed, renewClaims, renewWithin, err)
+	}
+}
+
 func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
@@ -1640,6 +1679,7 @@ type fakeSandboxd struct {
 	redirect    []*fakeSandboxd
 	down        bool
 	info        map[string]any
+	latency     time.Duration
 }
 
 func newFakeSandboxd(t testing.TB) *fakeSandboxd {
@@ -1648,11 +1688,14 @@ func newFakeSandboxd(t testing.TB) *fakeSandboxd {
 	mux := f.handler()
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		down := f.down
+		down, latency := f.down, f.latency
 		f.mu.Unlock()
 		if down {
 			writeError(w, http.StatusServiceUnavailable, "node down")
 			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/renew") {
+			time.Sleep(latency)
 		}
 		mux.ServeHTTP(w, r)
 	}))
@@ -1976,6 +2019,12 @@ func (f *fakeSandboxd) setDown(down bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.down = down
+}
+
+func (f *fakeSandboxd) slow(latency time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.latency = latency
 }
 
 func (f *fakeSandboxd) only() string {

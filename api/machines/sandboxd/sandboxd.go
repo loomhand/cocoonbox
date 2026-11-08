@@ -41,6 +41,9 @@ const (
 	watchInterval   = 500 * time.Millisecond
 	opTimeout       = 10 * time.Minute
 	loopTimeout     = 30 * time.Second
+	renewTimeout    = 4 * time.Minute
+	renewCall       = 10 * time.Second
+	renewFanout     = 16
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
 	sharedTimeout   = 10 * time.Second
@@ -149,7 +152,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
 	}
-	go b.loop(ctx, renewInterval, func(ctx context.Context) error {
+	go b.loop(ctx, renewInterval, loopTimeout, func(ctx context.Context) error {
 		_, err := b.snapshot(ctx)
 		return err
 	})
@@ -159,9 +162,9 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 // Run re-reads the claims and renews their leases until ctx ends; one api of the cluster runs it for all.
 func (b *Backend) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
-	wg.Go(func() { b.loop(ctx, roomInterval, b.readRoom) })
-	wg.Go(func() { b.loop(ctx, renewInterval, b.renew) })
+	wg.Go(func() { b.loop(ctx, refreshInterval, loopTimeout, b.refresh) })
+	wg.Go(func() { b.loop(ctx, roomInterval, loopTimeout, b.readRoom) })
+	wg.Go(func() { b.loop(ctx, renewInterval, renewTimeout, b.renew) })
 	wg.Wait()
 }
 
@@ -1323,32 +1326,67 @@ func (b *Backend) probe(ctx context.Context, e *entry) *entry {
 	return cmp.Or(next, e)
 }
 
-// renew extends the lease of every claim that is not archived, on its node.
+// renew extends the lease of every claim that is not archived, every node at once.
 func (b *Backend) renew(ctx context.Context) error {
 	known, err := b.snapshot(ctx)
 	if err != nil {
 		return err
 	}
-	leases := map[string]string{}
+	leases := map[string][]string{}
 	for _, e := range known {
 		if e.row != nil && !e.row.Archived {
-			leases[e.row.ID] = e.ownerAddr
+			leases[e.ownerAddr] = append(leases[e.ownerAddr], e.row.ID)
 		}
 	}
-	var errs []error
-	for sandbox, addr := range leases {
-		node, err := b.node(addr)
-		if err == nil {
-			err = node.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire})
-		}
-		if err != nil && !errors.Is(err, machines.ErrConflict) {
-			errs = append(errs, err)
-		}
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+	)
+	for addr, sandboxes := range leases {
+		wg.Go(func() {
+			if err := b.renewOn(ctx, addr, sandboxes); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		})
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 
-func (b *Backend) loop(ctx context.Context, interval time.Duration, fn task) {
+func (b *Backend) renewOn(ctx context.Context, addr string, sandboxes []string) error {
+	node, err := b.node(addr)
+	if err != nil {
+		return err
+	}
+	var (
+		mu     sync.Mutex
+		failed []error
+		g      errgroup.Group
+	)
+	g.SetLimit(renewFanout)
+	for _, sandbox := range sandboxes {
+		g.Go(func() error {
+			callCtx, cancel := context.WithTimeout(ctx, renewCall)
+			defer cancel()
+			if err := node.verb(callCtx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire}); err != nil && !errors.Is(err, machines.ErrConflict) {
+				mu.Lock()
+				failed = append(failed, err)
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	if len(failed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("renew failed for %d of %d leases on node %s: %w", len(failed), len(sandboxes), addr, failed[0])
+}
+
+func (b *Backend) loop(ctx context.Context, interval, timeout time.Duration, fn task) {
 	tick := time.Tick(interval)
 	for {
 		select {
@@ -1356,7 +1394,7 @@ func (b *Backend) loop(ctx context.Context, interval time.Duration, fn task) {
 			return
 		case <-tick:
 		}
-		callCtx, cancel := context.WithTimeout(ctx, loopTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		if err := fn(callCtx); err != nil {
 			log.WithFunc("sandboxd.Backend.loop").Warnf(callCtx, "every %s: %v", interval, err)
 		}
