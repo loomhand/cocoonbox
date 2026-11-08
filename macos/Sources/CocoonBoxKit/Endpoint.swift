@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 public struct Endpoint: Sendable, Hashable {
     // configuredURL is the CBEndpoint that bundle.sh writes into the app's Info.plist; the CLI in Contents/Helpers reads its app's.

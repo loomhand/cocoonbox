@@ -539,7 +539,7 @@ fn desk_script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),
         description: Cow::Owned(format!(
-            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from {DESK_IMPORT}: windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls){}. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {{result, logs, error?: {{kind, message}}, duration_ms, exit_code, stderr, snapshot?, screenshot_path}} and a screenshot taken after the run.",
+            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from {DESK_IMPORT}: windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls){}. Pass code, or script: a file in the box. The module exports main(params), which is called with params and whose return value comes back as result. Nothing persists between runs. Returns JSON {{result, logs, error?: {{kind, message}}, duration_ms, exit_code?, stderr, screenshot_path?}} and a screenshot taken after the run.",
             if cfg!(unix) {
                 "; the desk command does the same from shell"
             } else {
@@ -634,7 +634,7 @@ fn android_script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),
         description: Cow::Borrowed(
-            "Run one script for Android work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 on the box's Ubuntu that drives the phone through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, taps, screen crops) and adb from child_process. Read /opt/android/AGENTS.md first. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Returns JSON {result, logs, error?, duration_ms, exit_code, stderr, screenshot_path} and a screenshot taken after the run.",
+            "Run one script for Android work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 on the box's Ubuntu that drives the phone through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, taps, screen crops) and adb from child_process. Read /opt/android/AGENTS.md first. Pass code, or script: a file in the box. The module exports main(params), which is called with params and whose return value comes back as result. Returns JSON {result, logs, error?, duration_ms, exit_code?, stderr, screenshot_path?} and a screenshot taken after the run.",
         ),
         parameters: {
             let mut parameters = desk_script_tool().parameters;

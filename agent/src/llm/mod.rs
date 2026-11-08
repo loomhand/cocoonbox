@@ -602,7 +602,7 @@ mod tests {
             ),
             (r#"model error: {"type":"invalid_request_error"}"#, false),
         ];
-        assert_eq!(got, want.map(|(m, t)| (m.to_owned(), t)),);
+        assert_eq!(got, want.map(|(m, t)| (m.to_owned(), t)));
     }
 
     #[tokio::test]

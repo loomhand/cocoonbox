@@ -32,7 +32,7 @@ def fields() -> list[tuple[str, str]]:
                 stack.append((m.group(1), depth))
             elif stack and not line.lstrip().startswith(("reserved", "enum", "oneof", "rpc", "option")):
                 f = FIELD.match(line)
-                if f and stack:
+                if f:
                     out.append((stack[-1][0], f.group(1)))
             depth += line.count("{") - line.count("}")
             while stack and depth <= stack[-1][1]:

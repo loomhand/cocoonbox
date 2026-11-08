@@ -118,7 +118,7 @@ function Display {
         [void]$res.PrependChild($r)
         $x.Save($settings.FullName)
     }
-    Copy-Item -Force $settings.FullName 'C:\VirtualDisplayDriver\vdd_settings.xml'
+    Copy-Item -Force $settings.FullName "$Display\vdd_settings.xml"
     if (-not (Get-PnpDevice -FriendlyName 'Virtual Display Driver' -ErrorAction SilentlyContinue)) {
         $nefcon = 'C:\ProgramData\nefcon'
         if (-not (Test-Path $nefcon)) { Expand-Archive -Force (Join-Path $Vendor 'nefcon_v1.21.0.zip') $nefcon }
