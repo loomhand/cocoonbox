@@ -1392,7 +1392,7 @@ func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 	if fake.lastClaim().NoRedirect || fake.lastClaim().RequirePromoted {
 		t.Errorf("claim = %+v, want no redirect fields", fake.lastClaim())
 	}
-	clustertest.WaitFor(t, "a peers read only beside each full list", func() bool { return fake.count("peers") == fake.count("list") })
+	clustertest.WaitFor(t, "a peers read only at start and beside each full list", func() bool { return fake.count("peers") == fake.count("list")+1 })
 	e, err := b.stored(t.Context(), boxID)
 	if err != nil {
 		t.Fatalf("stored: %v", err)
@@ -1508,9 +1508,6 @@ func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	waitState(t, b, "cb-peer", m.Revision, machines.StateRunning)
-	if err := b.refresh(t.Context()); err != nil {
-		t.Fatalf("refresh with the entry up: %v", err)
-	}
 	entry.setDown(true)
 	peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
 	if err := b.refresh(t.Context()); err != nil {
@@ -1648,7 +1645,7 @@ func TestAMachineOnAFullNodeIsSqueezedUntilTheNodeHasRoom(t *testing.T) {
 	}
 }
 
-func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) {
+func TestAnotherAPIsGetFollowsAndAdoptsAHandedOverMachine(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	db := clustertest.Open(t)
@@ -1659,17 +1656,12 @@ func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) 
 		t.Fatalf("the other api reads %+v, %v, want the running claim", m, err)
 	}
 	peer.shift(entry, entry.adoptable)
-	if _, err := other.Get(t.Context(), boxID); err != nil {
-		t.Fatalf("Get on an api without the token = %v, want the recorded machine", err)
+	got, err := other.Get(t.Context(), boxID)
+	if err != nil || got.State != machines.StateHibernated {
+		t.Fatalf("Get on the other api = %+v, %v, want the machine adopted and hibernated", got, err)
 	}
-	if _, err := rowOf(t, other, boxID); err != nil {
-		t.Fatalf("the api without the token dropped the machine: %v", err)
-	}
-	if err := a.refresh(t.Context()); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if got, err := rowOf(t, a, boxID); err != nil || got.State != machines.StateHibernated {
-		t.Errorf("the handed-over machine = %+v, %v, want it adopted and hibernated", got, err)
+	if e, err := other.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
+		t.Errorf("owner after the other api's Get = %+v, %v, want the adopter %s", e, err, entry.addr())
 	}
 }
 
