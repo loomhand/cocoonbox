@@ -33,9 +33,8 @@ var (
 	errHibernating = errors.New("box is hibernating; call box_ensure again once it is hibernated")
 )
 
-// Defaults size new boxes, name their images, and bound how many boxes of one user run at once.
+// Defaults name new boxes' images and bound how many boxes of one user run at once.
 type Defaults struct {
-	Flavor       machines.Flavor
 	Image        string
 	RebaseImages []string
 	MaxRunning   int
@@ -183,7 +182,11 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
-	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: s.defaults.Flavor}
+	flavor, ok := s.flavorOf(user, box)
+	if !ok {
+		return nil, ErrNoBox
+	}
+	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: flavor}
 	current, err := s.startable(ctx, user, box)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "get box")
@@ -403,6 +406,16 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	}
 	s.ops.watchers.wake(user)
 	return b.ID, nil
+}
+
+// flavorOf returns the flavor box records, which every machine of the box takes.
+func (s *Service) flavorOf(user, box string) (machines.Flavor, bool) {
+	for _, b := range s.registry.Boxes(user) {
+		if b.ID == box {
+			return b.Flavor, true
+		}
+	}
+	return machines.Flavor{}, false
 }
 
 // checkRunning refuses box while the user's other running boxes, parked and agent boxes aside, hold the running limit.

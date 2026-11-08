@@ -148,6 +148,8 @@ type Options struct {
 	TenantClaims bool
 	// FirstBoxID names the box Create gives each new user.
 	FirstBoxID func(user string) string
+	// BoxFlavor is the flavor every new box takes.
+	BoxFlavor machines.Flavor
 	// EnsureLimit sizes the user lock pool, which bounds the creates Ensure runs at once.
 	EnsureLimit int32
 }
@@ -190,6 +192,7 @@ type Service struct {
 	tenants      machines.Tenants
 	tenantClaims bool
 	firstBoxID   func(string) string
+	boxFlavor    machines.Flavor
 	nextMiss     atomic.Int64
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash []byte
@@ -234,7 +237,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{
-		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
+		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, boxFlavor: opts.BoxFlavor, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
 		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
@@ -870,7 +873,7 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 		stateKeyID:    stateKey.ID,
 		stateKey:      s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
 	}
-	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
+	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond), Flavor: s.boxFlavor}
 	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil))
 	}

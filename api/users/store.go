@@ -26,6 +26,7 @@ const (
 
 	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), max_agent_boxes, created_at,
 		coalesce(token_sha256, ''), tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed, image, delta, no_park, no_gc`
+	boxColumns = "id, owner, name, agent, created_at, vcpus, memory_mib, disk_gib"
 )
 
 //go:embed migrations/*.sql
@@ -96,7 +97,7 @@ func (s *store) one(ctx context.Context, id string) (record, []Box, error) {
 	}
 	var boxes []Box
 	if err == nil {
-		rows, _ = s.pool.Query(ctx, "SELECT id, owner, name, agent, created_at FROM boxes WHERE owner = $1 ORDER BY created_at, id", id)
+		rows, _ = s.pool.Query(ctx, "SELECT "+boxColumns+" FROM boxes WHERE owner = $1 ORDER BY created_at, id", id)
 		boxes, err = pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
 	}
 	if err != nil {
@@ -112,7 +113,8 @@ func (s *store) insert(ctx context.Context, r record, passwordHash string, first
 			r.ID, r.Name, r.IDP, r.Admin, r.MaxBoxes, r.MaxBoxesCap, r.MaxAgentBoxes, passwordHash, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at, vcpus, memory_mib, disk_gib) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+			first.ID, first.Owner, first.Name, first.CreatedAt, first.VCPUs, first.MemoryMiB, first.DiskGiB); err != nil {
 			return err
 		}
 		return notifyIn(ctx, tx, createdPayload+r.ID)
@@ -127,7 +129,7 @@ func (s *store) insert(ctx context.Context, r record, passwordHash string, first
 }
 
 func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
-	rows, err := s.pool.Query(ctx, "SELECT id, owner, name, agent, created_at FROM boxes ORDER BY created_at, id")
+	rows, err := s.pool.Query(ctx, "SELECT "+boxColumns+" FROM boxes ORDER BY created_at, id")
 	if err != nil {
 		return nil, fmt.Errorf("list boxes: %w", err)
 	}
@@ -154,7 +156,8 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 		case b.Agent && maxAgentBoxes != nil && boxes >= *maxAgentBoxes:
 			return fmt.Errorf("%w: %d agent boxes is the most this user's agents may hold together", ErrQuota, *maxAgentBoxes)
 		}
-		if _, err = tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt); err != nil {
+		if _, err = tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at, vcpus, memory_mib, disk_gib) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+			b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt, b.VCPUs, b.MemoryMiB, b.DiskGiB); err != nil {
 			return err
 		}
 		return notifyIn(ctx, tx, "")

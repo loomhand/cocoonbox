@@ -60,7 +60,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
-	spec := machines.Spec{ID: b.ID, Owner: user, Tenant: tenant, Flavor: s.defaults.Flavor}
+	spec := machines.Spec{ID: b.ID, Owner: user, Tenant: tenant, Flavor: b.Flavor}
 	if image != s.defaults.Image {
 		spec.Image = image
 	}

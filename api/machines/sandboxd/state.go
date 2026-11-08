@@ -29,6 +29,7 @@ var tiers = []struct {
 }{
 	{"small", machines.Flavor{VCPUs: 1, MemoryMiB: 512}},
 	{"medium", machines.Flavor{VCPUs: 2, MemoryMiB: 1024}},
+	{"medium-4g", machines.Flavor{VCPUs: 2, MemoryMiB: 4096}},
 	{"large", machines.Flavor{VCPUs: 4, MemoryMiB: 4096}},
 	{"xlarge", machines.Flavor{VCPUs: 4, MemoryMiB: 8192}},
 	{"2xlarge", machines.Flavor{VCPUs: 8, MemoryMiB: 16384}},

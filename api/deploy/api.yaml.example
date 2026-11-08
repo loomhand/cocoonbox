@@ -9,11 +9,11 @@ sandboxd:
   token_file: sandboxd-token   # the instance's root api_token
   tenant_egress_class: ""      # egress class of every user's tenant; set, machines claim under the user's tenant
   nodes: []                    # node addresses (as the mesh names them) the api may call besides the entry node; empty allows every peer
-flavor:
+flavor:                        # the flavor a new box takes and keeps; a sandboxd tier, its disk the pool's storage
   vcpus: 4
   memory_mib: 8192
   disk_gib: 40
-flavors: []                  # unused; every box takes flavor
+flavors: []                  # unused
 max_running_boxes: 1         # boxes of one user that run at once; a user's own limit overrides it
 state:
   endpoint: s3.example.com:443

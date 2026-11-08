@@ -627,6 +627,36 @@ func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	}
 }
 
+func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	small := machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: "cb-small", Owner: owner, Flavor: small})
+	if err != nil {
+		t.Fatalf("Ensure of a small box: %v", err)
+	}
+	waitState(t, b, "cb-small", m.Revision, machines.StateRunning)
+	if got := fake.lastClaim().Size; got != "medium-4g" {
+		t.Errorf("claim size of a 2 vCPU, 4 GiB flavor = %q, want medium-4g", got)
+	}
+	claimRunning(t, b)
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	claims := fake.count("claim")
+	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: small})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure of a hibernated box with another flavor = %v, %v; want a wake", action, err)
+	}
+	waitState(t, b, boxID, w.Revision, machines.StateRunning)
+	e, err := b.stored(t.Context(), boxID)
+	if err != nil || e.row.Key.Size != "xlarge" || fake.count("claim") != claims {
+		t.Errorf("after the wake: size %q, claims %d -> %d, %v; want xlarge and no new claim", e.row.Key.Size, claims, fake.count("claim"), err)
+	}
+}
+
 func TestARestartOrFailureIsReportedFromTheRow(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)

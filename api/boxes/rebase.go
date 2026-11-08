@@ -75,7 +75,12 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		op.fail("create machine failed")
 		return
 	}
-	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Tenant: tenant, Flavor: old.Flavor, Image: image}
+	flavor, ok := s.flavorOf(user, op.boxID)
+	if !ok {
+		op.fail("the box is gone")
+		return
+	}
+	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Tenant: tenant, Flavor: flavor, Image: image}
 	created, _, err := s.machines.Ensure(op.ctx, spec)
 	if err != nil {
 		logger.Error(op.ctx, err, "create rebase machine")

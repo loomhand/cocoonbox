@@ -17,6 +17,29 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
+func TestAnOldBoxIsClaimedAgainAtItsOwnFlavorWhileANewBoxTakesTheNewOne(t *testing.T) {
+	fake, registry := newFakeMachines(), newFakeRegistry()
+	defaults := testDefaults
+	defaults.MaxRunning = 2
+	svc := newService(fake, defaults, registry)
+	ctx := auth.WithUser(t.Context(), alice)
+	registry.Boxes(alice)
+	registry.flavor = machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+	created, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "new"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if spec := fake.lastSpec(); spec.ID != created.GetBox().GetId() || spec.Flavor != registry.flavor {
+		t.Errorf("new box spec = %+v, want flavor %+v", spec, registry.flavor)
+	}
+	if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure of the released old box: %v", err)
+	}
+	if spec := fake.lastSpec(); spec.ID != aliceBox || spec.Flavor != defaultFlavor {
+		t.Errorf("old box spec on its claim again = %+v, want its own flavor %+v", spec, defaultFlavor)
+	}
+}
+
 func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})

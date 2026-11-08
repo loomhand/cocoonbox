@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const (
@@ -30,6 +32,8 @@ type Box struct {
 	// Agent marks a box an agent's grant created: the grant's caps bound it, the owner's max boxes do not.
 	Agent     bool
 	CreatedAt time.Time
+	// Flavor is the size every machine of the box takes, set when the box is created.
+	machines.Flavor
 }
 
 // Boxes returns owner's boxes, oldest first.
@@ -54,7 +58,7 @@ func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 	if _, err := s.record(b.Owner); err != nil {
 		return Box{}, err
 	}
-	b.CreatedAt = time.Now().Truncate(time.Microsecond)
+	b.CreatedAt, b.Flavor = time.Now().Truncate(time.Microsecond), s.boxFlavor
 	if err := s.store.insertBox(ctx, b); err != nil {
 		return Box{}, err
 	}

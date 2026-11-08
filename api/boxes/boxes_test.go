@@ -35,8 +35,7 @@ const (
 var (
 	defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
 	testDefaults  = Defaults{
-		Flavor: defaultFlavor,
-		Image:  "desktop:v2", RebaseImages: []string{"desktop:v3"}, MaxRunning: 1,
+		Image: "desktop:v2", RebaseImages: []string{"desktop:v3"}, MaxRunning: 1,
 	}
 )
 
@@ -415,17 +414,18 @@ type fakeRegistry struct {
 	running  map[string]int
 	policies map[string]users.Policy
 	changed  func(owner string)
+	flavor   machines.Flavor
 }
 
 func newFakeRegistry() *fakeRegistry {
-	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3, running: map[string]int{}, policies: map[string]users.Policy{}}
+	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3, running: map[string]int{}, policies: map[string]users.Policy{}, flavor: defaultFlavor}
 }
 
 func (r *fakeRegistry) Boxes(owner string) []users.Box {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.boxes[owner]; !ok {
-		r.boxes[owner] = []users.Box{{ID: BoxID(owner), Owner: owner, Name: users.FirstBoxName}}
+		r.boxes[owner] = []users.Box{{ID: BoxID(owner), Owner: owner, Name: users.FirstBoxName, Flavor: defaultFlavor}}
 	}
 	return slices.Clone(r.boxes[owner])
 }
@@ -444,7 +444,7 @@ func (r *fakeRegistry) AddBox(_ context.Context, b users.Box) (users.Box, error)
 	case slices.ContainsFunc(list, func(x users.Box) bool { return x.Name == b.Name }):
 		return users.Box{}, users.ErrExists
 	}
-	b.CreatedAt = time.Unix(int64(len(list)+1), 0)
+	b.CreatedAt, b.Flavor = time.Unix(int64(len(list)+1), 0), r.flavor
 	r.boxes[b.Owner] = append(list, b)
 	return b, nil
 }
