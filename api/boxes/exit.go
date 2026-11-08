@@ -35,7 +35,7 @@ func (s *Service) ApplyExit(ctx context.Context, user string) error {
 
 // syncExit points m's egress at the exit its owner's switch names when it differs or force asks.
 func (s *Service) syncExit(ctx context.Context, m machines.Machine, force bool) error {
-	if s.exit == nil {
+	if s.exit == nil || m.Incarnation == "" {
 		return nil
 	}
 	on := s.exit.residential(m.Owner)
