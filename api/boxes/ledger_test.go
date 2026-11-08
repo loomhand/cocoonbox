@@ -11,14 +11,14 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
-func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
+func TestVerifyRewritesAMissingSharedOperationAndSkipsThosePastRetention(t *testing.T) {
 	ledger := clustertest.Open(t)
 	env := newStateEnv(t)
-	env.svc.EnableLedger(t.Context(), ledger)
+	env.svc.EnableShared(t.Context(), ledger)
 	env.agent.chunks = hexIDs("c1")
 	events := env.save(t)
-	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations) != 0 {
-		t.Fatalf("Verify after a save = %+v, %v, want no drift", d, err)
+	if ids, err := env.svc.Verify(t.Context()); err != nil || len(ids) != 0 {
+		t.Fatalf("Verify after a save = %v, %v, want no drift", ids, err)
 	}
 	row, err := ledger.Head(t.Context(), alice, aliceBox)
 	var h head
@@ -38,19 +38,15 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 		t.Fatalf("ledger events = %+v, %v, want the %d of %d watched events left after collapsing the transfers", recs, err, len(kept), len(events))
 	}
 
-	if err := ledger.PutHead(t.Context(), alice, aliceBox, []byte(`{"latest":"stale"}`)); err != nil {
-		t.Fatalf("PutHead: %v", err)
+	if err := ledger.PurgeOperations(t.Context(), time.Now()); err != nil {
+		t.Fatalf("PurgeOperations: %v", err)
 	}
-	ops[0].Events = []byte(`[]`)
-	if err := ledger.PutOperation(t.Context(), ops[0]); err != nil {
-		t.Fatalf("PutOperation: %v", err)
+	ids, err := env.svc.Verify(t.Context())
+	if err != nil || !slices.Equal(ids, []string{ops[0].ID}) {
+		t.Fatalf("Verify after the row went = %v, %v", ids, err)
 	}
-	d, err := env.svc.Verify(t.Context())
-	if err != nil || !slices.Equal(d.Heads, []string{alice + "/" + aliceBox}) || !slices.Equal(d.Operations, []string{ops[0].ID}) {
-		t.Fatalf("Verify after tampering = %+v, %v", d, err)
-	}
-	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations) != 0 {
-		t.Errorf("Verify after the repair = %+v, %v, want no drift", d, err)
+	if ids, err := env.svc.Verify(t.Context()); err != nil || len(ids) != 0 {
+		t.Errorf("Verify after the rewrite = %v, %v, want no drift", ids, err)
 	}
 	op := env.svc.ops.local(ops[0].ID)
 	op.mu.Lock()
@@ -59,8 +55,8 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 	if err := ledger.PurgeOperations(t.Context(), time.Now()); err != nil {
 		t.Fatalf("PurgeOperations: %v", err)
 	}
-	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Operations) != 0 {
-		t.Errorf("Verify with an operation past its retention = %+v, %v, want it skipped", d, err)
+	if ids, err := env.svc.Verify(t.Context()); err != nil || len(ids) != 0 {
+		t.Errorf("Verify with an operation past its retention = %v, %v, want it skipped", ids, err)
 	}
 }
 

@@ -80,11 +80,11 @@ func (l *stateLayer) purge(ctx context.Context, p statePath, opts GCOptions, r *
 	return nil
 }
 
-// forget is forgetCache that also drops the ledger head.
+// forget is forgetCache that also drops the shared head.
 func (l *stateLayer) forget(p statePath) {
 	l.forgetCache(p)
-	if l.mirror != nil {
-		l.mirror(p, nil)
+	if l.dropHead != nil {
+		l.dropHead(p)
 	}
 }
 

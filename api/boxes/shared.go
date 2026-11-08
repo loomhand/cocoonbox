@@ -12,6 +12,8 @@ import (
 // EnableShared makes the shared tables the truth for box heads and operations until ctx ends.
 func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	logger := log.WithFunc("boxes.Service.EnableShared")
+	s.ledger, s.mirror = shared, cluster.NewMirror()
+	go s.mirror.Run(ctx)
 	s.ops.mu.Lock()
 	s.ops.shared = shared
 	s.ops.mirror = func(rec cluster.Operation) {
@@ -42,6 +44,9 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 		return
 	}
 	s.state.shared = shared
+	s.state.dropHead = func(p statePath) {
+		s.mirror.Put(p.ledgerKey(), func(ctx context.Context) error { return shared.DeleteHeads(ctx, p.user, p.box) })
+	}
 	go shared.Listen(ctx, cluster.ChannelHeads, s.state.invalidateAll, func(payload string) {
 		row, err := cluster.ParseHeadNotify(payload)
 		switch {

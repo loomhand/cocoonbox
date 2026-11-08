@@ -156,7 +156,7 @@ func main() {
 		library = flows.NewLibrary(st, accounts)
 		library.EnableShared(shared)
 	}
-	enableLedger(ctx, cfg, db, svc)
+	enableShared(ctx, cfg, db, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -556,14 +556,11 @@ func openCluster(ctx context.Context, cfg *config.Config) (*cluster.Store, error
 	return cluster.Open(ctx, dsn)
 }
 
-func enableLedger(ctx context.Context, cfg *config.Config, db *cluster.Store, svc *boxes.Service) {
-	if !cfg.Cluster.Ledger {
+func enableShared(ctx context.Context, cfg *config.Config, db *cluster.Store, svc *boxes.Service) {
+	if !cfg.Cluster.Shared {
 		return
 	}
-	svc.EnableLedger(ctx, db)
-	if cfg.Cluster.Shared {
-		svc.EnableShared(ctx, db)
-	}
+	svc.EnableShared(ctx, db)
 	go verifyLedger(ctx, svc)
 }
 
@@ -577,14 +574,14 @@ func verifyLedger(ctx context.Context, svc *boxes.Service) {
 		case <-tick:
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
-		drift, err := svc.Verify(verifyCtx)
+		repaired, err := svc.Verify(verifyCtx)
 		cancel()
 		if err != nil {
 			logger.Error(ctx, err, "verify the ledger")
 			continue
 		}
-		if n := len(drift.Heads) + len(drift.Operations); n > 0 {
-			logger.Warnf(ctx, "ledger drift repaired: heads %q, operations %q", drift.Heads, drift.Operations)
+		if len(repaired) > 0 {
+			logger.Warnf(ctx, "ledger drift repaired: operations %q", repaired)
 			continue
 		}
 		logger.Debug(ctx, "ledger verified: no drift")

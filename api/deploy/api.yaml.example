@@ -61,6 +61,6 @@ wake:                          # scheduled box wakes (design §15.13)
 #   token_file: identity-token # the api's bearer for the webhook, read on every call; needs a LoadCredential=identity-token line
 #   timeout: 5s
 cluster:                       # state api processes share in the users database
-  ledger: false                # copy box heads and operations there and verify the copy every minute
-  shared: false                # make that copy the truth, so api processes may serve together; needs ledger and state.conditional_writes
+  ledger: false                # set together with shared
+  shared: false                # make the database the truth for box heads and operations, so api processes may serve together; needs state.conditional_writes
   drain: 0s                    # fail /healthz this long after a stop signal before stopping, so a balancer moves new calls to the other api of a pair

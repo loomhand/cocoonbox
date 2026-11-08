@@ -2,11 +2,9 @@ package boxes
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -19,97 +17,23 @@ const (
 	opKey   = "op:"
 )
 
-// Drift is what a Verify pass found the ledger holding wrong or missing.
-type Drift struct {
-	Heads      []string
-	Operations []string
-}
-
-// EnableLedger copies every box head the state layer caches and every operation event into l until ctx ends.
-func (s *Service) EnableLedger(ctx context.Context, l *cluster.Store) {
-	s.ledger, s.mirror = l, cluster.NewMirror()
-	go s.mirror.Run(ctx)
-	s.ops.mirror = func(rec cluster.Operation) {
-		s.mirror.Put(opKey+rec.ID, func(ctx context.Context) error { return l.PutOperation(ctx, rec) })
-	}
-	if s.state != nil {
-		s.state.mirror = func(p statePath, h *head) {
-			key := p.ledgerKey()
-			if h == nil {
-				s.mirror.Put(key, func(ctx context.Context) error { return l.DeleteHeads(ctx, p.user, p.box) })
-				return
-			}
-			raw := headBytes(*h)
-			s.mirror.Put(key, func(ctx context.Context) error { return l.PutHead(ctx, p.user, p.box, raw) })
-		}
-	}
-}
-
-// Verify rewrites the ledger heads and operations that differ from this process's, and purges operations past their retention.
-func (s *Service) Verify(ctx context.Context) (Drift, error) {
-	var d Drift
-	differ, err := s.mirror.Verify(ctx, s.differences)
+// Verify rewrites the shared operations that differ from this process's, returning their ids, and purges operations past their retention.
+func (s *Service) Verify(ctx context.Context) ([]string, error) {
+	differ, err := s.mirror.Verify(ctx, s.operationDifferences)
 	if err != nil {
-		return d, err
+		return nil, err
 	}
+	ids := make([]string, 0, len(differ))
 	for _, key := range differ {
-		if id, ok := strings.CutPrefix(key, opKey); ok {
-			d.Operations = append(d.Operations, id)
-			if op := s.ops.local(id); op != nil {
-				op.mu.Lock()
-				op.mirrorLocked()
-				op.mu.Unlock()
-			}
-			continue
-		}
-		name := strings.TrimPrefix(key, headKey)
-		d.Heads = append(d.Heads, name)
-		user, box, _ := strings.Cut(name, "/")
-		p := statePath{user: user, box: box}
-		s.state.mu.Lock()
-		h := s.state.heads[p]
-		s.state.mu.Unlock()
-		if h != (head{}) {
-			s.state.mirror(p, &h)
-		} else {
-			s.state.mirror(p, nil)
+		id := strings.TrimPrefix(key, opKey)
+		ids = append(ids, id)
+		if op := s.ops.local(id); op != nil {
+			op.mu.Lock()
+			op.mirrorLocked()
+			op.mu.Unlock()
 		}
 	}
-	return d, s.ledger.PurgeOperations(ctx, time.Now().Add(-operationRetention))
-}
-
-func (s *Service) differences(ctx context.Context) ([]string, error) {
-	heads, err := s.headDifferences(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ops, err := s.operationDifferences(ctx)
-	return slices.Concat(heads, ops), err
-}
-
-func (s *Service) headDifferences(ctx context.Context) ([]string, error) {
-	if s.state == nil || s.state.shared != nil {
-		return nil, nil
-	}
-	rows, err := s.ledger.Heads(ctx)
-	if err != nil {
-		return nil, err
-	}
-	have := make(map[statePath][]byte, len(rows))
-	for _, r := range rows {
-		have[statePath{user: r.User, box: r.Box}] = r.Head
-	}
-	s.state.mu.Lock()
-	cached := maps.Clone(s.state.heads)
-	s.state.mu.Unlock()
-	var differ []string
-	for _, p := range slices.SortedFunc(maps.Keys(cached), comparePaths) {
-		stored, ok := have[p]
-		if h := cached[p]; ok != (h != head{}) || ok && !bytes.Equal(stored, headBytes(h)) {
-			differ = append(differ, p.ledgerKey())
-		}
-	}
-	return differ, nil
+	return ids, s.ledger.PurgeOperations(ctx, time.Now().Add(-operationRetention))
 }
 
 func (s *Service) operationDifferences(ctx context.Context) ([]string, error) {
@@ -155,8 +79,4 @@ func decodeHead(row cluster.Head) (head, error) {
 	}
 	h.version = row.Version
 	return h, nil
-}
-
-func comparePaths(a, b statePath) int {
-	return cmp.Or(cmp.Compare(a.user, b.user), cmp.Compare(a.box, b.box))
 }
