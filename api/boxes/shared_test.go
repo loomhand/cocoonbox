@@ -142,7 +142,6 @@ func TestAParkClaimAndASupersedeFromAnotherProcessExcludeEachOther(t *testing.T)
 func TestASharedParkWhoseMachineRemovalFailsEndsFailed(t *testing.T) {
 	e := newParkEnv(t)
 	db := clustertest.Open(t)
-	e.svc.EnableLedger(t.Context(), db)
 	e.svc.EnableShared(t.Context(), db)
 	e.fake.deleteErr = errors.New("sandboxd refused the release")
 	op := e.park(t, e.clock.Add(parkAfter))
@@ -378,8 +377,8 @@ func TestAnOperationAnotherProcessSupersedesFailsWhereItRuns(t *testing.T) {
 		at, done := local.finished()
 		return done && !at.IsZero() && strings.Contains(local.last.detail+lastEventDetail(local), "superseded by operation "+next.id)
 	})
-	if d, err := a.svc.Verify(t.Context()); err != nil || len(d.Operations) != 0 {
-		t.Errorf("Verify on a after the supersede = %+v, %v, want the table's events kept", d, err)
+	if ids, err := a.svc.Verify(t.Context()); err != nil || len(ids) != 0 {
+		t.Errorf("Verify on a after the supersede = %v, %v, want the table's events kept", ids, err)
 	}
 }
 
@@ -452,7 +451,6 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	b.svc.EnableIdle(0, userIdleAfter, 0)
 	b.svc.idle.now = a.svc.idle.now
 	for _, env := range []*stateEnv{a, b} {
-		env.svc.EnableLedger(t.Context(), db)
 		env.svc.EnableShared(t.Context(), db)
 	}
 	a.svc.hibernateIdle(t.Context())
@@ -483,9 +481,7 @@ func newSharedPair(t *testing.T, aCtx context.Context) (*stateEnv, *stateEnv, *c
 	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
 	b.svc = newService(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableState(a.agent, a.store, a.keys)
-	a.svc.EnableLedger(aCtx, db)
 	a.svc.EnableShared(aCtx, db)
-	b.svc.EnableLedger(t.Context(), db)
 	b.svc.EnableShared(t.Context(), db)
 	return a, b, db
 }

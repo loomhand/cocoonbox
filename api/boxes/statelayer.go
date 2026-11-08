@@ -156,8 +156,8 @@ type stateLayer struct {
 	keys       keyring.Keyring
 	retryDelay time.Duration
 	versioned  store.Versioned
-	// mirror, when set, gets every head the layer caches and, as nil, every forgotten one.
-	mirror func(p statePath, h *head)
+	// dropHead, when set, removes the shared head of every forgotten box.
+	dropHead func(p statePath)
 	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
 	shared *cluster.Store
 	// deltaFor reports whether a user's saves write delta records against the day's newest full snapshot.
@@ -623,14 +623,9 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 // keepHead caches h unless an invalidation followed dropped or the cache holds a newer head, or any head for a read.
 func (l *stateLayer) keepHead(p statePath, h head, dropped uint64, read bool) {
 	l.mu.Lock()
-	cur, cached := l.heads[p]
-	kept := l.dropped == dropped && (!cached || !read && cur.version <= h.version)
-	if kept {
+	defer l.mu.Unlock()
+	if cur, cached := l.heads[p]; l.dropped == dropped && (!cached || !read && cur.version <= h.version) {
 		l.heads[p] = h
-	}
-	l.mu.Unlock()
-	if kept && l.mirror != nil && l.shared == nil && h != (head{}) {
-		l.mirror(p, &h)
 	}
 }
 

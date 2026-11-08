@@ -1002,8 +1002,6 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 	saveLive(t, newStateLayer(agent, st, &fakeKeys{}), p, "a")
 	slow := &afterGetStore{fakeStore: st}
 	l := newStateLayer(agent, slow, &fakeKeys{})
-	var mirrored []string
-	l.mirror = func(_ statePath, h *head) { mirrored = append(mirrored, h.Latest) }
 	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
 	slow.after = func(key string) {
 		if key != p.head() {
@@ -1017,8 +1015,8 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 	if h, err := l.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
 		t.Fatalf("head read before the save = %+v, %v", h, err)
 	}
-	if h, _ := l.head(t.Context(), p); h.Latest != snapshotID(2) || mirrored[len(mirrored)-1] != snapshotID(2) {
-		t.Errorf("cached head %q, mirrored %v; want the save's head kept over the older read", h.Latest, mirrored)
+	if h, _ := l.head(t.Context(), p); h.Latest != snapshotID(2) {
+		t.Errorf("cached head %q; want the save's head kept over the older read", h.Latest)
 	}
 }
 

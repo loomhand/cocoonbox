@@ -20,8 +20,6 @@ func TestStartChecksShareTheUserLockAcrossReplicas(t *testing.T) {
 			backend, registry := newFakeMachines(), newFakeRegistry()
 			registry.boxes[alice] = []users.Box{{ID: aliceBox, Owner: alice, Name: "first", Agent: true}, {ID: "cb-other", Owner: alice, Name: "second", Agent: true}}
 			first, second := newService(backend, testDefaults, registry), newService(backend, testDefaults, registry)
-			first.EnableLedger(t.Context(), shared)
-			second.EnableLedger(t.Context(), other)
 			first.EnableShared(t.Context(), shared)
 			second.EnableShared(t.Context(), other)
 			entered, resume := make(chan struct{}), make(chan struct{})

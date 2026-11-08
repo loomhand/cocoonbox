@@ -158,7 +158,6 @@ func TestAnAgentCreateRecordsItsBoxFirstAndSkipsTheOwnersLimits(t *testing.T) {
 func TestAReachWrittenAfterTheSweepsReadKeepsAnAgentBoxUp(t *testing.T) {
 	svc, _, clock, box := newIdleService(t, true)
 	db := clustertest.Open(t)
-	svc.EnableLedger(t.Context(), db)
 	svc.EnableShared(t.Context(), db)
 	if svc.idle.idleAt(box, clock.read(), idleAfter, time.Time{}) {
 		t.Fatal("a box seen for the first time is idle")

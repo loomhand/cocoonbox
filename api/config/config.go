@@ -113,9 +113,9 @@ func (g GC) validate(bucket string) error {
 
 // Cluster configures the state api processes share in the users database.
 type Cluster struct {
-	// Ledger copies every box head and operation into the database and verifies the copy every minute.
+	// Ledger is set together with Shared.
 	Ledger bool `json:"ledger"`
-	// Shared makes the database the truth for box heads and operations, so api processes may serve together.
+	// Shared makes the database the truth for box heads and operations, verified every minute, so api processes may serve together.
 	Shared bool `json:"shared"`
 	// Drain fails /healthz for this long after a stop signal before the api stops, so a balancer moves new calls to another api.
 	Drain Duration `json:"drain"`
@@ -123,8 +123,8 @@ type Cluster struct {
 
 func (c Cluster) validate(conditionalWrites bool) error {
 	var errs []error
-	if c.Shared && !c.Ledger {
-		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
+	if c.Ledger != c.Shared {
+		errs = append(errs, errors.New("cluster.ledger and cluster.shared are set together"))
 	}
 	if c.Shared && !conditionalWrites {
 		errs = append(errs, errors.New("cluster.shared needs state.conditional_writes"))

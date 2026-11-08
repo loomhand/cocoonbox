@@ -158,7 +158,6 @@ func TestASupersededParkKeepsTheMachine(t *testing.T) {
 			e := newParkEnv(t)
 			if shared {
 				db := clustertest.Open(t)
-				e.svc.EnableLedger(t.Context(), db)
 				e.svc.EnableShared(t.Context(), db)
 			}
 			e.fake.setState(aliceBox, machines.StateRunning)
