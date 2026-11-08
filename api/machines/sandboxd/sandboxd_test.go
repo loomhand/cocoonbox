@@ -1585,6 +1585,34 @@ func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 	}
 }
 
+func TestAFreshAPIWakesAClaimAFullNodeHandedOnWhereItWasAdopted(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	db := clustertest.Open(t)
+	a := newSharedBackend(t, entry, db)
+	claimRunning(t, a)
+	h, err := a.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, a, boxID, h.Revision, machines.StateHibernated)
+	peer.shift(entry, entry.adoptable)
+
+	fresh := newSharedBackend(t, entry, db)
+	w, action, err := fresh.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure on a fresh api after the hand-off = %+v, %v, %v, want the machine woken where it was adopted", w, action, err)
+	}
+	waitState(t, fresh, boxID, w.Revision, machines.StateRunning)
+	if entry.count("owner") == 0 || entry.count("wake") != 1 || peer.count("wake") != 0 || entry.count("claim") != 0 {
+		t.Errorf("owner asks %d, wakes on the adopter %d and on the old node %d, claims %d; want it adopted and woken there, no new claim",
+			entry.count("owner"), entry.count("wake"), peer.count("wake"), entry.count("claim"))
+	}
+	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() {
+		t.Errorf("owner %+v, %v, want the adopter %q", e, err, entry.addr())
+	}
+}
+
 func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
