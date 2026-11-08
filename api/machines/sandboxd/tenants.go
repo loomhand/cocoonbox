@@ -3,11 +3,16 @@ package sandboxd
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 
 	"github.com/loomhand/cocoonbox/api/machines"
 )
+
+const tenantPage = 10000
 
 var _ machines.Tenants = (*Tenants)(nil)
 
@@ -36,4 +41,38 @@ func (t *Tenants) DeleteTenant(ctx context.Context, name string) error {
 		return err
 	}
 	return nil
+}
+
+func (t *Tenants) StaleTenants(ctx context.Context, want map[string]int) ([]string, error) {
+	held := make(map[string]bool, len(want))
+	for after := ""; ; {
+		var page struct {
+			Tenants []struct {
+				Name        string `json:"name"`
+				MaxClaims   int    `json:"max_claims"`
+				EgressClass string `json:"egress_class"`
+				Removed     bool   `json:"removed"`
+			} `json:"tenants"`
+			Next string `json:"next"`
+		}
+		query := url.Values{"limit": {strconv.Itoa(tenantPage)}, "after": {after}}
+		if err := t.api.do(ctx, http.MethodGet, "/v1/tenants?"+query.Encode(), nil, &page); err != nil {
+			return nil, err
+		}
+		for _, tn := range page.Tenants {
+			if maxClaims, ok := want[tn.Name]; ok && !tn.Removed && tn.MaxClaims == maxClaims && tn.EgressClass == t.egressClass {
+				held[tn.Name] = true
+			}
+		}
+		if after = page.Next; after == "" {
+			break
+		}
+	}
+	var stale []string
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		if !held[name] {
+			stale = append(stale, name)
+		}
+	}
+	return stale, nil
 }

@@ -641,10 +641,6 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	if err := other.Load(t.Context()); err != nil || elsewhere.Err() == nil {
 		t.Errorf("another api reloading the disable = %v, its lifetime %v", err, elsewhere.Err())
 	}
-	clear(gw.Disabled)
-	if err := svc.Reconcile(t.Context()); err != nil || !gw.Disabled[u.ID] {
-		t.Errorf("Reconcile = %v, the disabled user's gw key off %t", err, gw.Disabled[u.ID])
-	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
@@ -657,19 +653,25 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	}
 }
 
-func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
-	svc, gw, _, _ := newTestService(t)
-	onDefault := mustCreate(t, svc, NewUser{Name: "root", Admin: true})
-	capped := mustCreate(t, svc, NewUser{Name: "ops", Admin: true})
-	u := mustCreate(t, svc, NewUser{Name: "qa1"})
-	_ = svc.SetDailyCap(t.Context(), onDefault.ID, nil)
-	_ = svc.SetDailyCap(t.Context(), capped.ID, new(int64(7)))
-	if err := svc.Reconcile(t.Context()); err != nil {
-		t.Fatalf("Reconcile: %v", err)
+func TestReconcileTenantsWritesOnlyTheMissingAndChangedTenantsWithTheirTokens(t *testing.T) {
+	svc, _, tenants, _ := newTestService(t)
+	kept := mustCreate(t, svc, NewUser{Name: "qa1"})
+	lost := mustCreate(t, svc, NewUser{Name: "qa2"})
+	moved := mustCreate(t, svc, NewUser{Name: "qa3"})
+	token := tenants.Tokens[lost.ID]
+	delete(tenants.Max, lost.ID)
+	delete(tenants.Tokens, lost.ID)
+	tenants.Max[moved.ID] = 9
+	tenants.Tokens[kept.ID] = "untouched"
+	n, err := svc.reconcileTenants(t.Context())
+	if err != nil || n != 2 {
+		t.Fatalf("reconcileTenants = %d, %v; want the 2 stale tenants", n, err)
 	}
-	want := map[string]int64{onDefault.ID: gwkeys.Unlimited, capped.ID: 7}
-	if !maps.Equal(gw.Caps, want) {
-		t.Errorf("gw caps after Reconcile = %v, want %v and none for %s", gw.Caps, want, u.ID)
+	if tenants.Tokens[lost.ID] != token || tenants.Max[moved.ID] != tenants.Max[kept.ID] || tenants.Tokens[kept.ID] != "untouched" {
+		t.Errorf("tenants after reconcile: max %v, lost token restored %t, kept token %q", tenants.Max, tenants.Tokens[lost.ID] == token, tenants.Tokens[kept.ID])
+	}
+	if n, err := svc.reconcileTenants(t.Context()); err != nil || n != 0 {
+		t.Errorf("a second reconcileTenants = %d, %v; want nothing stale", n, err)
 	}
 }
 

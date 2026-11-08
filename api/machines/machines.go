@@ -175,4 +175,6 @@ type Tenants interface {
 	PutTenant(ctx context.Context, name, token string, maxClaims int) error
 	// DeleteTenant removes tenant name; removing an absent tenant succeeds.
 	DeleteTenant(ctx context.Context, name string) error
+	// StaleTenants returns the tenants of want, name to claim cap, that the instance lacks or holds with another cap or egress class.
+	StaleTenants(ctx context.Context, want map[string]int) ([]string, error)
 }

@@ -42,6 +42,8 @@ const (
 	renewClaims  = 2000
 	renewLatency = 50 * time.Millisecond
 	renewWithin  = 30 * time.Second
+
+	fakeTenantPage = 2
 )
 
 var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
@@ -493,6 +495,32 @@ func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
 	}
 	if _, err := NewTenants("127.0.0.1:17780", rootToken, ""); err == nil {
 		t.Error("NewTenants accepted a URL without a scheme")
+	}
+}
+
+func TestStaleTenantsNamesTheMissingRemovedAndChangedTenantsAcrossPages(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	tenants, err := NewTenants(fake.srv.URL, rootToken, "desk")
+	if err != nil {
+		t.Fatalf("NewTenants: %v", err)
+	}
+	for name, maxClaims := range map[string]int{"u-1": 1, "u-2": 2, "u-4": 1, "u-5": 1} {
+		if err := tenants.PutTenant(t.Context(), name, "tenant-token", maxClaims); err != nil {
+			t.Fatalf("PutTenant %s: %v", name, err)
+		}
+	}
+	fake.mutateTenants(func(held map[string]tenantRequest, removed map[string]bool) {
+		req := held["u-4"]
+		req.EgressClass = "other"
+		held["u-4"] = req
+		removed["u-5"] = true
+	})
+	stale, err := tenants.StaleTenants(t.Context(), map[string]int{"u-1": 1, "u-2": 3, "u-3": 1, "u-4": 1, "u-5": 1})
+	if want := []string{"u-2", "u-3", "u-4", "u-5"}; err != nil || !slices.Equal(stale, want) {
+		t.Errorf("StaleTenants = %v, %v; want %v", stale, err, want)
+	}
+	if fake.count("tenants") < 2 {
+		t.Errorf("StaleTenants read %d tenant pages, want every page", fake.count("tenants"))
 	}
 }
 
@@ -1658,33 +1686,34 @@ type fakeSandbox struct {
 type fakeSandboxd struct {
 	srv *httptest.Server
 
-	mu          sync.Mutex
-	sandboxes   map[string]*fakeSandbox
-	next        int
-	calls       map[string]int
-	claims      []claimRequest
-	execs       []execRequest
-	relays      []string
-	renews      []string
-	execExit    int32
-	execStatus  int
-	patchStatus int
-	getStatus   int
-	refusals    int
-	hold        chan struct{}
-	agent       string
-	tenants     map[string]tenantRequest
-	adoptable   map[string]*fakeSandbox
-	peers       []*fakeSandboxd
-	redirect    []*fakeSandboxd
-	down        bool
-	info        map[string]any
-	latency     time.Duration
+	mu             sync.Mutex
+	sandboxes      map[string]*fakeSandbox
+	next           int
+	calls          map[string]int
+	claims         []claimRequest
+	execs          []execRequest
+	relays         []string
+	renews         []string
+	execExit       int32
+	execStatus     int
+	patchStatus    int
+	getStatus      int
+	refusals       int
+	hold           chan struct{}
+	agent          string
+	tenants        map[string]tenantRequest
+	removedTenants map[string]bool
+	adoptable      map[string]*fakeSandbox
+	peers          []*fakeSandboxd
+	redirect       []*fakeSandboxd
+	down           bool
+	info           map[string]any
+	latency        time.Duration
 }
 
 func newFakeSandboxd(t testing.TB) *fakeSandboxd {
 	t.Helper()
-	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, adoptable: map[string]*fakeSandbox{}}
+	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, removedTenants: map[string]bool{}, adoptable: map[string]*fakeSandbox{}}
 	mux := f.handler()
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -1778,6 +1807,28 @@ func (f *fakeSandboxd) handler() http.Handler {
 		}
 		f.tenants[r.PathValue("name")] = req
 		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("GET /v1/tenants", f.root(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.calls["tenants"]++
+		after := r.URL.Query().Get("after")
+		var page struct {
+			Tenants []map[string]any `json:"tenants"`
+			Next    string           `json:"next,omitempty"`
+		}
+		for _, name := range slices.Sorted(maps.Keys(f.tenants)) {
+			if name <= after {
+				continue
+			}
+			if len(page.Tenants) == fakeTenantPage {
+				page.Next = page.Tenants[len(page.Tenants)-1]["name"].(string)
+				break
+			}
+			req := f.tenants[name]
+			page.Tenants = append(page.Tenants, map[string]any{"name": name, "max_claims": req.MaxClaims, "egress_class": req.EgressClass, "removed": f.removedTenants[name]})
+		}
+		writeJSON(w, page)
 	}))
 	mux.HandleFunc("DELETE /v1/tenants/{name}", f.root(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -2005,6 +2056,12 @@ func (f *fakeSandboxd) remove(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.sandboxes, id)
+}
+
+func (f *fakeSandboxd) mutateTenants(fn func(held map[string]tenantRequest, removed map[string]bool)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	fn(f.tenants, f.removedTenants)
 }
 
 func (f *fakeSandboxd) mutate(fn func(*fakeSandbox)) {
