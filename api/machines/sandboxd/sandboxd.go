@@ -104,7 +104,6 @@ type Backend struct {
 	peers  []string
 
 	mu       sync.Mutex
-	seen     map[string]seenClaim
 	watchers map[string]chan struct{}
 	owners   map[string]chan struct{}
 	// away maps a node that machines name to when the refresh first saw it out of the mesh.
@@ -135,7 +134,6 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		entryAddr: cmp.Or(advertised, opts.URL),
 		ctx:       ctx,
 		nodes:     map[string]*client{},
-		seen:      map[string]seenClaim{},
 		watchers:  map[string]chan struct{}{},
 		owners:    map[string]chan struct{}{},
 		away:      map[string]time.Time{},
@@ -163,17 +161,6 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 			b.stale[c.ID] = true
 		}
 		b.cacheMu.Unlock()
-	})
-	known, err := b.snapshot(ctx)
-	if err == nil {
-		err = b.apply(ctx, known)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read sandboxd claims: %w", err)
-	}
-	go b.loop(ctx, renewInterval, loopTimeout, func(ctx context.Context) error {
-		_, err := b.snapshot(ctx)
-		return err
 	})
 	return b, nil
 }
@@ -422,11 +409,7 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	if err != nil {
 		return fmt.Errorf("encode identity: %w", err)
 	}
-	r, err := node.get(ctx, sandbox)
-	if err != nil {
-		return fmt.Errorf("read sandbox token: %w", err)
-	}
-	resp, err := node.exec(ctx, sandbox, r.Token, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
+	resp, err := node.exec(ctx, sandbox, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
 	switch {
 	case err != nil:
 		return fmt.Errorf("write identity: %w", err)
@@ -776,22 +759,14 @@ func (b *Backend) reread(ctx context.Context, id, from, addr, sandbox string) er
 	if r.ID != sandbox || r.Metadata[metaMachine] != id {
 		return fmt.Errorf("node %s answered sandbox %s of machine %s with sandbox %s of machine %s", addr, sandbox, id, r.ID, r.Metadata[metaMachine])
 	}
-	token := r.Token
-	r.Token = ""
-	applied := false
-	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-		if applied = e != nil && (e.row == nil || e.ownerAddr == from); !applied {
+	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil || e.row != nil && e.ownerAddr != from {
 			return e, false
 		}
 		e.row, e.ownerAddr = &r, addr
 		return e, true
-	}); err != nil {
-		return err
-	}
-	if applied {
-		b.keepToken(id, sandbox, token)
-	}
-	return nil
+	})
+	return err
 }
 
 // read returns the row of sandbox, machine id's claim, and the node that answered: addr, or the node the mesh names its owner.
@@ -838,12 +813,8 @@ func (b *Backend) moved(addr string, err error) bool {
 	return away
 }
 
-// follow asks the nodes at addrs which one owns sandbox, machine id's claim, with the claim's token, which lets a node adopt an archived claim.
+// follow asks the nodes at addrs which one owns sandbox, machine id's claim, which lets a node adopt an archived claim.
 func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string) (string, bool) {
-	token := b.token(id, sandbox)
-	if token == "" {
-		return "", false
-	}
 	ctx, cancel := context.WithTimeout(ctx, ownerTimeout)
 	defer cancel()
 	owners := make([]string, len(addrs))
@@ -855,7 +826,7 @@ func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string
 			if err != nil {
 				return nil
 			}
-			if owner, err := node.owner(ctx, sandbox, token); err == nil {
+			if owner, err := node.owner(ctx, sandbox); err == nil {
 				owners[i] = cmp.Or(owner, addr)
 			}
 			return nil
@@ -876,31 +847,6 @@ func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string
 		logger.Warnf(ctx, "nodes name different owners of sandbox %s: %s; the machine stays", sandbox, strings.Join(owners, ", "))
 		return "", false
 	}
-}
-
-// keepToken holds token for machine id while its claim is sandbox.
-func (b *Backend) keepToken(id, sandbox, token string) {
-	if token == "" {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.seen[id].sandbox != sandbox {
-		b.seen[id] = seenClaim{sandbox: sandbox, token: token, kept: time.Now()}
-		return
-	}
-	s := b.seen[id]
-	s.token = token
-	b.seen[id] = s
-}
-
-func (b *Backend) token(id, sandbox string) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if s := b.seen[id]; s.sandbox == sandbox {
-		return s.token
-	}
-	return ""
 }
 
 // lookup refreshes id's row from the node that holds its claim and returns the entry.
@@ -992,11 +938,6 @@ func (b *Backend) refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return b.apply(ctx, known)
-}
-
-// apply re-reads every claim of the mesh against known, drops machines whose claim is gone and probes agents not yet seen.
-func (b *Backend) apply(ctx context.Context, known map[string]*entry) error {
 	addrs := b.mesh(ctx)
 	lists, err := b.listMesh(ctx, addrs)
 	if err != nil {
@@ -1084,7 +1025,6 @@ func (b *Backend) known(ctx context.Context) (map[string]*entry, error) {
 }
 
 func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {
-	read := time.Now()
 	recs, err := b.opts.Store.Machines(ctx)
 	if err != nil {
 		return nil, err
@@ -1093,25 +1033,11 @@ func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {
 	for _, rec := range recs {
 		known[rec.ID] = loadEntry(rec)
 	}
-	b.forgetTokens(known, read)
 	return known, nil
-}
-
-func (b *Backend) forgetTokens(known map[string]*entry, read time.Time) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	maps.DeleteFunc(b.seen, func(id string, s seenClaim) bool {
-		_, ok := known[id]
-		return !ok && s.kept.Before(read)
-	})
 }
 
 // index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only from node from, where the backend itself followed the claim from, and only while the machine is still there.
 func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, from string) error {
-	node, err := b.node(addr)
-	if err != nil {
-		return err
-	}
 	placed := func(e *entry, sandbox string) bool {
 		return sandbox != "" && e.sandbox() == sandbox && (e.ownerAddr == addr || from != "" && e.ownerAddr == from)
 	}
@@ -1121,25 +1047,11 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 		if !placed(e, r.ID) {
 			continue
 		}
-		token := r.Token
-		r.Token = ""
-		if token == "" && b.token(id, r.ID) == "" {
-			if full, getErr := node.get(ctx, r.ID); getErr == nil {
-				token = full.Token
-			}
-		}
 		if reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
-			if token == "" || token == b.token(id, r.ID) {
-				continue
-			}
-			if cur, readErr := b.stored(ctx, id); readErr == nil && cur.sandbox() == r.ID && cur.ownerAddr == addr {
-				b.keepToken(id, r.ID, token)
-			}
 			continue
 		}
-		applied := false
 		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-			if applied = placed(e, r.ID); !applied {
+			if !placed(e, r.ID) {
 				return e, false
 			}
 			cur := r
@@ -1154,9 +1066,6 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 			continue
 		}
 		known[id] = next
-		if applied {
-			b.keepToken(id, r.ID, token)
-		}
 	}
 	return nil
 }

@@ -58,7 +58,6 @@ type poolKey struct {
 type row struct {
 	ID         string            `json:"id"`
 	Key        poolKey           `json:"key"`
-	Token      string            `json:"token,omitempty"`
 	Tenant     string            `json:"tenant,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Hibernated bool              `json:"hibernated"`
@@ -183,11 +182,11 @@ func (c *client) full(ctx context.Context) (string, error) {
 }
 
 // owner asks the node which node owns sandbox id, with the sandbox's own token; a node may adopt an archived claim to answer.
-func (c *client) owner(ctx context.Context, id, token string) (string, error) {
+func (c *client) owner(ctx context.Context, id string) (string, error) {
 	var resp struct {
 		OwnerAddr string `json:"owner_addr"`
 	}
-	err := c.request(ctx, token, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/owner", nil, &resp)
+	err := c.do(ctx, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/owner", nil, &resp)
 	return resp.OwnerAddr, err
 }
 
@@ -223,9 +222,9 @@ func (c *client) patchEnv(ctx context.Context, id string, entries map[string]*en
 }
 
 // exec runs a buffered command as the guest's root with the sandbox's own token.
-func (c *client) exec(ctx context.Context, id, token string, req execRequest) (execResponse, error) {
+func (c *client) exec(ctx context.Context, id string, req execRequest) (execResponse, error) {
 	var resp execResponse
-	err := c.request(ctx, token, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/exec", req, &resp)
+	err := c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/exec", req, &resp)
 	return resp, err
 }
 
