@@ -388,6 +388,26 @@ func TestLongLocksLeaveTheShortLocksTheirConnections(t *testing.T) {
 	release()
 }
 
+func TestAProvisionLockIsTakenWhileEveryLongLockIsHeld(t *testing.T) {
+	st := clustertest.Open(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	for i := range 32 {
+		release, err := st.LockLong(ctx, "state:u-"+strings.Repeat("x", i+1))
+		if err != nil {
+			t.Fatalf("LockLong %d: %v", i, err)
+		}
+		t.Cleanup(release)
+	}
+	short, cancelShort := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelShort()
+	release, err := st.LockProvision(short, "provision:cb-1")
+	if err != nil {
+		t.Fatalf("a provision lock while every long lock is held: %v", err)
+	}
+	release()
+}
+
 func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
 	b := clustertest.OpenReplica(t, dsn)

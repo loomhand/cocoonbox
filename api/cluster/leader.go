@@ -49,9 +49,13 @@ func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.locks, name)
 }
 
-// LockLong is Lock for holds that last a save, on connections the short locks never use.
+// LockLong is Lock for holds that last a save, and LockProvision for a machine's provisioning, each on connections no other lock uses.
 func (s *Store) LockLong(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.longLocks, name)
+}
+
+func (s *Store) LockProvision(ctx context.Context, name string) (func(), error) {
+	return lock(ctx, s.provisionLocks, name)
 }
 
 // leadOnce waits for the leader lock and runs lead until the lock is lost; it reports whether it held the lock.
