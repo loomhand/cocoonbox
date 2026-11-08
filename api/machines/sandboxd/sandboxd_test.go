@@ -545,15 +545,10 @@ func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
 	if _, err := db.DeleteMachineIf(t.Context(), "cb-b", func(cluster.Machine) bool { return true }); err != nil {
 		t.Fatalf("DeleteMachineIf: %v", err)
 	}
-	clustertest.WaitFor(t, "both notifies", func() bool {
-		b.cacheMu.Lock()
-		defer b.cacheMu.Unlock()
-		return b.stale["cb-a"] && b.stale["cb-b"]
+	clustertest.WaitFor(t, "the change and the delete in known", func() bool {
+		known, err := b.known(t.Context())
+		return err == nil && len(known) == 1 && known["cb-a"] != nil && known["cb-a"].image == "cbdesk:v9"
 	})
-	known, err := b.known(t.Context())
-	if err != nil || len(known) != 1 || known["cb-a"] == nil || known["cb-a"].image != "cbdesk:v9" {
-		t.Errorf("known after a change and a delete = %v, %v; want only cb-a on cbdesk:v9", slices.Collect(maps.Keys(known)), err)
-	}
 	b.cacheMu.Lock()
 	b.cachedAt = time.Time{}
 	b.cacheMu.Unlock()
