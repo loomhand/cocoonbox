@@ -25,7 +25,7 @@ const cliUsage = `usage:
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
   cocoonbox-api [-config FILE] user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
   cocoonbox-api [-config FILE] state heads
-  cocoonbox-api [-config FILE] box rebase USER BOX IMAGE
+  cocoonbox-api [-config FILE] box rebase USER BOX IMAGE [-flavor VCPUS/MEMORY_MIB/DISK_GIB]
   cocoonbox-api [-config FILE] node cutoff ADDR`
 
 type connections interface {

@@ -449,6 +449,18 @@ func (r *fakeRegistry) AddBox(_ context.Context, b users.Box) (users.Box, error)
 	return b, nil
 }
 
+func (r *fakeRegistry) SetBoxFlavor(_ context.Context, owner, id string, flavor machines.Flavor) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i, b := range r.boxes[owner] {
+		if b.ID == id {
+			r.boxes[owner][i].Flavor = flavor
+			return nil
+		}
+	}
+	return users.ErrNotFound
+}
+
 func (r *fakeRegistry) RenameBox(_ context.Context, owner, id, name string) (users.Box, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -25,6 +25,8 @@ const (
 	HeaderGuestToken = "x-cocoonbox-guest-token" //nolint:gosec // a header name, not a credential
 	// HeaderOperatorUser names the user an operator call acts as; only the operator socket reads it.
 	HeaderOperatorUser = "x-cocoonbox-operator-user"
+	// HeaderOperatorFlavor names the flavor, vcpus/memory_mib/disk_gib, an operator Rebase moves the box to; only the operator socket reads it.
+	HeaderOperatorFlavor = "x-cocoonbox-operator-flavor"
 	// SecretPrefix starts every share secret; a bearer is tried as a share secret only when no user token matches it.
 	SecretPrefix = "cbs_"
 	// InviteTokenPrefix starts every invite-scoped token, which is never a user token.
@@ -116,6 +118,7 @@ type (
 	userKey       struct{}
 	credentialKey struct{}
 	operatorKey   struct{}
+	flavorKey     struct{}
 )
 
 // Authenticator maps bearer tokens to user ids and share secrets to shares.
@@ -327,6 +330,12 @@ func Operator(ctx context.Context) bool {
 	return operator
 }
 
+// OperatorFlavor returns the flavor an operator call names in HeaderOperatorFlavor, empty for none.
+func OperatorFlavor(ctx context.Context) string {
+	flavor, _ := ctx.Value(flavorKey{}).(string)
+	return flavor
+}
+
 // OperatorUnary admits unary calls as the user in HeaderOperatorUser; the operator socket's file mode is the access check.
 func OperatorUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	ctx, err := operatorUser(ctx)
@@ -351,5 +360,9 @@ func operatorUser(ctx context.Context) (context.Context, error) {
 	if len(values) != 1 || values[0] == "" {
 		return nil, status.Error(codes.Unauthenticated, "missing operator user")
 	}
-	return context.WithValue(WithUser(ctx, values[0]), operatorKey{}, true), nil
+	ctx = context.WithValue(WithUser(ctx, values[0]), operatorKey{}, true)
+	if flavor := md.Get(HeaderOperatorFlavor); len(flavor) == 1 {
+		ctx = context.WithValue(ctx, flavorKey{}, flavor[0])
+	}
+	return ctx, nil
 }

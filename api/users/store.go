@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/migrate"
 )
 
@@ -187,6 +188,23 @@ func (s *store) renameBox(ctx context.Context, owner, id, name string) error {
 	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("rename box: %w", err)
+	}
+	return err
+}
+
+func (s *store) setBoxFlavor(ctx context.Context, owner, id string, f machines.Flavor) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "UPDATE boxes SET vcpus = $3, memory_mib = $4, disk_gib = $5 WHERE id = $1 AND owner = $2", id, owner, f.VCPUs, f.MemoryMiB, f.DiskGiB)
+		switch {
+		case err != nil:
+			return err
+		case tag.RowsAffected() == 0:
+			return ErrNotFound
+		}
+		return notifyIn(ctx, tx, "")
+	})
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("set box flavor: %w", err)
 	}
 	return err
 }
