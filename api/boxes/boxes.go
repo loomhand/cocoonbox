@@ -171,9 +171,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	} else if !s.registry.HasBox(user, box) {
 		return nil, ErrNoBox
 	}
-	if ctx.Value(alarmCall{}) == nil {
-		s.Reached(box)()
-	}
 	if s.deleting(box) {
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
 	}
@@ -222,6 +219,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "ensure box")
 	}
+	s.ensureReached(ctx, box, action)
 	switch action {
 	case machines.ActionCreated:
 		if saved.Latest != "" {
@@ -466,6 +464,19 @@ func (s *Service) ownImage(user string) string {
 	}
 	newest, _ := s.defaults.newest(Family(image))
 	return newest
+}
+
+func (s *Service) ensureReached(ctx context.Context, box string, action machines.Action) {
+	switch {
+	case ctx.Value(alarmCall{}) != nil:
+	case action != machines.ActionNone:
+		s.Reached(box)()
+	case s.wake != nil:
+		s.wake.reach(box)
+		if s.reaches != nil {
+			s.reaches.reach(ensuredPrefix+box, s.reaches.now())
+		}
+	}
 }
 
 // lockStarts serializes the requests that may start or delete a machine of user, in every api with a shared table.

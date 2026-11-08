@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -461,6 +462,40 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	a.svc.hibernateIdle(t.Context())
 	if op := newestOperation(a.svc, aliceBox); op != nil || a.fake.state(aliceBox) != machines.StateRunning {
 		t.Errorf("a's sweep started an operation (%t) on a box a client of b holds, state %v", op != nil, a.fake.state(aliceBox))
+	}
+}
+
+func TestAnEnsureThroughAnotherAPIHoldsAScheduledWakeButNotTheIdleTime(t *testing.T) {
+	db := clustertest.Open(t)
+	a := newWakeEnv(t)
+	b := &wakeEnv{fake: a.fake, store: a.store, ctx: a.ctx}
+	b.svc = newService(a.fake, testDefaults, a.svc.registry)
+	b.svc.EnableWake(a.store, testWakeLimits)
+	nine := a.schedule(t, "0 9 * * *", 15*time.Minute)
+	var reachClock atomic.Int64
+	reachClock.Store(nine.UnixNano())
+	for _, svc := range []*Service{a.svc, b.svc} {
+		svc.EnableIdle(0, userIdleAfter, 0)
+		svc.idle.now = func() time.Time { return time.Unix(0, reachClock.Load()) }
+		svc.EnableShared(t.Context(), db)
+	}
+	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
+	a.alarm(t, nine.Add(-wakeLead))
+	a.running(t)
+	reachClock.Store(nine.Add(time.Minute).UnixNano())
+	if _, err := b.svc.Ensure(b.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure through b: %v", err)
+	}
+	clustertest.WaitFor(t, "b's ensure in the shared table", func() bool {
+		seen, err := db.Activity(t.Context(), nine)
+		return err == nil && !seen[ensuredPrefix+aliceBox].IsZero()
+	})
+	a.alarm(t, nine.Add(15*time.Minute))
+	if got := a.fake.state(aliceBox); got != machines.StateRunning {
+		t.Fatalf("box is %v after awake_for, want it left up for the client that ensured it through b", got)
+	}
+	if a.svc.readReaches(t.Context()); !a.svc.reachedElsewhere(aliceBox).IsZero() {
+		t.Errorf("b's ensure of the running box reached its idle time at %s, want no reach", a.svc.reachedElsewhere(aliceBox))
 	}
 }
 
