@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -470,15 +471,18 @@ func TestAnEnsureThroughAnotherAPIHoldsAScheduledWakeButNotTheIdleTime(t *testin
 	b := &wakeEnv{fake: a.fake, store: a.store, ctx: a.ctx}
 	b.svc = newService(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableWake(a.store, testWakeLimits)
+	nine := a.schedule(t, "0 9 * * *", 15*time.Minute)
+	var reachClock atomic.Int64
+	reachClock.Store(nine.UnixNano())
 	for _, svc := range []*Service{a.svc, b.svc} {
+		svc.EnableIdle(0, userIdleAfter, 0)
+		svc.idle.now = func() time.Time { return time.Unix(0, reachClock.Load()) }
 		svc.EnableShared(t.Context(), db)
-		svc.reaches.now = func() time.Time { return a.clock }
 	}
 	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
-	nine := a.schedule(t, "0 9 * * *", 15*time.Minute)
 	a.alarm(t, nine.Add(-wakeLead))
 	a.running(t)
-	a.clock = nine.Add(time.Minute)
+	reachClock.Store(nine.Add(time.Minute).UnixNano())
 	if _, err := b.svc.Ensure(b.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
 		t.Fatalf("Ensure through b: %v", err)
 	}
