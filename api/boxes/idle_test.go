@@ -82,6 +82,20 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	}
 }
 
+func TestAnIdleBoxWhoseAgentCannotAnswerSleepsAfterTheUnansweredCap(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	env.svc.activity.(*fakeActivity).err = errors.New("unavailable")
+	env.svc.hibernateIdle(t.Context())
+	clock.advance(unansweredIdle*userIdleAfter - time.Second)
+	env.svc.hibernateIdle(t.Context())
+	if got := env.fake.state(aliceBox); got != machines.StateRunning || env.svc.ops.activeFor(aliceBox) != nil {
+		t.Fatalf("under the cap: state %v, operation %v; want it running with none", got, env.svc.ops.activeFor(aliceBox))
+	}
+	clock.advance(time.Second)
+	env.svc.hibernateIdle(t.Context())
+	waitState(t, env.fake, aliceBox, machines.StateHibernating)
+}
+
 func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	bobBox := BoxID(bob)

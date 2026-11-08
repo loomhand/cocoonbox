@@ -17,7 +17,10 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
-const probeTimeout = 15 * time.Second
+const (
+	probeTimeout   = 15 * time.Second
+	unansweredIdle = 4
+)
 
 // Activity tells whether work runs in a box that no client reaches: an agent turn, or an offloaded CLI session at work.
 type Activity interface {
@@ -29,7 +32,7 @@ func (s *Service) EnableIdle(agent, user, squeezed time.Duration) {
 	s.idle = &idling{agent: agent, user: user, squeezed: squeezed, probe: probeTimeout, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
 }
 
-// EnableActivity asks activity before an idle user box hibernates; a box it calls busy, or cannot answer for, stays up.
+// EnableActivity asks activity before an idle user box hibernates; a box it calls busy stays up, and one it cannot answer for stays up until unansweredIdle times the threshold.
 func (s *Service) EnableActivity(activity Activity) {
 	s.activity = activity
 }
@@ -84,9 +87,11 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 	box := boxOfMachine(m.ID)
 	logger := log.WithFunc("boxes.Service.sleepIdle").WithField("box", box)
 	switch reason, err := s.keepAwake(ctx, m); {
-	case err != nil:
+	case err != nil && !s.stillIdle(ctx, box, unansweredIdle*after):
 		logger.Warnf(ctx, "idle box stays up: %v", err)
 		return
+	case err != nil:
+		logger.Warnf(ctx, "idle box sleeps unanswered after %s: %v", unansweredIdle*after, err)
 	case reason != "":
 		logger.Infof(ctx, "idle box stays up: %s", reason)
 		return
