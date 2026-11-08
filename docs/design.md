@@ -1045,7 +1045,7 @@ Decided: host custody, stored in PostgreSQL (16.1.1).
 The broker is a service-layer package of the api (`api/connect`), not a new component. It holds:
 - **Grant store.** One record per (user, connector), with:
   - the refresh token, the access token and its expiry;
-  - the scopes and the account label;
+  - the account label;
   - the per-tool policy.
   
   Records are sealed with AES-256-GCM under a key derived from the user's state key, which the master key seals and the database never sees in the clear (16.1.1). The keyring's plain JSON files are not used.
@@ -1081,7 +1081,7 @@ Tables (migration `0001`; `connect_door_keys` came with the box door; since migr
 
 | Table | Columns | Notes |
 |---|---|---|
-| `connect_grants` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `account_label`, `scopes text[]`, `status` (`active` / `needs_reconnect`), `policy jsonb`, `sealed bytea` (access token, refresh token, an API key and its header, a registered client), `token_expires_at`, `created_at`, `updated_at` | unique (`user_id`, `connector`); `policy` and the expiry stay plain, so listing and the refresh check need no decrypt |
+| `connect_grants` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `account_label`, `status` (`active` / `needs_reconnect`), `policy jsonb`, `sealed bytea` (access token, refresh token, an API key and its header, a registered client), `token_expires_at`, `created_at`, `updated_at` | unique (`user_id`, `connector`); `policy` and the expiry stay plain, so listing and the refresh check need no decrypt |
 | `connect_flows` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `state_sha256`, `session_sha256`, `nonce_sha256` (0002), `sealed bytea` (PKCE verifier, the registered client), `expires_at` | 10 min TTL; deleted when the callback takes it |
 | `connect_approvals` | `id` PK, `user_id`, `grant_id`, `tool`, `args_sha256`, `summary`, `decision` (`pending`, `once`, `always`, `deny`), `expires_at`, `used_at` | used once, 10 min (16.5) |
 | `connect_door_keys` | `key_sha256` PK, `machine_id`, `user_id`, `incarnation`, `created_at` | the box door key (16.3, migration `0003`); the key itself is never stored |

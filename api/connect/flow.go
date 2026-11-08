@@ -150,10 +150,7 @@ func (s *Service) Complete(ctx context.Context, nonce, state, code, iss string) 
 		return "", status.Errorf(codes.FailedPrecondition, "%s refused the sign-in: %v", e.name, err)
 	}
 	account, _ := s.accountLabel(ctx, e, t.AccessToken)
-	g := &grant{user: user, connector: f.connector, kind: f.kind, mcpURL: f.mcpURL, account: account, scopes: fs.Scopes, expiresAt: expiry(t.ExpiresIn)}
-	if t.Scope != "" {
-		g.scopes = strings.FieldsFunc(t.Scope, func(r rune) bool { return r == ' ' || r == ',' })
-	}
+	g := &grant{user: user, connector: f.connector, kind: f.kind, mcpURL: f.mcpURL, account: account, expiresAt: expiry(t.ExpiresIn)}
 	sec := secrets{AccessToken: t.AccessToken, RefreshToken: t.RefreshToken}
 	if e.auth != authOAuth {
 		sec.Client = fs.Client
