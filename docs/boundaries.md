@@ -75,8 +75,8 @@ Two invariants:
 
 Consequences:
 - Mode B keeps the model subscription on the Mac; the box only sees MCP tool calls.
-- Box-to-edge auth uses a per-box secret, never one secret shared by all boxes.
-- Model and connector keys reach outbound requests through egress injection (sandbox per-claim env with `guest: false`) or a broker on the Mac, not through a file in the VM.
+- Edge-to-box calls carry a credential the edge signs for one box and one wake; box-to-host calls carry a per-machine key the egress proxy injects. No secret is shared by all boxes.
+- Model and connector keys reach outbound requests through egress injection (sandbox per-claim env with `guest: false`) or the api's Connect broker on the host, not through a file in the VM.
 - Browser sessions are the one unavoidable exception (they live where the browser runs); they are encrypted with the user's key in the state layer.
 
 **`user` has passwordless sudo since desktop v10.** The in-box split between `user`, `cbagent` and root no longer protects anything from the desktop user or from the tools agents run as `user`: they can read `agent.env`, `/var/lib/cocoonbox` (agent.db) and the identity file, and replace the agent binary. Both invariants still hold, because neither relies on that split:
