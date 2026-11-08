@@ -147,6 +147,9 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	if resize != nil {
 		if err := s.registry.SetBoxFlavor(op.ctx, user, op.boxID, *resize); err != nil {
 			logger.Error(op.ctx, err, "record the box's new flavor")
+			s.discard(op, created.ID)
+			op.fail("recording the new flavor failed; the old machine stays")
+			return
 		}
 	}
 	if err := s.deleteMachine(op.ctx, old.ID); err != nil {
