@@ -46,7 +46,6 @@ type tokens struct {
 	AccessToken      string `json:"access_token"`
 	RefreshToken     string `json:"refresh_token"`
 	ExpiresIn        int64  `json:"expires_in"`
-	Scope            string `json:"scope"`
 	Error            string `json:"error"`
 	ErrorDescription string `json:"error_description"`
 }

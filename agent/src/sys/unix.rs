@@ -243,6 +243,37 @@ pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
+/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an
+/// absolute path or any symlink fails with `EXDEV`.
+#[cfg(target_os = "macos")]
+pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
+    let rel = super::beneath(path)?;
+    let rel = if rel.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        &rel
+    };
+    let path = CString::new(rel.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: path is NUL-terminated and outlives the call; openat takes plain integers otherwise.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            path.as_ptr(),
+            open_flags(directory) | libc::O_CLOEXEC | libc::O_NOFOLLOW_ANY,
+        )
+    };
+    if fd < 0 {
+        let e = io::Error::last_os_error();
+        return Err(if e.raw_os_error() == Some(libc::ELOOP) {
+            io::Error::from_raw_os_error(libc::EXDEV)
+        } else {
+            e
+        });
+    }
+    // SAFETY: openat returned a new descriptor that nothing else owns.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
 /// A non-blocking, close-on-exec inotify instance, registered with the tokio reactor.
 #[cfg(target_os = "linux")]
 pub fn inotify() -> io::Result<tokio::io::unix::AsyncFd<File>> {
@@ -275,37 +306,6 @@ pub fn inotify_watch(fd: &impl AsRawFd, path: &Path, mask: u32) -> io::Result<i3
 pub fn inotify_unwatch(fd: &impl AsRawFd, wd: i32) {
     // SAFETY: inotify_rm_watch takes plain integers.
     unsafe { libc::inotify_rm_watch(fd.as_raw_fd(), wd) };
-}
-
-/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an
-/// absolute path or any symlink fails with `EXDEV`.
-#[cfg(target_os = "macos")]
-pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
-    let rel = super::beneath(path)?;
-    let rel = if rel.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        &rel
-    };
-    let path = CString::new(rel.as_os_str().as_bytes()).map_err(io::Error::other)?;
-    // SAFETY: path is NUL-terminated and outlives the call; openat takes plain integers otherwise.
-    let fd = unsafe {
-        libc::openat(
-            dir.as_raw_fd(),
-            path.as_ptr(),
-            open_flags(directory) | libc::O_CLOEXEC | libc::O_NOFOLLOW_ANY,
-        )
-    };
-    if fd < 0 {
-        let e = io::Error::last_os_error();
-        return Err(if e.raw_os_error() == Some(libc::ELOOP) {
-            io::Error::from_raw_os_error(libc::EXDEV)
-        } else {
-            e
-        });
-    }
-    // SAFETY: openat returned a new descriptor that nothing else owns.
-    Ok(unsafe { File::from_raw_fd(fd) })
 }
 
 /// The path the open file `fd` resolves to now.

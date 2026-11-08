@@ -244,7 +244,6 @@ type Config struct {
 	Provision Provision `json:"provision"`
 	Accounts  Accounts  `json:"accounts"`
 	Flavor    Flavor    `json:"flavor"`
-	Flavors   []Flavor  `json:"flavors"`
 	// MaxRunningBoxes bounds how many boxes of one user run at once; Ensure and Create past it fail and name the running box.
 	MaxRunningBoxes int `json:"max_running_boxes"`
 	// UserIdleHibernate saves and hibernates a user's running box no client reached for this long; 0s (the default) leaves it up.

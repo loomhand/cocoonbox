@@ -31,7 +31,6 @@ type grant struct {
 	kind      string
 	mcpURL    string
 	account   string
-	scopes    []string
 	status    string
 	policy    map[string]string
 	sealed    []byte
@@ -126,11 +125,11 @@ func (s *store) putGrant(ctx context.Context, g *grant, seal func(id string) ([]
 		if g.sealed, err = seal(g.id); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO connect_grants (id, user_id, connector, kind, mcp_url, account_label, scopes, status, sealed, token_expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, coalesce($7, '{}'::text[]), $8, $9, $10)
-			ON CONFLICT (id) DO UPDATE SET kind = $4, mcp_url = $5, account_label = $6, scopes = coalesce($7, '{}'::text[]), status = $8, sealed = $9,
-				token_expires_at = $10, updated_at = now()`,
-			g.id, g.user, g.connector, g.kind, g.mcpURL, g.account, g.scopes, statusActive, g.sealed, g.expiresAt)
+		_, err = tx.Exec(ctx, `INSERT INTO connect_grants (id, user_id, connector, kind, mcp_url, account_label, status, sealed, token_expires_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (id) DO UPDATE SET kind = $4, mcp_url = $5, account_label = $6, status = $7, sealed = $8,
+				token_expires_at = $9, updated_at = now()`,
+			g.id, g.user, g.connector, g.kind, g.mcpURL, g.account, statusActive, g.sealed, g.expiresAt)
 		if err != nil {
 			return fmt.Errorf("store grant: %w", err)
 		}
