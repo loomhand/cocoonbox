@@ -44,7 +44,6 @@ flavor:
   vcpus: 4
   memory_mib: 8192
   disk_gib: 40
-flavors: []
 state:
   endpoint: $CB_STATE_ENDPOINT
   public_endpoint: $CB_STATE_ENDPOINT
