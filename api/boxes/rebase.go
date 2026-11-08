@@ -19,8 +19,8 @@ import (
 
 const (
 	gib = 1 << 30
-	// diskHeadroom is the image and its caches on a box's disk besides the saved files.
-	diskHeadroom = 8 * gib
+	// diskHeadroom is what first boot, caches and replayed packages add to a box's disk beside its saved files; the image is the overlay's lower layer, off the disk.
+	diskHeadroom = 2 * gib
 )
 
 func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*controlv1.Operation, error) {
@@ -96,7 +96,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	}
 	if resize != nil {
 		if rec.LogicalBytes+diskHeadroom > uint64(resize.DiskGiB)*gib {
-			op.fail(fmt.Sprintf("the box holds %.1f GiB, which a %d GiB disk does not take beside the image", float64(rec.LogicalBytes)/gib, resize.DiskGiB))
+			op.fail(fmt.Sprintf("the box holds %.1f GiB, which a %d GiB disk does not take with room to boot", float64(rec.LogicalBytes)/gib, resize.DiskGiB))
 			return
 		}
 		flavor = *resize

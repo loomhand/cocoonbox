@@ -588,11 +588,11 @@ func TestAnOperatorRebaseToAFlavorResizesTheBoxOnlyWhenItsFilesFit(t *testing.T)
 	if _, err := rebase("2/4096"); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("operator Rebase to a malformed flavor = %v, want InvalidArgument", err)
 	}
-	op, err := rebase("2/4096/8")
+	op, err := rebase("2/4096/2")
 	if err != nil {
-		t.Fatalf("operator Rebase to an 8 GiB disk: %v", err)
+		t.Fatalf("operator Rebase to a 2 GiB disk: %v", err)
 	}
-	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(events[len(events)-1].GetDetail(), "8 GiB disk") {
+	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(events[len(events)-1].GetDetail(), "2 GiB disk") {
 		t.Fatalf("Rebase onto a disk the files do not fit = %v, want it refused", events[len(events)-1])
 	}
 	if n := env.fake.specCount(); n != 0 {

@@ -36,7 +36,7 @@ printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user tok
 cocoonbox-api -config /etc/cocoonbox/api.yaml user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]   # the user's policy; every api takes it at once
 cocoonbox-api -config /etc/cocoonbox/api.yaml state heads                    # the ledger's box heads to match every head.json, both ways; once, before turning on cluster.shared
 cocoonbox-api -config /etc/cocoonbox/api.yaml box rebase USER BOX IMAGE      # the user's Rebase through the running api on operator_socket, saved first; follows it to the end
-cocoonbox-api -config /etc/cocoonbox/api.yaml box rebase USER BOX IMAGE -flavor 2/4096/20  # the same onto a new flavor, which the box keeps once the new machine serves; refused when the saved files and 8 GiB for the image exceed its disk
+cocoonbox-api -config /etc/cocoonbox/api.yaml box rebase USER BOX IMAGE -flavor 2/4096/20  # the same onto a new flavor, which the box keeps once the new machine serves; refused when the saved files and 2 GiB to boot exceed its disk (the image is the overlay's lower layer, not on the disk)
 cocoonbox-api -config /etc/cocoonbox/api.yaml node cutoff ADDR               # after a node cutoff: revokes the gw and door keys of every machine whose secrets went to ADDR, revokes their owners' Connect grants at the vendors, lists the vault keys to rotate
 cocoonbox-api -config /etc/cocoonbox/api.yaml check                          # the checks startup runs before it reaches sandboxd, writing nothing; lists the cluster migrations the next start applies
 ```
