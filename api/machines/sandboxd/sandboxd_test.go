@@ -1495,6 +1495,45 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	}
 }
 
+func TestALostNodeKeepsTheMachineOfItsArchivedClaim(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		t.Run(map[bool]string{false: "a running claim goes", true: "an archived claim stays"}[archived], func(t *testing.T) {
+			entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+			entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+			b := newTestBackend(t, entry)
+			claimRunning(t, b)
+			if archived {
+				peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated, sb.row.Archived = true, true })
+				if err := b.refresh(t.Context()); err != nil {
+					t.Fatalf("refresh after the archive: %v", err)
+				}
+				if e, err := b.stored(t.Context(), boxID); err != nil || e.row == nil || !e.row.Archived {
+					t.Fatalf("the machine before its node left = %+v, %v, want its claim archived", e, err)
+				}
+			}
+			peer.setDown(true)
+			entry.mu.Lock()
+			entry.peers = nil
+			entry.mu.Unlock()
+			if err := b.refresh(t.Context()); err != nil {
+				t.Fatalf("refresh after the node left: %v", err)
+			}
+			b.mu.Lock()
+			for addr, since := range b.away {
+				b.away[addr] = since.Add(-nodeLostAfter)
+			}
+			b.mu.Unlock()
+			if err := b.refresh(t.Context()); err != nil {
+				t.Fatalf("refresh after the node stayed away: %v", err)
+			}
+			_, err := b.stored(t.Context(), boxID)
+			if gone := errors.Is(err, machines.ErrNotFound); gone == archived {
+				t.Errorf("the machine of a lost node: %v; want it kept only for an archived claim", err)
+			}
+		})
+	}
+}
+
 func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, peer.next = []*fakeSandboxd{peer}, 100
