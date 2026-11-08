@@ -35,13 +35,6 @@ var tiers = []struct {
 	{"2xlarge", machines.Flavor{VCPUs: 8, MemoryMiB: 16384}},
 }
 
-// seenClaim holds a claim's own token, kept in memory only, to ask the mesh which node owns the claim.
-type seenClaim struct {
-	sandbox string
-	token   string
-	kept    time.Time
-}
-
 // placement names a claim on the node that holds it.
 type placement struct {
 	addr    string

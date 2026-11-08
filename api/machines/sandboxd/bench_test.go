@@ -23,7 +23,7 @@ const (
 
 var (
 	benchSizes   = []int{1, 100, 1000}
-	refreshSizes = []int{50000}
+	refreshSizes = []int{1000, 10000, 50000}
 )
 
 func BenchmarkListOwner(b *testing.B) {

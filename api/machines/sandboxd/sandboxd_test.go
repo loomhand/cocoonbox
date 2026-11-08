@@ -296,25 +296,30 @@ func TestARereadRefusesAnotherMachinesSandbox(t *testing.T) {
 	}
 }
 
-func TestAMovedClaimWaitsForAnAPIThatHoldsItsTokenAndAListingLendsNone(t *testing.T) {
+func TestAnyAPIFollowsAMovedClaimByTheRootOwnerAnswerNotByAListing(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	db := clustertest.Open(t)
-	holder := openSharedBackend(t, entry, db)
-	claimRunning(t, holder)
-	token := holder.token(boxID, "sb_1")
+	claimRunning(t, openSharedBackend(t, entry, db))
 	peer.shift(entry, entry.sandboxes)
-	entry.mutate(func(sb *fakeSandbox) { sb.row.Token = "forged" })
 
 	fresh := openSharedBackend(t, entry, db)
-	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != peer.addr() || fresh.token(boxID, "sb_1") != "" {
-		t.Fatalf("a fresh api's machine = %+v, %v, token %q; want it kept on %s with no token from the listing", e, err, fresh.token(boxID, "sb_1"), peer.addr())
+	known, err := fresh.snapshot(t.Context())
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
 	}
-	if err := holder.refresh(t.Context()); err != nil {
+	if err := fresh.index(t.Context(), entry.addr(), entry.listed(), known, ""); err != nil {
+		t.Fatalf("index: %v", err)
+	}
+	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != peer.addr() {
+		t.Fatalf("a fresh api's machine after a listing = %+v, %v; want it kept on %s", e, err, peer.addr())
+	}
+	owners := entry.count("owner")
+	if err := fresh.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if e, err := holder.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() || holder.token(boxID, "sb_1") != token {
-		t.Errorf("after the token holder's refresh = %+v, %v; want it followed to %s with its own token", e, err, entry.addr())
+	if e, err := fresh.stored(t.Context(), boxID); err != nil || e.ownerAddr != entry.addr() || entry.count("owner") == owners {
+		t.Errorf("after a fresh api's refresh = %+v, %v, owner asks %d -> %d; want it followed to %s by the owner answer", e, err, owners, entry.count("owner"), entry.addr())
 	}
 }
 
@@ -330,18 +335,16 @@ func TestAStaleAnswerFromTheFormerNodeLeavesAMovedMachineMoved(t *testing.T) {
 	if _, err := b.mutate(t.Context(), boxID, func(e *entry) (*entry, bool) { e.ownerAddr = front.addr(); return e, true }); err != nil {
 		t.Fatalf("move: %v", err)
 	}
-	token := b.token(boxID, "sb_1")
 	forged := *stale.row
-	forged.EnvMissing, forged.Token = true, "forged"
+	forged.EnvMissing = true
 	if err := b.index(t.Context(), peer.addr(), []row{forged}, map[string]*entry{boxID: stale}, stale.ownerAddr); err != nil {
 		t.Fatalf("index: %v", err)
 	}
-	peer.mutate(func(sb *fakeSandbox) { sb.token = "forged" })
 	if err := b.reread(t.Context(), boxID, peer.addr(), peer.addr(), "sb_1"); err != nil {
 		t.Fatalf("reread: %v", err)
 	}
-	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != front.addr() || e.row.EnvMissing || b.token(boxID, "sb_1") != token {
-		t.Errorf("machine after stale answers from %s = %+v, %v, token %q; want it left on %s with its token", peer.addr(), e, err, b.token(boxID, "sb_1"), front.addr())
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.ownerAddr != front.addr() || e.row.EnvMissing {
+		t.Errorf("machine after stale answers from %s = %+v, %v; want it left on %s", peer.addr(), e, err, front.addr())
 	}
 	if err := b.dropUnlisted(t.Context(), map[string][]row{peer.addr(): {}}, map[string]*entry{boxID: stale}); err != nil {
 		t.Fatalf("dropUnlisted: %v", err)
@@ -1505,6 +1508,9 @@ func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	waitState(t, b, "cb-peer", m.Revision, machines.StateRunning)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh with the entry up: %v", err)
+	}
 	entry.setDown(true)
 	peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
 	if err := b.refresh(t.Context()); err != nil {
@@ -1684,21 +1690,6 @@ func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
 	}
 }
 
-func TestASnapshotKeepsTheTokensKeptAfterItsRead(t *testing.T) {
-	fake := newFakeSandboxd(t)
-	b := openSharedBackend(t, fake, clustertest.Open(t))
-	read := time.Now()
-	claimRunning(t, b)
-	b.forgetTokens(map[string]*entry{}, read)
-	if b.token(boxID, fake.only()) == "" {
-		t.Fatal("a snapshot read before the claim forgot its token")
-	}
-	b.forgetTokens(map[string]*entry{}, time.Now())
-	if b.token(boxID, fake.only()) != "" {
-		t.Error("a snapshot read after the claim that lacks it kept its token")
-	}
-}
-
 func TestARefreshKeepsAClaimThatLandsAfterItsSnapshot(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := openSharedBackend(t, fake, clustertest.Open(t))
@@ -1837,12 +1828,12 @@ func (f *fakeSandboxd) handler() http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.calls["owner"]++
-		if sb := f.adoptable[id]; sb != nil && sb.token == token {
+		if sb := f.adoptable[id]; sb != nil && (token == rootToken || sb.token == token) {
 			sb.row.Archived = true
 			f.sandboxes[id] = sb
 			delete(f.adoptable, id)
 		}
-		if sb := f.sandboxes[id]; sb == nil || sb.token != token {
+		if sb := f.sandboxes[id]; sb == nil || token != rootToken && sb.token != token {
 			writeError(w, http.StatusNotFound, "not owned here")
 			return
 		}
@@ -1945,9 +1936,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 			writeError(w, f.getStatus, "read failed")
 			return
 		}
-		r := sb.row
-		r.Token = sb.token
-		writeJSON(w, r)
+		writeJSON(w, sb.row)
 	}))
 	mux.HandleFunc("POST /v1/sandboxes/{id}/{verb}", f.sandbox(func(w http.ResponseWriter, r *http.Request, sb *fakeSandbox) {
 		f.calls[r.PathValue("verb")]++
@@ -2049,7 +2038,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 }
 
 func (f *fakeSandboxd) exec(w http.ResponseWriter, r *http.Request, sb *fakeSandbox) {
-	if r.Header.Get("Authorization") != "Bearer "+sb.token {
+	if bearer := r.Header.Get("Authorization"); bearer != "Bearer "+rootToken && bearer != "Bearer "+sb.token {
 		writeError(w, http.StatusNotFound, "unknown sandbox")
 		return
 	}
@@ -2172,6 +2161,16 @@ func (f *fakeSandboxd) slow(latency time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.latency = latency
+}
+
+func (f *fakeSandboxd) listed() []row {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rows := make([]row, 0, len(f.sandboxes))
+	for _, sb := range f.sandboxes {
+		rows = append(rows, sb.row)
+	}
+	return rows
 }
 
 func (f *fakeSandboxd) only() string {
