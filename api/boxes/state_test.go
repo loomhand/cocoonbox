@@ -572,6 +572,55 @@ func TestRebaseStaysInTheBoxFamilyUnlessTheOperatorAsks(t *testing.T) {
 	}
 }
 
+func TestAnOperatorRebaseToAFlavorResizesTheBoxOnlyWhenItsFilesFit(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	rebase := func(flavor string) (*controlv1.Operation, error) {
+		ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(auth.HeaderOperatorUser, alice, auth.HeaderOperatorFlavor, flavor))
+		op, err := auth.OperatorUnary(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}, &grpc.UnaryServerInfo{}, func(ctx context.Context, req any) (any, error) {
+			return env.svc.Rebase(ctx, req.(*controlv1.RebaseRequest))
+		})
+		if err != nil {
+			return nil, err
+		}
+		return op.(*controlv1.Operation), nil
+	}
+	if _, err := rebase("2/4096"); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("operator Rebase to a malformed flavor = %v, want InvalidArgument", err)
+	}
+	op, err := rebase("2/4096/8")
+	if err != nil {
+		t.Fatalf("operator Rebase to an 8 GiB disk: %v", err)
+	}
+	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(events[len(events)-1].GetDetail(), "8 GiB disk") {
+		t.Fatalf("Rebase onto a disk the files do not fit = %v, want it refused", events[len(events)-1])
+	}
+	if n := env.fake.specCount(); n != 0 {
+		t.Errorf("a refused resize created %d machines", n)
+	}
+	if flavor, _ := env.svc.flavorOf(alice, aliceBox); flavor != defaultFlavor {
+		t.Errorf("box flavor after a refused resize = %+v, want %+v", flavor, defaultFlavor)
+	}
+	small := machines.Flavor{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 20}
+	if op, err = rebase("2/4096/20"); err != nil {
+		t.Fatalf("operator Rebase to 2/4096/20: %v", err)
+	}
+	created := env.fake.waitSpec(t, 1)
+	if created.Flavor != small {
+		t.Errorf("resized machine flavor = %+v, want %+v", created.Flavor, small)
+	}
+	if flavor, _ := env.svc.flavorOf(alice, aliceBox); flavor != defaultFlavor {
+		t.Errorf("box flavor before the new machine serves = %+v, want the old one", flavor)
+	}
+	env.fake.push(machines.Machine{ID: created.ID, State: machines.StateRunning})
+	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("resize = %v", events[len(events)-1])
+	}
+	if flavor, _ := env.svc.flavorOf(alice, aliceBox); flavor != small {
+		t.Errorf("box flavor after the resize = %+v, want %+v", flavor, small)
+	}
+}
+
 func TestRebaseRefusesImagesOffTheAllowList(t *testing.T) {
 	env := newStateEnv(t)
 	for _, image := range []string{"vk-cocoonbox-cb-9f86d081884c-0-984b48", "cocoonbox-desktop-v9", "desktop:v1"} {

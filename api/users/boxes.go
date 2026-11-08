@@ -97,6 +97,26 @@ func (s *Service) RenameBox(ctx context.Context, owner, id, name string) (Box, e
 	return b, nil
 }
 
+// SetBoxFlavor makes flavor the size every later machine of owner's box id takes.
+func (s *Service) SetBoxFlavor(ctx context.Context, owner, id string, flavor machines.Flavor) error {
+	if !s.HasBox(owner, id) {
+		return ErrNotFound
+	}
+	if err := s.store.setBoxFlavor(ctx, owner, id, flavor); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := slices.IndexFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
+	if i < 0 {
+		return ErrNotFound
+	}
+	b := s.boxes[owner][i]
+	b.Flavor = flavor
+	s.putBox(b)
+	return nil
+}
+
 // RemoveBox removes owner's box id and revokes its share, which cuts the share's sessions; an agent's box lowers the tenant cap again.
 func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 	list := s.Boxes(owner)
