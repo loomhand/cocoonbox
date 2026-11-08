@@ -402,7 +402,7 @@ func endShare(ctx context.Context, proxy *edge.Proxy, sh users.Share) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endShareTimeout)
 	defer cancel()
 	if err := proxy.EndShare(ctx, sh.Owner, sh.Box, sh.ID); err != nil {
-		log.WithFunc("main.endShare").Infof(ctx, "end the sessions of share %s in box %s: %s", sh.ID, sh.Box, status.Convert(err).Message())
+		log.WithFunc("main.endShare").Warnf(ctx, "end the sessions of share %s in box %s: %s", sh.ID, sh.Box, status.Convert(err).Message())
 	}
 }
 
