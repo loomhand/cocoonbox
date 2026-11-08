@@ -1071,7 +1071,7 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 	return nil
 }
 
-// dropUnlisted drops the machines of known that their node's list lacks while it answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim or lists it.
+// dropUnlisted drops the machines of known that their node's list lacks while it answered or, for a claim not archived, stayed out of the mesh for nodeLostAfter, unless a node answers for the claim or lists it.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, known map[string]*entry) error {
 	present, listed := map[placement]bool{}, map[string]bool{}
 	for addr, rows := range lists {
@@ -1086,7 +1086,7 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 		if e.busy(now) || e.row == nil || present[placement{e.ownerAddr, e.row.ID}] {
 			continue
 		}
-		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
+		if _, answered := lists[e.ownerAddr]; answered || !e.row.Archived && b.lostLocked(e.ownerAddr, now) {
 			missing[id] = placement{e.ownerAddr, e.row.ID}
 		}
 	}
