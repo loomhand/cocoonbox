@@ -524,6 +524,46 @@ func TestStaleTenantsNamesTheMissingRemovedAndChangedTenantsAcrossPages(t *testi
 	}
 }
 
+func TestKnownReadsAgainOnlyTheNotifiedRowsAndForgetsDeletedOnes(t *testing.T) {
+	fake, db := newFakeSandboxd(t), clustertest.Open(t)
+	b := openSharedBackend(t, fake, db)
+	write := func(id, image string) {
+		t.Helper()
+		if _, err := db.UpdateMachine(t.Context(), id, func(m *cluster.Machine, _ bool) (bool, error) {
+			*m = (&entry{id: id, owner: owner, image: image, created: time.Now(), meta: map[string]string{}}).record()
+			return true, nil
+		}); err != nil {
+			t.Fatalf("UpdateMachine %s: %v", id, err)
+		}
+	}
+	write("cb-a", template)
+	write("cb-b", template)
+	if known, err := b.known(t.Context()); err != nil || len(known) != 2 {
+		t.Fatalf("first known = %d machines, %v; want both", len(known), err)
+	}
+	write("cb-a", "cbdesk:v9")
+	if _, err := db.DeleteMachineIf(t.Context(), "cb-b", func(cluster.Machine) bool { return true }); err != nil {
+		t.Fatalf("DeleteMachineIf: %v", err)
+	}
+	clustertest.WaitFor(t, "both notifies", func() bool {
+		b.cacheMu.Lock()
+		defer b.cacheMu.Unlock()
+		return b.stale["cb-a"] && b.stale["cb-b"]
+	})
+	known, err := b.known(t.Context())
+	if err != nil || len(known) != 1 || known["cb-a"] == nil || known["cb-a"].image != "cbdesk:v9" {
+		t.Errorf("known after a change and a delete = %v, %v; want only cb-a on cbdesk:v9", slices.Collect(maps.Keys(known)), err)
+	}
+	b.cacheMu.Lock()
+	b.cachedAt = time.Time{}
+	b.cacheMu.Unlock()
+	write("cb-c", template)
+	clustertest.WaitFor(t, "a full read after a reset", func() bool {
+		known, err := b.known(t.Context())
+		return err == nil && known["cb-c"] != nil
+	})
+}
+
 func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavor: xlarge, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk", Store: clustertest.Open(t)})
