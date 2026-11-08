@@ -68,12 +68,12 @@ run is saved.
 ## Run a script
 
 Call `script_run` with `code` (an ES module) or `script` (a file in the box, relative to
-`/workspace`), and `params`. When the module exports `main(params)`, it is called with them and
+`/workspace`), and `params`. The module exports `main(params)`; it is called with them and
 its return value comes back as `result`. `timeout_s` defaults to 90, at most 110; the run is
-stopped after it. The reply is JSON `{result, logs, error?: {kind: exception|timeout|interrupted,
-message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path}` and a screenshot taken after
-the run. `logs` is the script's stdout. Set `globalThis.$snapshot` to a string, such as an outline,
-to get it back as `snapshot`. Nothing persists between runs.
+stopped after it. The reply is JSON `{result, logs, error?: {kind: import|no_main|exception|timeout|stopped|exit,
+message}, duration_ms, exit_code?, stderr, screenshot_path?}` and a screenshot taken after the run.
+`logs` is the script's stdout; `exit_code` is absent after a timeout or a stop. Nothing persists
+between runs.
 
 ```ts
 // /workspace/flows/save-note.mts
