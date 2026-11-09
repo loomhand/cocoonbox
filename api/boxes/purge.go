@@ -30,6 +30,9 @@ func (s *Service) DeleteState(ctx context.Context, user string) error {
 	if _, err := DeleteState(ctx, s.state.store, user); err != nil {
 		return err
 	}
+	s.state.mu.Lock()
+	s.state.gone[user] = true
+	s.state.mu.Unlock()
 	s.state.forget(statePath{user: user})
 	return nil
 }

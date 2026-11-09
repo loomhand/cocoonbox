@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
@@ -141,5 +142,32 @@ func TestASharedGCAndAnUploadingSaveOfOneProcessBothFinish(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("the gc pass did not finish beside the save")
+	}
+}
+
+func TestASharedSaveWhoseUserStateIsDeletedDuringItsUploadLeavesNothing(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	layer.shared = clustertest.Open(t)
+	svc := &Service{state: layer}
+	p := statePath{user: alice, box: aliceBox}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	saveLive(t, layer, p, "a")
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	deleted := make(chan error, 1)
+	agent.onUpload = func(machines.Endpoint) {
+		agent.onUpload = nil
+		deleted <- svc.DeleteState(t.Context(), alice)
+	}
+	_, err := layer.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	if err := <-deleted; err != nil {
+		t.Fatalf("DeleteState during the upload: %v", err)
+	}
+	if !errors.Is(err, errStateDeleted) {
+		t.Errorf("save across DeleteState = %v; want errStateDeleted", err)
+	}
+	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
 	}
 }

@@ -41,6 +41,7 @@ const (
 
 var (
 	errIndexCollected = errors.New("the gc rewrote the chunk index after the save read it; save again")
+	errStateDeleted   = errors.New("the user's state was deleted during the save")
 
 	objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -168,6 +169,7 @@ type stateLayer struct {
 
 	mu    sync.Mutex
 	users map[string]*sync.RWMutex
+	gone  map[string]bool
 	heads map[statePath]head
 	// dropped counts the invalidations, so a head read before one is not cached after it.
 	dropped uint64
@@ -180,7 +182,7 @@ type stateLayer struct {
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves),
-		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+		users: map[string]*sync.RWMutex{}, gone: map[string]bool{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{}, failed: map[statePath]time.Time{},
 	}
 }
@@ -258,6 +260,13 @@ func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, e
 }
 
 func (l *stateLayer) finish(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, image string, parked bool, h head) error {
+	l.mu.Lock()
+	gone := l.gone[p.user]
+	l.mu.Unlock()
+	if gone {
+		_, err := DeleteState(ctx, l.store, p.user)
+		return errors.Join(errStateDeleted, err)
+	}
 	now := time.Now()
 	rec.SavedAtMs = now.UnixMilli()
 	base, err := l.deltaBase(ctx, p, now)
