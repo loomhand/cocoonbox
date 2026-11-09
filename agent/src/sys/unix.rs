@@ -64,8 +64,46 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// Opens a pseudo-terminal of `rows` by `cols`; returns its non-blocking master end and its
-/// slave end, both close-on-exec.
+/// Opens a `rows` by `cols` pseudo-terminal: its non-blocking master end and its slave end, both close-on-exec.
+#[cfg(target_os = "linux")]
+pub fn openpty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
+    // SAFETY: posix_openpt takes integer flags and returns a new descriptor or -1.
+    let fd = unsafe {
+        libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC | libc::O_NONBLOCK)
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: posix_openpt just opened fd, and nothing else owns it.
+    let master = unsafe { OwnedFd::from_raw_fd(fd) };
+    // SAFETY: grantpt and unlockpt take the master descriptor this function owns.
+    if unsafe { libc::grantpt(fd) != 0 || libc::unlockpt(fd) != 0 } {
+        return Err(io::Error::last_os_error());
+    }
+    let mut name = [0 as libc::c_char; 64];
+    // SAFETY: ptsname_r writes at most name.len() bytes, NUL included, into name.
+    let rc = unsafe { libc::ptsname_r(fd, name.as_mut_ptr(), name.len()) };
+    if rc != 0 {
+        return Err(io::Error::from_raw_os_error(rc));
+    }
+    // SAFETY: ptsname_r left a NUL-terminated path in name.
+    let slave = unsafe {
+        libc::open(
+            name.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+        )
+    };
+    if slave < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: open just returned slave, and nothing else owns it.
+    let slave = unsafe { OwnedFd::from_raw_fd(slave) };
+    set_window(&master, rows, cols)?;
+    Ok((master, slave))
+}
+
+/// Opens a `rows` by `cols` pseudo-terminal: its non-blocking master end and its slave end, both close-on-exec.
+#[cfg(target_os = "macos")]
 pub fn openpty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     let (mut master, mut slave) = (-1, -1);
     let size = winsize(rows, cols);
@@ -329,8 +367,8 @@ pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
 
 /// The entries of the open directory `dir`, read through its descriptor and not a path; a symlink is not followed.
 pub fn list_dir(dir: &File) -> io::Result<Vec<Listed>> {
-    // SAFETY: dup takes an integer and returns a new descriptor or -1.
-    let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+    // SAFETY: fcntl F_DUPFD_CLOEXEC takes integers and returns a new close-on-exec descriptor or -1.
+    let fd = unsafe { libc::fcntl(dir.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -422,6 +460,20 @@ fn winsize(rows: u16, cols: u16) -> libc::winsize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn both_ends_of_a_pty_are_close_on_exec_from_the_start() {
+        let (master, slave) = openpty(24, 80).unwrap();
+        for fd in [master.as_raw_fd(), slave.as_raw_fd()] {
+            // SAFETY: fcntl F_GETFD reads the flags of a descriptor this test owns.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert!(
+                flags >= 0 && flags & libc::FD_CLOEXEC != 0,
+                "fd {fd}: {flags}"
+            );
+        }
+    }
 
     #[test]
     fn group_id_reads_the_group_database() {
