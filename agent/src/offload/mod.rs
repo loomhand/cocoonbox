@@ -85,6 +85,10 @@ pub enum Fail {
     /// Nothing changed; `extra` adds fields such as `findings`.
     Refused(String, Value),
     Failed(String),
+    Unconfirmed {
+        error: String,
+        seq: u64,
+    },
     Inbox(String),
 }
 
@@ -98,6 +102,12 @@ impl Fail {
             Self::Usage(e) => (2, "usage", e, Value::Null),
             Self::Refused(e, extra) => (3, "refused", e, extra),
             Self::Failed(e) => (1, "failed", e, Value::Null),
+            Self::Unconfirmed { error, seq } => (
+                1,
+                "delivery_unconfirmed",
+                error,
+                json!({"seq": seq, "delivery": "unconfirmed"}),
+            ),
             Self::Inbox(e) => (4, "inbox", e, Value::Null),
         };
         let mut out = json!({"ok": false, "code": code, "error": one_line(&error)});
@@ -253,9 +263,10 @@ pub async fn call(layout: &Layout, req: &Value) -> Result<Value, Fail> {
         .as_str()
         .unwrap_or("the inbox failed")
         .to_owned();
-    Err(match resp["code"].as_str() {
-        Some("invalid") => Fail::Usage(error),
-        Some("refused") => Fail::refused(error),
+    Err(match (resp["code"].as_str(), resp["seq"].as_u64()) {
+        (Some("invalid"), _) => Fail::Usage(error),
+        (Some("refused"), _) => Fail::refused(error),
+        (Some("delivery_unconfirmed"), Some(seq)) => Fail::Unconfirmed { error, seq },
         _ => Fail::Failed(error),
     })
 }
@@ -656,5 +667,41 @@ mod tests {
             let args = Args::parse(["--kind".to_owned(), kind.to_owned()]).unwrap();
             assert_eq!(args.kind().is_ok(), ok, "{kind}");
         }
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_delivery_keeps_its_seq_in_cli_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            state: dir.path().join("state"),
+            socket: dir.path().join("inbox.sock"),
+            secrets: dir.path().join("secrets"),
+            workspace: dir.path().join("workspace"),
+            home: dir.path().join("home"),
+            tmux: "tmux".into(),
+        };
+        let listener = tokio::net::UnixListener::bind(&layout.socket).unwrap();
+        let response = json!({"ok": false, "code": "delivery_unconfirmed", "error": "not confirmed", "seq": 7, "delivery": "unconfirmed"});
+        let expected = response.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut stream)
+                .read_line(&mut line)
+                .await
+                .unwrap();
+            stream
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+        let error = call(
+            &layout,
+            &json!({"op": "send", "repo": "0123456789ab", "body": "BACK"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.output(), (1, expected));
+        server.await.unwrap();
     }
 }

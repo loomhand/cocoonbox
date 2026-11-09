@@ -87,6 +87,13 @@ impl TestBox {
         offload::request(&self.layout.socket, &req).await.unwrap()
     }
 
+    async fn hook(&self, cli: &str, hook: &str, payload: Value) -> Value {
+        self.call(json!({
+            "op": "event", "repo": REPO, "cli": cli, "hook": hook, "payload": payload,
+        }))
+        .await
+    }
+
     async fn start_session(&self, body: &str) -> Value {
         self.call(json!({
             "op": "send", "repo": REPO, "cli": "claude",
@@ -261,14 +268,171 @@ async fn a_busy_send_is_queued_until_the_idle_hook() {
         .call(json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "Stop", "payload": {}}))
         .await;
     assert_eq!(idle["status"], "idle");
-    let pasted = b
-        .call(json!({"op": "send", "repo": REPO, "body": "THIRD"}))
+    let send = b.call(json!({"op": "send", "repo": REPO, "body": "THIRD"}));
+    let submit = async {
+        until("THIRD to be pasted", || {
+            std::fs::read_to_string(b.fake.join("buffer")).unwrap_or_default() == "THIRD"
+        })
         .await;
-    assert_eq!(pasted["delivery"], "pasted", "{pasted}");
+        b.hook("claude", "UserPromptSubmit", json!({"prompt": "THIRD"}))
+            .await
+    };
+    let (pasted, _) = tokio::join!(send, submit);
+    assert_eq!(pasted["delivery"], "accepted", "{pasted}");
     assert_eq!(
         std::fs::read_to_string(b.fake.join("buffer")).unwrap(),
         "THIRD"
     );
+}
+
+#[tokio::test]
+async fn codex_pastes_without_waiting_for_a_claude_hook() {
+    let b = TestBox::start(false).await;
+    b.call(json!({
+        "op": "send", "repo": REPO, "name": "gron", "cli": "codex",
+        "offload_id": ID, "body": "FIRST", "start": true,
+    }))
+    .await;
+    b.hook("codex", "notify", json!({})).await;
+    let response = tokio::time::timeout(
+        Duration::from_secs(2),
+        b.call(json!({"op": "send", "repo": REPO, "body": "SECOND"})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response["delivery"], "pasted", "{response}");
+}
+
+#[tokio::test]
+async fn a_pasted_back_without_a_submit_hook_reports_unconfirmed_delivery() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.hook("claude", "Stop", json!({})).await;
+    let response = b
+        .call(json!({"op": "send", "repo": REPO, "body": "", "back": true}))
+        .await;
+    assert_eq!(response["ok"], false, "{response}");
+    assert_eq!(response["seq"], 2, "{response}");
+    assert_eq!(response["delivery"], "unconfirmed", "{response}");
+    assert!(
+        response["error"]
+            .as_str()
+            .unwrap()
+            .contains("delivery is unconfirmed")
+    );
+    assert_eq!(b.status().await["status"], "blocked");
+    assert_eq!(b.tmux_log().matches("load-buffer").count(), 1);
+    let out = b.call(json!({"op": "read", "repo": REPO})).await;
+    assert_eq!(out["entries"][0]["kind"], "blocked");
+    let prompt = std::fs::read_to_string(b.fake.join("buffer")).unwrap();
+    let late = b
+        .hook("claude", "UserPromptSubmit", json!({"prompt": prompt}))
+        .await;
+    assert_eq!(late["status"], "working");
+}
+
+#[tokio::test]
+async fn only_the_submitted_prompt_confirms_a_delivery() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.hook("claude", "Stop", json!({})).await;
+    let mut send =
+        std::pin::pin!(b.call(json!({"op": "send", "repo": REPO, "body": "\n\n   SECOND\n"})));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), send.as_mut())
+            .await
+            .is_err()
+    );
+    b.hook("claude", "UserPromptSubmit", json!({"prompt": "FIRST"}))
+        .await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), send.as_mut())
+            .await
+            .is_err()
+    );
+    let prompt = "<pasted_content id=\"1\">\n\n\n   SECOND\n</pasted_content id=\"1\">";
+    b.hook("claude", "UserPromptSubmit", json!({"prompt": prompt}))
+        .await;
+    let response = tokio::time::timeout(Duration::from_secs(1), send)
+        .await
+        .unwrap();
+    assert_eq!(response["delivery"], "accepted", "{response}");
+    assert_eq!(b.tmux_log().matches("load-buffer").count(), 1);
+}
+
+#[tokio::test]
+async fn a_restored_session_with_same_millisecond_hooks_still_requires_confirmation() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.hook("claude", "Stop", json!({})).await;
+    let path = b.layout.repo_dir(REPO).join("session.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["hook_at_ms"] = record["started_at_ms"].clone();
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(b.call(json!({"op": "rescan"})).await["ok"], true);
+    let response = b
+        .call(json!({"op": "send", "repo": REPO, "body": "SECOND"}))
+        .await;
+    assert_eq!(response["ok"], false, "{response}");
+    assert_eq!(b.status().await["status"], "blocked");
+}
+
+#[tokio::test]
+async fn an_old_delivery_timeout_does_not_block_a_newer_confirmed_prompt() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.hook("claude", "Stop", json!({})).await;
+    let mut old = std::pin::pin!(b.call(json!({"op": "send", "repo": REPO, "body": "OLD"})));
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), old.as_mut())
+            .await
+            .is_err()
+    );
+    let mut new = std::pin::pin!(
+        b.call(json!({"op": "send", "repo": REPO, "body": "NEW", "interrupt": true}))
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1500), new.as_mut())
+            .await
+            .is_err()
+    );
+    b.hook("claude", "UserPromptSubmit", json!({"prompt": "NEW"}))
+        .await;
+    let response = tokio::time::timeout(Duration::from_secs(1), new)
+        .await
+        .unwrap();
+    assert_eq!(response["delivery"], "accepted", "{response}");
+    assert_eq!(old.await["ok"], false);
+    assert_eq!(b.status().await["status"], "working");
+    let out = b.call(json!({"op": "read", "repo": REPO})).await;
+    assert!(out["entries"].as_array().unwrap().is_empty(), "{out}");
+}
+
+#[tokio::test]
+async fn a_queued_back_without_confirmation_wakes_outbox_readers() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    let queued = b
+        .call(json!({"op": "send", "repo": REPO, "body": "", "back": true}))
+        .await;
+    assert_eq!(queued["delivery"], "queued");
+    b.call(json!({"op": "send", "repo": REPO, "body": "AFTER"}))
+        .await;
+    b.hook("claude", "Stop", json!({})).await;
+    let out = tokio::time::timeout(
+        Duration::from_secs(15),
+        b.call(json!({"op": "read", "repo": REPO, "wait_ms": 60000})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out["entries"][0]["kind"], "blocked", "{out}");
+    assert_eq!(out["status"], "blocked");
+    assert_eq!(b.tmux_log().matches("load-buffer").count(), 1);
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(b.layout.repo_dir(REPO).join("session.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["queue"], json!(["AFTER"]));
 }
 
 #[tokio::test]

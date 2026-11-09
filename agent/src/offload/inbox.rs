@@ -24,11 +24,13 @@ use super::{
 };
 use crate::journal::Journal;
 use crate::pb::{self, event};
+use crate::toolhost::flows::digest;
 
 /// At most this many box CLI sessions are not stopped at a time.
 pub const MAX_SESSIONS: usize = 3;
 const BLOCKED_BODY: usize = 2 << 10;
 const PASTE_SETTLE: Duration = Duration::from_millis(500);
+const SUBMIT_WAIT: Duration = Duration::from_secs(10);
 const DELIVERY_DELAY: Duration = Duration::from_millis(500);
 const IDLE_POLL: Duration = Duration::from_secs(5);
 const RELAY_RETRY: Duration = Duration::from_secs(2);
@@ -159,6 +161,7 @@ pub struct Inbox {
     layout: Layout,
     records: Mutex<HashMap<String, Record>>,
     changes: broadcast::Sender<Change>,
+    submitted: broadcast::Sender<(String, String)>,
     steps: watch::Sender<HashSet<String>>,
 }
 
@@ -171,6 +174,7 @@ impl Inbox {
             layout,
             records: Mutex::new(records),
             changes: broadcast::channel(CHANGES).0,
+            submitted: broadcast::channel(CHANGES).0,
             steps: watch::channel(HashSet::new()).0,
         }))
     }
@@ -276,46 +280,67 @@ impl Inbox {
         else {
             return Err(Refusal::refused("no box CLI session runs for this repo"));
         };
+        let (seq, delivery) = self.send_to_session(rec, req).await?;
+        drop(recs);
+        let delivery = delivery
+            .confirm(self)
+            .await
+            .map_err(|e| Refusal::unconfirmed(seq, e))?;
+        Ok(json!({"ok": true, "seq": seq, "delivery": delivery}))
+    }
+
+    async fn send_to_session(
+        self: &Arc<Self>,
+        rec: &mut Record,
+        req: SendRequest,
+    ) -> Result<(u64, Delivery), Refusal> {
         if !self.alive(&rec.tmux()).await {
             return Err(Refusal::refused(
                 "the box CLI's tmux session is gone; run offload restart",
             ));
         }
-        let mut body = req.body;
-        if req.back {
+        let (kind, body) = if req.back {
             rec.queue.retain(|q| !q.starts_with(handover::BACK));
             let back = handover::back(&rec.repo, &self.layout.state);
-            body = if body.trim().is_empty() {
+            let body = if req.body.trim().is_empty() {
                 back
             } else {
-                format!("{back}\n\n{body}")
+                format!("{back}\n\n{}", req.body)
             };
-        }
-        let seq = self
-            .note_inbox(rec, if req.back { "back" } else { "message" }, &body)
-            .await?;
+            ("back", body)
+        } else {
+            ("message", req.body)
+        };
+        let seq = self.note_inbox(rec, kind, &body).await?;
         let before = rec.status;
-        let delivery = if req.interrupt {
+        let delivery = self.enqueue(rec, body, req.interrupt).await?;
+        self.save(rec).await?;
+        if rec.status != before {
+            self.publish(rec, None);
+        }
+        Ok((seq, delivery))
+    }
+
+    async fn enqueue(
+        self: &Arc<Self>,
+        rec: &mut Record,
+        body: String,
+        interrupt: bool,
+    ) -> Result<Delivery, String> {
+        if interrupt {
             self.tmux(&["send-keys", "-t", &pane(rec), "Escape"], None)
                 .await?;
             tokio::time::sleep(PASTE_SETTLE).await;
-            self.deliver(rec, &body).await?;
-            "pasted"
-        } else if rec.status.deliverable() && rec.queue.is_empty() {
-            self.deliver(rec, &body).await?;
-            "pasted"
+        }
+        if interrupt || (rec.status.deliverable() && rec.queue.is_empty()) {
+            self.deliver(rec, &body).await
         } else {
             rec.queue.push(body);
             if rec.status.deliverable() {
                 self.deliver_later(rec.repo.clone());
             }
-            "queued"
-        };
-        self.save(rec).await?;
-        if rec.status != before {
-            self.publish(rec, None);
+            Ok(Delivery::Queued)
         }
-        Ok(json!({"ok": true, "seq": seq, "delivery": delivery}))
     }
 
     async fn start(
@@ -683,6 +708,13 @@ impl Inbox {
         };
         rec.hook_at_ms = crate::now_ms();
         self.settle(rec, hook, payload).await?;
+        if hook == "UserPromptSubmit"
+            && let Some(prompt) = payload["prompt"].as_str()
+        {
+            let _ = self
+                .submitted
+                .send((repo.to_owned(), prompt_digest(prompt)));
+        }
         Ok(json!({"ok": true, "status": rec.status}))
     }
 
@@ -762,19 +794,30 @@ impl Inbox {
                 return;
             }
             let body = rec.queue.remove(0);
-            if let Err(e) = inbox.deliver(rec, &body).await {
-                eprintln!("offload inbox: deliver to {}: {e}", rec.tmux());
-                rec.queue.insert(0, body);
-            }
+            let delivery = match inbox.deliver(rec, &body).await {
+                Ok(delivery) => delivery,
+                Err(e) => {
+                    eprintln!("offload inbox: deliver to {}: {e}", rec.tmux());
+                    rec.queue.insert(0, body);
+                    Delivery::Queued
+                }
+            };
             if let Err(e) = inbox.save(rec).await {
                 eprintln!("offload inbox: {e}");
             }
             inbox.publish(rec, None);
+            drop(recs);
+            if let Err(e) = delivery.confirm(&inbox).await {
+                eprintln!("offload inbox: deliver to {repo}: {e}");
+            }
         });
     }
 
     /// Pastes `body` into the CLI and presses Enter; the session is then working on it.
-    async fn deliver(&self, rec: &mut Record, body: &str) -> Result<(), String> {
+    async fn deliver(&self, rec: &mut Record, body: &str) -> Result<Delivery, String> {
+        // only a claude session whose hooks have fired reports the prompts it takes
+        let receiver = (rec.cli == "claude" && rec.hook_at_ms >= rec.started_at_ms)
+            .then(|| self.submitted.subscribe());
         let buffer = rec.tmux();
         let target = pane(rec);
         self.tmux(
@@ -793,7 +836,42 @@ impl Inbox {
         rec.status = Status::Working;
         rec.reported = false;
         rec.prompt_at_ms = crate::now_ms();
-        Ok(())
+        Ok(receiver.map_or(Delivery::Pasted, |receiver| {
+            Delivery::Pending(DeliveryReceipt {
+                repo: rec.repo.clone(),
+                offload_id: rec.offload_id.clone(),
+                prompt_at_ms: rec.prompt_at_ms,
+                digest: prompt_digest(body),
+                receiver,
+            })
+        }))
+    }
+
+    async fn confirm_delivery(&self, mut receipt: DeliveryReceipt) -> Result<(), String> {
+        if matches!(
+            tokio::time::timeout(SUBMIT_WAIT, receipt.wait()).await,
+            Ok(Ok(()))
+        ) {
+            return Ok(());
+        }
+        let session = tmux_session(&receipt.repo, "claude");
+        let error = format!(
+            "Claude Code did not confirm the exact pasted message within {SUBMIT_WAIT:?}; delivery is unconfirmed. It may already be processing a prompt combined with existing input. No automatic retry was made. Before retrying, replace BOX_ID and inspect with: cocoonbox rsh --box BOX_ID tmux capture-pane -p -t {session} -S -80"
+        );
+        let mut recs = self.records.lock().await;
+        if let Some(rec) = recs.get_mut(&receipt.repo)
+            && rec.offload_id == receipt.offload_id
+            && rec.prompt_at_ms == receipt.prompt_at_ms
+            && rec.status == Status::Working
+        {
+            // the queue stays paused: another paste could append to unsubmitted input
+            rec.status = Status::Blocked;
+            self.note_outbox(rec, EntryKind::Blocked, error.clone())
+                .await?;
+            self.save(rec).await?;
+            self.publish(rec, None);
+        }
+        Err(error)
     }
 
     async fn watch(&self, wr: &mut OwnedWriteHalf) {
@@ -874,6 +952,45 @@ impl Inbox {
 
     async fn tmux(&self, args: &[&str], stdin: Option<&[u8]>) -> Result<String, String> {
         super::tmux(&self.layout.tmux, args, stdin).await
+    }
+}
+
+enum Delivery {
+    Queued,
+    Pasted,
+    Pending(DeliveryReceipt),
+}
+
+impl Delivery {
+    async fn confirm(self, inbox: &Inbox) -> Result<&'static str, String> {
+        match self {
+            Self::Queued => Ok("queued"),
+            Self::Pasted => Ok("pasted"),
+            Self::Pending(receipt) => {
+                inbox.confirm_delivery(receipt).await?;
+                Ok("accepted")
+            }
+        }
+    }
+}
+
+struct DeliveryReceipt {
+    repo: String,
+    offload_id: String,
+    prompt_at_ms: i64,
+    digest: String,
+    receiver: broadcast::Receiver<(String, String)>,
+}
+
+impl DeliveryReceipt {
+    async fn wait(&mut self) -> Result<(), broadcast::error::RecvError> {
+        loop {
+            match self.receiver.recv().await {
+                Ok((repo, digest)) if repo == self.repo && digest == self.digest => return Ok(()),
+                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
     }
 }
 
@@ -977,25 +1094,34 @@ struct InboxLine<'a> {
 }
 
 /// An error response line.
-struct Refusal(&'static str, String);
+struct Refusal(&'static str, String, Option<u64>);
 
 impl Refusal {
     fn invalid(e: impl Into<String>) -> Self {
-        Self("invalid", e.into())
+        Self("invalid", e.into(), None)
     }
 
     fn refused(e: impl Into<String>) -> Self {
-        Self("refused", e.into())
+        Self("refused", e.into(), None)
+    }
+
+    fn unconfirmed(seq: u64, error: String) -> Self {
+        Self("delivery_unconfirmed", error, Some(seq))
     }
 
     fn json(&self) -> Value {
-        json!({"ok": false, "code": self.0, "error": self.1})
+        let mut response = json!({"ok": false, "code": self.0, "error": self.1});
+        if let Some(seq) = self.2 {
+            response["seq"] = json!(seq);
+            response["delivery"] = json!("unconfirmed");
+        }
+        response
     }
 }
 
 impl From<String> for Refusal {
     fn from(e: String) -> Self {
-        Self("failed", e)
+        Self("failed", e, None)
     }
 }
 
@@ -1003,6 +1129,7 @@ impl From<super::Fail> for Refusal {
     fn from(e: super::Fail) -> Self {
         match e {
             super::Fail::Refused(m, _) => Self::refused(m),
+            super::Fail::Unconfirmed { error, seq } => Self::unconfirmed(seq, error),
             super::Fail::Usage(m) | super::Fail::Failed(m) | super::Fail::Inbox(m) => Self::from(m),
         }
     }
@@ -1053,6 +1180,20 @@ pub async fn rescan(socket: &Path) -> Result<(), String> {
         .write_all(b"{\"op\":\"rescan\"}\n")
         .await
         .map_err(|e| format!("rescan: {e}"))
+}
+
+fn prompt_digest(prompt: &str) -> String {
+    let prompt = prompt.trim();
+    let content = prompt
+        .split_once('\n')
+        .and_then(|(first, rest)| {
+            let id = first
+                .strip_prefix("<pasted_content id=\"")?
+                .strip_suffix("\">")?;
+            rest.strip_suffix(&format!("\n</pasted_content id=\"{id}\">"))
+        })
+        .unwrap_or(prompt);
+    digest(content.trim().as_bytes())
 }
 
 async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
@@ -1496,6 +1637,89 @@ mod tests {
         let fed = tokio::time::timeout(Duration::from_secs(5), follow(&socket, &journal)).await;
         assert!(matches!(fed, Ok(Err(_))), "{fed:?}");
         drop(feed);
+    }
+
+    #[tokio::test]
+    async fn a_receipt_ignores_unrelated_submissions_and_recovers_from_lag() {
+        let (submitted, receiver) = broadcast::channel(2);
+        let mut receipt = DeliveryReceipt {
+            repo: "repo".into(),
+            offload_id: "offload".into(),
+            prompt_at_ms: 1,
+            digest: prompt_digest("SECOND"),
+            receiver,
+        };
+        for (repo, body) in [("other", "SECOND"), ("repo", "FIRST")] {
+            submitted.send((repo.into(), prompt_digest(body))).unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), receipt.wait())
+                    .await
+                    .is_err()
+            );
+        }
+        for _ in 0..3 {
+            submitted
+                .send(("other".into(), prompt_digest("FIRST")))
+                .unwrap();
+        }
+        submitted
+            .send(("repo".into(), prompt_digest("SECOND")))
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), receipt.wait())
+                .await
+                .unwrap(),
+            Ok(())
+        );
+        drop(submitted);
+        assert_eq!(
+            receipt.wait().await,
+            Err(broadcast::error::RecvError::Closed)
+        );
+    }
+
+    #[test]
+    fn pasted_content_wrappers_preserve_prompt_identity() {
+        let body = "BACK\nreturn the work";
+        assert_eq!(
+            prompt_digest(body),
+            prompt_digest(&format!(
+                "<pasted_content id=\"7\">\n{body}\n</pasted_content id=\"7\">\n"
+            ))
+        );
+        assert_ne!(
+            prompt_digest(body),
+            prompt_digest(&format!(
+                "<pasted_content id=\"7\">\n{body}\n</pasted_content id=\"8\">"
+            ))
+        );
+    }
+
+    #[test]
+    fn pasted_content_with_leading_blank_lines_preserves_prompt_identity() {
+        let body =
+            "Reply exactly AUTH_LONG_b66ea3\nLine 000: inert delivery-format verification data.";
+        assert_eq!(
+            prompt_digest(body),
+            prompt_digest(&format!(
+                "\n\n<pasted_content id=\"560c\">\n{body}\n</pasted_content id=\"560c\">\n"
+            ))
+        );
+    }
+
+    #[test]
+    fn prompt_whitespace_is_ignored_without_hiding_residual_input() {
+        let body = "BACK\nreturn the work";
+        for prompt in [
+            format!("\n\n   {body}\n"),
+            format!("\n\n<pasted_content id=\"7\">\n\n   {body}\n\n</pasted_content id=\"7\">\n"),
+        ] {
+            assert_eq!(prompt_digest(body), prompt_digest(&prompt));
+        }
+        assert_ne!(
+            prompt_digest(body),
+            prompt_digest(&format!("residual input {body}"))
+        );
     }
 
     #[test]

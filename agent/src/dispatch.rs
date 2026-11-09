@@ -394,10 +394,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_flow_call_that_fails_after_a_failed_pull_says_the_library_was_unreachable() {
-        let (dir, tools, _journal, dispatcher) = setup();
+        let (dir, tools, journal, _) = setup();
         let store = Store::open(&dir.path().join("flows.db")).unwrap();
         let sync = Syncer::new("http://127.0.0.1:9/mcp", store, tools.clone()).unwrap();
-        let dispatcher = dispatcher.with_flows(Some(Arc::new(sync)));
+        let dispatcher = Dispatcher::new(
+            tools.clone(),
+            journal,
+            Some(Arc::new(sync)),
+            Vec::new(),
+            false,
+        );
         let flow = json!({"script": "flows/a.mts"});
 
         let out = dispatcher.run("ag", None, "script_run", flow.clone()).await;
