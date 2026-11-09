@@ -370,13 +370,13 @@ func TestListAndDeleteOnMinIO(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	objects, err := s.List(t.Context(), "alice/chunks/")
-	if err != nil || len(objects) != n || objects[3] != (store.Object{Key: "alice/chunks/0003", Size: 3}) {
+	if err != nil || len(objects) != n || objects[3].Key != "alice/chunks/0003" || objects[3].Size != 3 || objects[3].Modified.IsZero() {
 		t.Fatalf("List = %d objects (%v), %v", len(objects), objects[:min(len(objects), 4)], err)
 	}
 	if err := s.Delete(t.Context(), append(keys[1:], "alice/chunks/missing")); err != nil {
 		t.Fatalf("Delete of %d keys: %v", n, err)
 	}
-	if objects, err = s.List(t.Context(), "alice/"); err != nil || !slices.Equal(objects, []store.Object{{Key: "alice/chunks/0000", Size: 0}}) {
+	if objects, err = s.List(t.Context(), "alice/"); err != nil || len(objects) != 1 || objects[0].Key != "alice/chunks/0000" || objects[0].Size != 0 {
 		t.Errorf("after Delete, List = %v, %v", objects, err)
 	}
 	if objects, err = s.List(t.Context(), "bob/"); err != nil || len(objects) != 1 {
