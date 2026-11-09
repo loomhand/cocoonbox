@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 const REPO: &str = "0123456789ab";
 const ID: &str = "a1b2c3d4e5f6";
+const OTHER: &str = "ba9876543210";
 const FAKE_TMUX: &str = r#"d=$(dirname "$0")
 printf '%s\n' "$*" >> "$d/tmux.log"
 case "$1" in
@@ -501,17 +502,20 @@ async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes
             .await;
         assert_eq!(resp["delivery"], "queued", "{resp}");
     }
-    let name: String = b
-        .layout
-        .workspace
-        .join("gron")
-        .to_string_lossy()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
-    let projects = b.layout.home.join(".claude/projects").join(name);
-    std::fs::create_dir_all(&projects).unwrap();
-    let transcript = projects.join("s.jsonl");
+    let transcript_of = |repo_dir: &str| {
+        let name: String = b
+            .layout
+            .workspace
+            .join(repo_dir)
+            .to_string_lossy()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        let projects = b.layout.home.join(".claude/projects").join(name);
+        std::fs::create_dir_all(&projects).unwrap();
+        projects.join("s.jsonl")
+    };
+    let transcript = transcript_of("gron");
     let mut lines = [
         json!({"type": "user", "message": {"content": "FIRST"}}),
         json!({"type": "assistant", "message": {"content": [{"type": "tool_use"}]}}),
@@ -519,13 +523,53 @@ async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes
     .map(|l| format!("{l}\n"))
     .concat();
     std::fs::write(&transcript, &lines).unwrap();
-    tokio::time::sleep(Duration::from_secs(6)).await;
-    assert_eq!(b.status().await["status"], "working");
-    lines.push_str(&format!(
+    let ended = format!(
         "{}\n{}\n",
         json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}}),
         json!({"type": "system", "subtype": "turn_duration"})
-    ));
+    );
+    let index_path = b.layout.state.join("index.json");
+    let mut index: Index = serde_json::from_slice(&std::fs::read(&index_path).unwrap()).unwrap();
+    index.insert(
+        OTHER.to_owned(),
+        RepoCopy {
+            name: "other".into(),
+            dir: b.layout.workspace.join("other"),
+            offload_id: ID.into(),
+            unreturned: false,
+        },
+    );
+    std::fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+    std::fs::create_dir_all(b.layout.workspace.join("other")).unwrap();
+    let other = b
+        .call(json!({
+            "op": "send", "repo": OTHER, "cli": "claude",
+            "offload_id": ID, "body": "OTHER", "start": true,
+        }))
+        .await;
+    assert_eq!(other["delivery"], "started", "{other}");
+    let other_transcript = transcript_of("other");
+    let status_of = |sessions: &Value, repo: &str| {
+        sessions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["repo"] == repo)
+            .map(|s| s["status"].clone())
+            .unwrap_or_default()
+    };
+    let mut sessions = Value::Null;
+    for _ in 0..300 {
+        std::fs::write(&other_transcript, &ended).unwrap();
+        sessions = b.call(json!({"op": "status"})).await["sessions"].take();
+        if status_of(&sessions, OTHER) == "idle" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(status_of(&sessions, OTHER), "idle", "{sessions}");
+    assert_eq!(status_of(&sessions, REPO), "working", "{sessions}");
+    lines.push_str(&ended);
     std::fs::write(&transcript, &lines).unwrap();
     let enter = format!("send-keys -t =cb-off-{REPO}-claude: Enter");
     until("the back prompt to be pasted", || {
@@ -566,11 +610,35 @@ async fn post_emits_an_event_with_no_content() {
         Arc::clone(&journal),
         b.stop.clone(),
     ));
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    for probe in 1.. {
+        let posted = b
+            .call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "probe"}))
+            .await;
+        let seen = tokio::time::timeout(Duration::from_millis(500), async {
+            let seq = posted["seq"].as_u64().unwrap();
+            loop {
+                let line = lines.next_line().await.unwrap().unwrap();
+                if serde_json::from_str::<Value>(&line).unwrap()["seq"] == seq {
+                    break;
+                }
+            }
+            loop {
+                let ev = live.recv().await.unwrap();
+                if matches!(&ev.body, Some(event::Body::Offload(u)) if u.seq == seq) {
+                    break;
+                }
+            }
+        })
+        .await;
+        if seen.is_ok() {
+            break;
+        }
+        assert!(probe < 20, "the watch or the relay saw no post");
+    }
     let posted = b
         .call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "SECRET-BODY"}))
         .await;
-    assert_eq!(posted["seq"], 1, "{posted}");
+    let seq = posted["seq"].as_u64().unwrap();
     let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
         .await
         .unwrap()
@@ -585,7 +653,7 @@ async fn post_emits_an_event_with_no_content() {
         change,
         json!({
             "repo": REPO, "name": "gron", "cli": "claude", "offload_id": ID,
-            "entry": "progress", "seq": 1, "status": "working",
+            "entry": "progress", "seq": seq, "status": "working",
         })
     );
     let ev = tokio::time::timeout(Duration::from_secs(5), live.recv())
@@ -596,7 +664,7 @@ async fn post_emits_an_event_with_no_content() {
         panic!("not an offload event: {ev:?}");
     };
     assert_eq!(update.entry, pb::OffloadEntry::Progress as i32);
-    assert_eq!(update.seq, 1);
+    assert_eq!(update.seq, seq);
     assert_eq!(update.status, pb::OffloadStatus::Working as i32);
     let encoded = prost::Message::encode_to_vec(ev.as_ref());
     assert!(
