@@ -40,6 +40,7 @@ const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
 const TAB_WAIT: Duration = Duration::from_secs(2);
 const DEVTOOLS_WAIT: Duration = Duration::from_secs(2);
+const PORT_WAIT: Duration = Duration::from_secs(5);
 const SPA_WAIT: Duration = Duration::from_secs(3);
 const SPA_POLL: Duration = Duration::from_millis(150);
 const XHR_STALE: Duration = Duration::from_millis(1500);
@@ -988,14 +989,13 @@ impl Browser {
         let Err(e) = self.targets().await else {
             return Ok(true);
         };
-        let url = format!("http://127.0.0.1:{}/json/version", self.port);
-        match self.http.get(&url).timeout(DEVTOOLS_WAIT).send().await {
-            Ok(_) => Ok(true),
-            Err(err) if err.is_connect() => Ok(false),
-            Err(_) => Err(format!(
+        let port = tokio::net::TcpStream::connect(("127.0.0.1", self.port));
+        match tokio::time::timeout(PORT_WAIT, port).await {
+            Ok(Ok(_)) => Err(format!(
                 "chrome holds port {} but does not answer: {e}",
                 self.port
             )),
+            _ => Ok(false),
         }
     }
 
