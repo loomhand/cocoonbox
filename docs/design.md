@@ -185,7 +185,7 @@ A signature can't prove "request from box X" without a secret in X. The proof mu
 
 ## 13. Native agents without the app (M4.7)
 
-Proposed 2026-10-01, for review. The user's own local coding agent drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
+Proposed and built 2026-10-01 (the `cocoonbox` CLI, its stdio MCP bridge and the client plugins), `cocoonbox rsh` 2026-10-03. The user's own local coding agent drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
 
 Constraints:
 - Boundaries: the new pieces talk to the rest only through `proto/` gRPC and MCP via the edge. Nothing imports another component's code or reads its files.

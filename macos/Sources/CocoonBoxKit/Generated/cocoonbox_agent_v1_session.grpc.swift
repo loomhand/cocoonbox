@@ -150,7 +150,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Events streams live changes; reconnect with the last seen offset.
+        /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+        /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Agent_V1_EventsRequest` messages.
@@ -187,7 +188,7 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Agent_V1_ActiveOriginRequest` messages.
@@ -205,9 +206,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > FillCredential fills the sign-in form of the active tab when its origin
-        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+        /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Agent_V1_FillCredentialRequest` messages.
@@ -270,7 +270,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Events streams live changes; reconnect with the last seen offset.
+        /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+        /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_EventsRequest` message.
@@ -307,7 +308,7 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
@@ -325,9 +326,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > FillCredential fills the sign-in form of the active tab when its origin
-        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+        /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
@@ -388,7 +388,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Events streams live changes; reconnect with the last seen offset.
+        /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+        /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Agent_V1_EventsRequest` message.
@@ -427,7 +428,7 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
@@ -445,9 +446,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > FillCredential fills the sign-in form of the active tab when its origin
-        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+        /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Agent_V1_FillCredentialRequest` message.
@@ -733,7 +733,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Events streams live changes; reconnect with the last seen offset.
+        /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+        /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_EventsRequest` message.
@@ -780,7 +781,7 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
@@ -803,9 +804,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > FillCredential fills the sign-in form of the active tab when its origin
-        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+        /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
@@ -902,7 +902,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > Events streams live changes; reconnect with the last seen offset.
+        /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+        /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_EventsRequest` message.
@@ -967,7 +968,7 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
@@ -1001,9 +1002,8 @@ extension Cocoonbox_Agent_V1_Session {
         ///
         /// > Source IDL Documentation:
         /// >
-        /// > FillCredential fills the sign-in form of the active tab when its origin
-        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+        /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
@@ -1103,7 +1103,8 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Events streams live changes; reconnect with the last seen offset.
+    /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+    /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Agent_V1_EventsRequest` message.
@@ -1158,7 +1159,7 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
@@ -1187,9 +1188,8 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > FillCredential fills the sign-in form of the active tab when its origin
-    /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-    /// > only: it is no MCP tool, and its values are never logged or recorded.
+    /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+    /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
@@ -1282,7 +1282,8 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > Events streams live changes; reconnect with the last seen offset.
+    /// > Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+    /// > client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1346,7 +1347,7 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1379,9 +1380,8 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     ///
     /// > Source IDL Documentation:
     /// >
-    /// > FillCredential fills the sign-in form of the active tab when its origin
-    /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-    /// > only: it is no MCP tool, and its values are never logged or recorded.
+    /// > FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+    /// > else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
     ///
     /// - Parameters:
     ///   - message: request message to send.

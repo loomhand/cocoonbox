@@ -32,16 +32,16 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SessionClient interface {
 	Hello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
-	// Events streams live changes; reconnect with the last seen offset.
+	// Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+	// client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
 	Events(ctx context.Context, in *EventsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[Event], error)
 	// Screen carries raw RFB bytes between the client and the box's VNC server.
 	// The first client frame must be `open`; the stream ends when either side closes.
 	Screen(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ScreenClientFrame, ScreenServerFrame], error)
-	// ActiveOrigin returns the origin of the active tab of the box's Chrome.
+	// ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
 	ActiveOrigin(ctx context.Context, in *ActiveOriginRequest, opts ...grpc.CallOption) (*ActiveOriginResponse, error)
-	// FillCredential fills the sign-in form of the active tab when its origin
-	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-	// only: it is no MCP tool, and its values are never logged or recorded.
+	// FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+	// else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
 	FillCredential(ctx context.Context, in *FillCredentialRequest, opts ...grpc.CallOption) (*FillCredentialResponse, error)
 	// Exec runs a command as the desktop user and carries its stdin, stdout and
 	// stderr. The first client frame must be `start`. `eof`, or the client
@@ -139,16 +139,16 @@ type Session_ExecClient = grpc.BidiStreamingClient[ExecClientFrame, ExecServerFr
 // for forward compatibility.
 type SessionServer interface {
 	Hello(context.Context, *HelloRequest) (*HelloResponse, error)
-	// Events streams live changes; reconnect with the last seen offset.
+	// Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+	// client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
 	Events(*EventsRequest, grpc.ServerStreamingServer[Event]) error
 	// Screen carries raw RFB bytes between the client and the box's VNC server.
 	// The first client frame must be `open`; the stream ends when either side closes.
 	Screen(grpc.BidiStreamingServer[ScreenClientFrame, ScreenServerFrame]) error
-	// ActiveOrigin returns the origin of the active tab of the box's Chrome.
+	// ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
 	ActiveOrigin(context.Context, *ActiveOriginRequest) (*ActiveOriginResponse, error)
-	// FillCredential fills the sign-in form of the active tab when its origin
-	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-	// only: it is no MCP tool, and its values are never logged or recorded.
+	// FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+	// else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
 	FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error)
 	// Exec runs a command as the desktop user and carries its stdin, stdout and
 	// stderr. The first client frame must be `start`. `eof`, or the client
