@@ -46,7 +46,7 @@ make api             # api: fmt check, lint, test, build
 make agent           # agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the Chrome tests)
 make macos           # macOS app: build and the swift-testing suite (macOS only)
 make image           # syntax-check the shell scripts, test cut.sh's dry run and the package replay
-make gate            # clean gate over the tracked files and the dependencies; every proto field is read and written
+make gate            # clean gate over the tracked files and the dependencies; every proto field name is read and written somewhere in the Go, Rust or Swift sources (by name, not per message)
 ```
 
 CI runs `make agent` on Linux and macOS, and clippy, the build and the lib tests on Windows. Linux-gated behaviour is verified on Linux; on macOS run the gates in the pinned toolchain image, with the protoc, rsync, tmux and Node the build, the offload tests and the toolhost test need:

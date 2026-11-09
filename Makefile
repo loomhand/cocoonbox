@@ -22,7 +22,7 @@ image: ## Syntax-check the shell scripts, test cut.sh's dry run (Linux bash) and
 	bash image/test/cut-dry-run.sh
 	bash image/test/packages.sh
 
-gate: ## Clean gate over the tracked files and the dependencies; every proto field has a reader and a writer
+gate: ## Clean gate over the tracked files and the dependencies; every proto field name is read and written somewhere in the Go, Rust or Swift sources (by name, not per message)
 	scripts/clean-gate repo
 	scripts/clean-gate deps
 	scripts/proto-fields
