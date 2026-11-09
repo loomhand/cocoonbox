@@ -22,15 +22,20 @@ const (
 	rowColumns = "id, owner, name, hosts, header, template, query, placeholder, value_sealed, value_hint, value_len, version, created_at, updated_at"
 )
 
-//go:embed migrations/*.sql
-var migrations embed.FS
+var (
+	// Migrations is the vault tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: "vault_schema_migrations", Lock: migrationLock}
+
+	//go:embed migrations/*.sql
+	migrations embed.FS
+)
 
 type store struct {
 	pool *pgxpool.Pool
 }
 
 func openStore(ctx context.Context, dsn string) (*store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "vault_schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}

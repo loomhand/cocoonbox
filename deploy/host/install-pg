@@ -1,7 +1,9 @@
 #!/bin/bash
-# Installs PostgreSQL 16 on the unix socket only, with the gw and cocoonbox-api roles and databases, the cocoonbox peer map
-# (cocoonbox-api and root as cocoonbox-api); idempotent. CB_PG_DIR, when set, holds the data: it is bind-mounted on
-# /var/lib/postgresql before the cluster is made.
+# Installs PostgreSQL 16 on the unix socket only, with the gw role and database, the cocoonbox database owned by the
+# cocoonbox-migrate role, which alone changes its schema, the cocoonbox-api role, which reads and writes its rows, and the
+# cocoonbox peer map (cocoonbox-api and root as cocoonbox-api, root as cocoonbox-migrate); idempotent. Run it before
+# install-api on an upgrade. CB_PG_DIR, when set, holds the data: it is bind-mounted on /var/lib/postgresql before the
+# cluster is made.
 # usage: sudo [CB_PG_DIR=/srv/cb/pg] deploy/host/install-pg
 set -euo pipefail
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
@@ -29,16 +31,31 @@ systemctl enable postgresql >/dev/null
 systemctl restart postgresql@16-main
 
 q() { runuser -u postgres -- psql -XAtq "$@"; }
-for pair in gw:gw cocoonbox:cocoonbox-api; do
-	db=${pair%%:*} role=${pair#*:}
+for role in gw cocoonbox-migrate cocoonbox-api; do
 	[ "$(q -c "SELECT 1 FROM pg_roles WHERE rolname = '$role'")" = 1 ] || q -c "CREATE ROLE \"$role\" LOGIN"
+done
+for pair in gw:gw cocoonbox:cocoonbox-migrate; do
+	db=${pair%%:*} role=${pair#*:}
 	[ "$(q -c "SELECT 1 FROM pg_database WHERE datname = '$db'")" = 1 ] || q -c "CREATE DATABASE $db OWNER \"$role\""
 done
+q -c "ALTER DATABASE cocoonbox OWNER TO \"cocoonbox-migrate\""
+q -d cocoonbox -c "REASSIGN OWNED BY \"cocoonbox-api\" TO \"cocoonbox-migrate\""
 q -c "REVOKE ALL ON DATABASE cocoonbox FROM PUBLIC"
+q -c "GRANT CONNECT ON DATABASE cocoonbox TO \"cocoonbox-api\""
+q -d cocoonbox <<'SQL'
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO "cocoonbox-api";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "cocoonbox-api";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "cocoonbox-api";
+ALTER DEFAULT PRIVILEGES FOR ROLE "cocoonbox-migrate" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "cocoonbox-api";
+ALTER DEFAULT PRIVILEGES FOR ROLE "cocoonbox-migrate" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO "cocoonbox-api";
+SQL
 grep -q '^cocoonbox[[:space:]]\+cocoonbox-api[[:space:]]\+cocoonbox-api$' "$P/pg_ident.conf" || printf 'cocoonbox\tcocoonbox-api\tcocoonbox-api\n' >> "$P/pg_ident.conf"
 grep -q '^cocoonbox[[:space:]]\+root[[:space:]]\+cocoonbox-api$' "$P/pg_ident.conf" || printf 'cocoonbox\troot\t\tcocoonbox-api\n' >> "$P/pg_ident.conf"
-grep -q '^local[[:space:]]\+cocoonbox[[:space:]]\+cocoonbox-api' "$P/pg_hba.conf" ||
-	sed -i '0,/^local/s//local   cocoonbox       cocoonbox-api                           peer map=cocoonbox\n&/' "$P/pg_hba.conf"
+grep -q '^cocoonbox[[:space:]]\+root[[:space:]]\+cocoonbox-migrate$' "$P/pg_ident.conf" || printf 'cocoonbox\troot\t\tcocoonbox-migrate\n' >> "$P/pg_ident.conf"
+sed -i 's/^local\([[:space:]]\+cocoonbox[[:space:]]\+\)cocoonbox-api\([[:space:]]\)/local\1cocoonbox-api,cocoonbox-migrate\2/' "$P/pg_hba.conf"
+grep -q '^local[[:space:]]\+cocoonbox[[:space:]]\+cocoonbox-api,cocoonbox-migrate' "$P/pg_hba.conf" ||
+	sed -i '0,/^local/s//local   cocoonbox       cocoonbox-api,cocoonbox-migrate         peer map=cocoonbox\n&/' "$P/pg_hba.conf"
 systemctl reload postgresql@16-main
 
 q -c "SELECT datname FROM pg_database WHERE datname IN ('gw', 'cocoonbox') ORDER BY 1" | tr '\n' ' '

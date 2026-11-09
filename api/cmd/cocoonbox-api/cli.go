@@ -7,18 +7,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/config"
+	"github.com/loomhand/cocoonbox/api/connect"
+	"github.com/loomhand/cocoonbox/api/migrate"
+	"github.com/loomhand/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/vault"
 )
 
 const cliUsage = `usage:
   cocoonbox-api [-config FILE] check
+  cocoonbox-api [-config FILE] migrate [-dsn-file FILE]
   cocoonbox-api [-config FILE] user add NAME [-admin]
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
@@ -27,6 +34,9 @@ const cliUsage = `usage:
   cocoonbox-api [-config FILE] state heads
   cocoonbox-api [-config FILE] box rebase USER BOX IMAGE [-flavor VCPUS/MEMORY_MIB/DISK_GIB]
   cocoonbox-api [-config FILE] node cutoff ADDR`
+
+// migrations lists every store's schema in an order that satisfies their foreign keys.
+var migrations = []migrate.Set{users.Migrations, cluster.Migrations, connect.Migrations, vault.Migrations, signup.Migrations, oauth.Migrations}
 
 type connections interface {
 	RevokeAll(ctx context.Context, user string) error
@@ -41,6 +51,9 @@ type accountDeleter interface {
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 1 && args[0] == "check" {
 		return checkConfig(ctx, cfg, stdout)
+	}
+	if len(args) >= 1 && args[0] == "migrate" {
+		return migrateAll(ctx, cfg, args[1:], stdout)
 	}
 	if len(args) == 2 && args[0] == "state" && args[1] == "heads" {
 		return backfillHeads(ctx, cfg, stdout)
@@ -219,11 +232,40 @@ func reportMigrations(ctx context.Context, cfg *config.Config, stdout io.Writer)
 	if err != nil {
 		return err
 	}
-	pending, err := cluster.PendingMigrations(ctx, dsn)
-	if err != nil || len(pending) == 0 {
+	var pending, names []string
+	for _, set := range migrations {
+		if names, err = migrate.Pending(ctx, dsn, set); err != nil {
+			return err
+		}
+		pending = append(pending, names...)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	_, err = fmt.Fprintf(stdout, "migrations the next migrate applies: %s\n", strings.Join(pending, ", "))
+	return err
+}
+
+// migrateAll applies every store's pending migrations as the role of -dsn-file, the config's database dsn when it is empty.
+func migrateAll(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	dsnFile := flags.String("dsn-file", "", "file holding the migration role's dsn")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "cluster migrations the next start applies: %s\n", strings.Join(pending, ", "))
+	dsn, err := cfg.DSN()
+	if *dsnFile != "" {
+		var raw []byte
+		raw, err = os.ReadFile(*dsnFile)
+		dsn = strings.TrimSpace(string(raw))
+	}
+	if err != nil {
+		return err
+	}
+	if err = migrate.Apply(ctx, dsn, migrations...); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, "migrations applied")
 	return err
 }
 

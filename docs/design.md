@@ -1097,7 +1097,7 @@ How the broker uses it:
   A rotated refresh token is therefore stored before the new access token is used. If the commit fails after the vendor rotated, the grant becomes `needs_reconnect`.
 - **Box door:** the broker hashes the presented key and reads `connect_door_keys`. Provisioning an incarnation inserts its row and deletes the machine's older rows in the same transaction, before `SetCredentials` installs the key. Deleting a machine (box delete, user delete, park, Rebase) deletes its row; a hibernated machine keeps it. At start the api deletes the rows of machines the backend no longer holds.
 - **Disconnect** and **delete user** remove the rows after the vendor revoke. Deleting a user also deletes the user's state key, which makes any copy of their old rows in a backup unreadable.
-- **Migrations:** numbered SQL files embedded in the binary. The api applies them at start under `pg_advisory_lock`, so concurrent replicas run each one once.
+- **Migrations:** numbered SQL files embedded in the binary. `cocoonbox-api migrate` applies every store's pending ones under `pg_advisory_lock`, so concurrent replicas run each one once, as the `cocoonbox-migrate` role, which owns the schema; the api's own role has row rights only, so a process taken over cannot change the schema. The api writes nothing when nothing is pending; with a pending one, its role's missing schema rights stop it at start.
 - **Driver:** `pgx/v5` with its pool. There is no ORM.
 
 Hot-path cost: none on the claim, screen or edge path. A connector call adds one primary-key read and one audit insert, about 1 ms against a local PostgreSQL, next to an upstream call of 100 ms or more. A refresh adds one row lock, held only for the vendor round trip.

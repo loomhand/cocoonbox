@@ -13,45 +13,67 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Open connects to dsn and runs fsys's migrations/<n>_<name>.sql not yet in table, in number order, under the advisory lock.
-func Open(ctx context.Context, dsn string, fsys fs.FS, table string, lock int64) (*pgxpool.Pool, error) {
+// Set is one store's migrations: FS's migrations/<n>_<name>.sql, the table that records the applied ones and the advisory lock their runs take.
+type Set struct {
+	FS    fs.FS
+	Table string
+	Lock  int64
+}
+
+// Open connects to dsn and runs set's pending migrations, in number order, under its advisory lock; with none pending it writes nothing, so a role without DDL rights opens a migrated database.
+func Open(ctx context.Context, dsn string, set Set) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	if err := apply(ctx, pool, fsys, table, lock); err != nil {
+	if err := apply(ctx, pool, set); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return pool, nil
 }
 
-// Pending connects to dsn and returns fsys's migrations not yet in table, writing nothing.
-func Pending(ctx context.Context, dsn string, fsys fs.FS, table string) ([]string, error) {
+// Apply connects to dsn and runs the pending migrations of each set in turn.
+func Apply(ctx context.Context, dsn string, sets ...Set) error {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
+	defer pool.Close()
+	for _, set := range sets {
+		if err := apply(ctx, pool, set); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Pending connects to dsn and returns set's migrations not yet in its table, writing nothing.
+func Pending(ctx context.Context, dsn string, set Set) ([]string, error) {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 	var exists bool
-	if err = conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil {
-		return nil, fmt.Errorf("read %s: %w", table, err)
+	if err = conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", set.Table).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read %s: %w", set.Table, err)
 	}
 	applied := map[int]bool{}
 	if exists {
 		var rows pgx.Rows
-		if rows, err = conn.Query(ctx, "SELECT version FROM "+table); err != nil {
-			return nil, fmt.Errorf("read %s: %w", table, err)
+		if rows, err = conn.Query(ctx, "SELECT version FROM "+set.Table); err != nil {
+			return nil, fmt.Errorf("read %s: %w", set.Table, err)
 		}
 		var versions []int
 		if versions, err = pgx.CollectRows(rows, pgx.RowTo[int]); err != nil {
-			return nil, fmt.Errorf("read %s: %w", table, err)
+			return nil, fmt.Errorf("read %s: %w", set.Table, err)
 		}
 		for _, v := range versions {
 			applied[v] = true
 		}
 	}
-	names, err := migrations(fsys)
+	names, err := migrations(set.FS)
 	if err != nil {
 		return nil, err
 	}
@@ -68,20 +90,27 @@ func Pending(ctx context.Context, dsn string, fsys fs.FS, table string) ([]strin
 	return pending, nil
 }
 
-func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lock int64) error {
+func apply(ctx context.Context, pool *pgxpool.Pool, set Set) error {
+	table := set.Table
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer conn.Release()
-	if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock($1)", lock); err != nil {
+	if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock($1)", set.Lock); err != nil {
 		return fmt.Errorf("lock migrations: %w", err)
 	}
-	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", lock) }()
-	if _, err = conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+table+" (version integer PRIMARY KEY)"); err != nil {
-		return fmt.Errorf("create %s: %w", table, err)
+	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", set.Lock) }()
+	var exists bool
+	if err = conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil {
+		return fmt.Errorf("read %s: %w", table, err)
 	}
-	names, err := migrations(fsys)
+	if !exists {
+		if _, err = conn.Exec(ctx, "CREATE TABLE "+table+" (version integer PRIMARY KEY)"); err != nil {
+			return fmt.Errorf("create %s: %w", table, err)
+		}
+	}
+	names, err := migrations(set.FS)
 	if err != nil {
 		return err
 	}
@@ -97,7 +126,7 @@ func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lo
 		if applied {
 			continue
 		}
-		sql, err := fs.ReadFile(fsys, name)
+		sql, err := fs.ReadFile(set.FS, name)
 		if err != nil {
 			return err
 		}
