@@ -1534,6 +1534,39 @@ func TestALostNodeKeepsTheMachineOfItsArchivedClaim(t *testing.T) {
 	}
 }
 
+func TestADropFromASnapshotBeforeTheArchiveKeepsTheArchivedClaim(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	before, err := b.snapshot(t.Context())
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated, sb.row.Archived = true, true })
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the archive: %v", err)
+	}
+	peer.setDown(true)
+	entry.mu.Lock()
+	entry.peers = nil
+	entry.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the node left: %v", err)
+	}
+	b.mu.Lock()
+	for addr, since := range b.away {
+		b.away[addr] = since.Add(-nodeLostAfter)
+	}
+	b.mu.Unlock()
+	if err := b.dropUnlisted(t.Context(), map[string][]row{b.entryAddr: nil}, before); err != nil {
+		t.Fatalf("dropUnlisted: %v", err)
+	}
+	if _, err := b.stored(t.Context(), boxID); err != nil {
+		t.Errorf("the archived claim's machine after a drop from an older snapshot: %v; want it kept", err)
+	}
+}
+
 func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, peer.next = []*fakeSandboxd{peer}, 100
