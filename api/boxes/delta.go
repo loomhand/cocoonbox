@@ -277,7 +277,7 @@ func (l *stateLayer) compactManifest(ctx context.Context, p statePath, key keyri
 	if err != nil {
 		return err
 	}
-	if len(raw) > manifestLimit {
+	if int64(len(raw)) > manifestLimit {
 		return fmt.Errorf("manifest delta %s of %d bytes exceeds %d", e.ID, len(raw), manifestLimit)
 	}
 	sealed, err := sealObject(key.Secret, e.ID+deltaSuffix, raw)
