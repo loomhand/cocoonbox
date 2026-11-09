@@ -3,6 +3,7 @@ package boxes
 import (
 	"context"
 	"errors"
+	"maps"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -11,13 +12,19 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
-const wakePushTimeout = 30 * time.Second
+const (
+	wakePushTimeout = 30 * time.Second
+	// doorKeyAge is the age at which a running machine's door key is replaced.
+	doorKeyAge = time.Hour
+)
 
 // Connect issues each machine's box door key and the credentials its owner's grants put on its egress.
 type Connect interface {
 	DoorKey(ctx context.Context, machine, owner, incarnation string) (string, error)
 	DropDoorKey(ctx context.Context, machine string) error
 	PruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error)
+	StaleDoorKeys(ctx context.Context, age time.Duration) (map[string]string, error)
+	RotateDoorKey(ctx context.Context, machine, owner, incarnation string, push func(key string) error) error
 	Credentials(ctx context.Context, owner string) (machines.Credentials, error)
 }
 
@@ -89,13 +96,19 @@ func (s *Service) PruneDoorKeys(ctx context.Context) error {
 	return nil
 }
 
-// refreshCredentials reads each owner's credentials once and applies them to the owner's running machines.
+// refreshCredentials reads each owner's credentials once and applies them to the owner's running machines, with a new door key where the current one is older than doorKeyAge.
 func (s *Service) refreshCredentials(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.refreshCredentials")
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
 		logger.Error(ctx, err, "list machines")
 		return
+	}
+	var stale map[string]string
+	if s.provision != nil {
+		if stale, err = s.connect.StaleDoorKeys(ctx, doorKeyAge); err != nil {
+			logger.Warnf(ctx, "list the stale door keys: %v", err)
+		}
 	}
 	running := map[string][]machines.Machine{}
 	for _, m := range s.ownerMachines(ms) {
@@ -110,11 +123,41 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 			continue
 		}
 		for _, m := range owned {
-			if err := s.setCredentials(ctx, m, users.PushConnect, creds); err != nil {
+			push := s.setCredentials
+			if incarnation, ok := stale[m.ID]; ok && incarnation == m.Incarnation {
+				push = s.rotateDoorKey
+			}
+			if err := push(ctx, m, users.PushConnect, creds); err != nil {
 				logger.WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)
 			}
 		}
 	}
+}
+
+// rotateDoorKey pushes creds to m with a new door key under m's provisioning locks, so no provisioning of another incarnation is between.
+func (s *Service) rotateDoorKey(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
+	unlock := s.provision.locks.Lock(m.ID)
+	defer unlock()
+	if s.userLocks != nil {
+		unlockShared, err := s.userLocks.LockProvision(ctx, "provision:"+m.ID)
+		if err != nil {
+			return err
+		}
+		defer unlockShared()
+	}
+	cur, err := s.machines.Get(ctx, m.ID)
+	if err != nil || cur.State != machines.StateRunning || cur.Incarnation != m.Incarnation {
+		return err
+	}
+	return s.connect.RotateDoorKey(ctx, m.ID, m.Owner, m.Incarnation, func(key string) error {
+		withKey := creds
+		withKey.Secrets = maps.Clone(creds.Secrets)
+		withKey.Secrets[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
+		if err := s.recordPushes(ctx, m, users.PushDoor); err != nil {
+			return err
+		}
+		return s.setCredentials(ctx, m, kind, withKey)
+	})
 }
 
 // wakeCredentials pushes m's secrets and keys while it wakes, without holding up the wake; provisionOnce pushes again after it.
