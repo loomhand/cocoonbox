@@ -1296,7 +1296,7 @@ func TestARotatedDoorKeyOverlapsTheOldOneUntilItsPushLands(t *testing.T) {
 		t.Errorf("old key after a failed push = %d, want 200", got)
 	}
 	var cur string
-	err = env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc1", func(key string) error {
+	err = env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc2", func(key string) error {
 		cur = key
 		if o, n := door(old), door(key); o != http.StatusOK || n != http.StatusOK {
 			t.Errorf("during the push: old key %d, new key %d, want both 200", o, n)
