@@ -5,8 +5,9 @@
 set -eu
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
+DEBIAN_FRONTEND=noninteractive apt-get install -y -q python3-yaml >/dev/null
 install -m 0755 "$SRC/cb-s3" "$SRC/cb-log-ship" /usr/local/sbin/
 install -m 0644 "$SRC/cb-log-ship.service" "$SRC/cb-log-ship.timer" /etc/systemd/system/
 systemctl daemon-reload
-systemctl start cb-log-ship.service
 systemctl enable --now cb-log-ship.timer >/dev/null
+systemctl start cb-log-ship.service
