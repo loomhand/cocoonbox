@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """usage: cb-s3 put BUCKET KEY FILE|- | get BUCKET KEY FILE | list BUCKET PREFIX (prints "key size" lines)
-Talks to the api's state-store endpoint with its credentials, read at run time from /etc/cocoonbox/api.yaml (state) and its
-credentials_file; the key pair reaches curl through a pipe, never argv or a file."""
+Talks to the api's state-store endpoint with its credentials, read at run time from /etc/cocoonbox/api.yaml (state)
+and its credentials_file; the key pair reaches curl through a pipe, never argv or a file."""
 
 import os
 import re
@@ -24,7 +24,12 @@ def store():
             if sep:
                 keys[k] = v
     scheme = "https" if state.get("secure") else "http"
-    return f"{scheme}://{state['endpoint']}", state.get("region") or "us-east-1", keys["STORE_ACCESS_KEY"], keys["STORE_SECRET_KEY"]
+    return (
+        f"{scheme}://{state['endpoint']}",
+        state.get("region") or "us-east-1",
+        keys["STORE_ACCESS_KEY"],
+        keys["STORE_SECRET_KEY"],
+    )
 
 
 def curl(path, args, capture=False):
@@ -33,8 +38,12 @@ def curl(path, args, capture=False):
     os.write(w, f'url = "{endpoint}/{path}"\nuser = "{access}:{secret}"\n'.encode())
     os.close(w)
     try:
-        return subprocess.run(["curl", "-fsS", "--max-time", "600", "--aws-sigv4", f"aws:amz:{region}:s3", "-K", f"/dev/fd/{r}", *args],
-                              check=True, pass_fds=(r,), capture_output=capture).stdout
+        return subprocess.run(
+            ["curl", "-fsS", "--max-time", "600", "--aws-sigv4", f"aws:amz:{region}:s3", "-K", f"/dev/fd/{r}", *args],
+            check=True,
+            pass_fds=(r,),
+            capture_output=capture,
+        ).stdout
     finally:
         os.close(r)
 

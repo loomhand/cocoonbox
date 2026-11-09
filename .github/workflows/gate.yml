@@ -19,5 +19,11 @@ jobs:
       - name: Clean gate
         run: make gate
 
+      - name: Python tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/py"
+          "$RUNNER_TEMP/py/bin/pip" install ruff==0.17.4 pytest==9.2.0
+          echo "$RUNNER_TEMP/py/bin" >> "$GITHUB_PATH"
+
       - name: Image scripts
         run: make image

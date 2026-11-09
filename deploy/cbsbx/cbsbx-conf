@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 S = "/srv/cb/sbx"
 TOKEN = "/etc/cocoonbox/sandboxd-token"
@@ -26,23 +27,35 @@ CONN_RATE = {"per_second": 30, "burst": 600}
 SSH_PORT = 22
 WEB_PORTS = [80, 443]
 FCM_PORTS = [5228, 5229, 5230]
-TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle; [ -e /etc/systemd/user/shuttle.service ] || u=cocoon-shuttle; "
-               "systemctl --user -M user@ -q is-active $u && [ -S /run/cocoonbox/services/cocoonbox.sock ]; "
-               "else systemctl -q is-active cocoonbox-toolhost; fi")
-WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent "
-          "&& { " + TOOLHOST_UP + "; } "
-          "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
-          "sleep 0.2; done; exit 1")
+TOOLHOST_UP = (
+    "if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle; "
+    "[ -e /etc/systemd/user/shuttle.service ] || u=cocoon-shuttle; "
+    "systemctl --user -M user@ -q is-active $u && [ -S /run/cocoonbox/services/cocoonbox.sock ]; "
+    "else systemctl -q is-active cocoonbox-toolhost; fi"
+)
+WARMUP = (
+    "for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent "
+    "&& { " + TOOLHOST_UP + "; } "
+    "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
+    "sleep 0.2; done; exit 1"
+)
 # a headless run in a throwaway profile puts Chrome's pages in the golden's page cache without opening a window
-CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user timeout 30 google-chrome --headless=new "
-                 "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
-                 "rm -rf /tmp/cb-warmup-chrome; true; }")
+CHROME_WARMUP = (
+    "(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user timeout 30 google-chrome --headless=new "
+    "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
+    "rm -rf /tmp/cb-warmup-chrome; true; }"
+)
 # an Android golden holds the outer VM only: Android boots per box once the api writes the box identity
-ANDROID_TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle; [ -e /etc/systemd/system/shuttle.service ] || u=cocoon-shuttle; "
-                       "systemctl -q is-active $u && [ -S /run/cocoonbox/services/cocoonbox.sock ]; "
-                       "else systemctl -q is-active cocoonbox-toolhost; fi")
-ANDROID_WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-agent && { " + ANDROID_TOOLHOST_UP + "; } "
-                  "&& (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; sleep 0.2; done; exit 1")
+ANDROID_TOOLHOST_UP = (
+    "if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle; "
+    "[ -e /etc/systemd/system/shuttle.service ] || u=cocoon-shuttle; "
+    "systemctl -q is-active $u && [ -S /run/cocoonbox/services/cocoonbox.sock ]; "
+    "else systemctl -q is-active cocoonbox-toolhost; fi"
+)
+ANDROID_WARMUP = (
+    "for i in $(seq 1 600); do systemctl -q is-active cocoonbox-agent && { " + ANDROID_TOOLHOST_UP + "; } "
+    "&& (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; sleep 0.2; done; exit 1"
+)
 ANDROID_FAMILIES = ("cbdroid",)
 CHROME_WARMUP_FROM = 15
 INJECT_FROM = 23
@@ -55,7 +68,11 @@ def ip_json(*args):
 
 def public_addrs():
     dev = ip_json("route", "show", "default")[0]["dev"]
-    addrs = [ipaddress.ip_address(a["local"]) for a in ip_json("addr", "show", "dev", dev, "scope", "global")[0]["addr_info"] if "local" in a]
+    addrs = [
+        ipaddress.ip_address(a["local"])
+        for a in ip_json("addr", "show", "dev", dev, "scope", "global")[0]["addr_info"]
+        if "local" in a
+    ]
     return [a for a in addrs if a.is_global]
 
 
@@ -85,8 +102,17 @@ for arg in sys.argv[1:]:
     else:
         warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
         pool_egress = connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress
-    pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
-                  "warmup": ["bash", "-c", warmup], "egress": pool_egress})
+    pools.append(
+        {
+            "template": template,
+            "net": "none",
+            "size": "xlarge",
+            "storage": STORAGE,
+            "warm": int(warm),
+            "warmup": ["bash", "-c", warmup],
+            "egress": pool_egress,
+        }
+    )
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
@@ -97,13 +123,15 @@ conf = {
     "no_direct_io": True,
     "sync_claims": True,
     "vmm_restart": "cold",
-    "api_token": open(TOKEN).read().strip(),
+    "api_token": Path(TOKEN).read_text().strip(),
     "max_claims": int(os.environ.get("CB_MAX_CLAIMS", "16")),
     "refill_concurrency": 1,
     "audit_log": True,
     # sandboxd blocks the node's own addresses; a box still reaches the console this host serves
-    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}",
-                              *(f"{a}/{a.max_prefixlen}:{','.join(map(str, WEB_PORTS))}" for a in public_addrs())],
+    "egress_internal_allow": [
+        f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}",
+        *(f"{a}/{a.max_prefixlen}:{','.join(map(str, WEB_PORTS))}" for a in public_addrs()),
+    ],
     "egress_conn_rate": CONN_RATE,
     "disk_reserve": {"free": DISK_RESERVE},
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
@@ -112,9 +140,11 @@ conf = {
     "pools": pools,
 }
 if os.path.exists(f"{EGRESS_CA}/root.crt"):
-    conf["egress_ca"] = {"root_cert": f"{EGRESS_CA}/root.crt",
-                         "intermediate_cert": f"{EGRESS_CA}/{os.environ['CB_EGRESS_INTERMEDIATE']}.crt",
-                         "intermediate_key": f"{EGRESS_CA}/{os.environ['CB_EGRESS_INTERMEDIATE']}.key"}
+    conf["egress_ca"] = {
+        "root_cert": f"{EGRESS_CA}/root.crt",
+        "intermediate_cert": f"{EGRESS_CA}/{os.environ['CB_EGRESS_INTERMEDIATE']}.crt",
+        "intermediate_key": f"{EGRESS_CA}/{os.environ['CB_EGRESS_INTERMEDIATE']}.key",
+    }
 path = f"{S}/sandboxd.json"
 fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:

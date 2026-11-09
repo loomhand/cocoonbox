@@ -39,7 +39,10 @@ class MCP:
         return status, [json.loads(text)] if text.strip() else []
 
     def open(self, client: str) -> int:
-        return self.post("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}})[0]
+        return self.post(
+            "initialize",
+            {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}},
+        )[0]
 
 
 def check(ok: object, what: str) -> None:
@@ -52,7 +55,9 @@ def note(text: str) -> None:
     print("     " + text, flush=True)
 
 
-def http(method: str, url: str, body: object = None, headers: dict[str, str] | None = None) -> tuple[int, Message, bytes]:
+def http(
+    method: str, url: str, body: object = None, headers: dict[str, str] | None = None
+) -> tuple[int, Message, bytes]:
     """Sends a request to url, or to the api when url is a path."""
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url if url.startswith("http") else ENDPOINT + url, data=data, method=method)
