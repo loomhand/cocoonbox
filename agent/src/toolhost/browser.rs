@@ -990,12 +990,15 @@ impl Browser {
             return Ok(true);
         };
         let port = tokio::net::TcpStream::connect(("127.0.0.1", self.port));
-        match tokio::time::timeout(PORT_WAIT, port).await {
-            Ok(Ok(_)) => Err(format!(
+        if !matches!(tokio::time::timeout(PORT_WAIT, port).await, Ok(Ok(_))) {
+            return Ok(false);
+        }
+        match self.devtools::<Value>("version").await {
+            Ok(_) => Ok(true),
+            Err(_) => Err(format!(
                 "chrome holds port {} but does not answer: {e}",
                 self.port
             )),
-            _ => Ok(false),
         }
     }
 
@@ -2522,6 +2525,27 @@ pub(super) mod tests {
         let started = b.run("state", "browser_start", json!({})).await;
         assert!(started.unwrap_err().contains("does not answer"));
         held.abort();
+    }
+
+    #[tokio::test]
+    async fn a_chrome_whose_target_list_failed_once_but_answers_its_version_is_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = conn.read(&mut buf).await.unwrap_or(0);
+                let reply = if String::from_utf8_lossy(&buf[..n]).contains("/json/version") {
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+                } else {
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                let _ = conn.write_all(reply.as_bytes()).await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        assert_eq!(b.up().await, Ok(true));
     }
 
     #[tokio::test]
