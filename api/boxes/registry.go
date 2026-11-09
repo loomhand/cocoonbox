@@ -49,15 +49,14 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if record != nil {
 		if err = record(ctx, b.ID); err != nil {
 			logger.Errorf(ctx, err, "record the new box %s", b.ID)
-			if rmErr := s.registry.RemoveBox(context.WithoutCancel(ctx), user, b.ID); rmErr != nil {
-				logger.Errorf(ctx, rmErr, "remove the unrecorded box %s", b.ID)
-			}
+			s.removeUnmade(ctx, user, b.ID)
 			return nil, status.Error(codes.Unavailable, "recording the new box failed")
 		}
 	}
 	s.ops.watchers.wake(user)
 	tenant, err := s.accounts.Tenant(user)
 	if err != nil {
+		s.removeUnmade(ctx, user, b.ID)
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
 	spec := machines.Spec{ID: b.ID, Owner: user, Tenant: tenant, Flavor: b.Flavor}
@@ -66,6 +65,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	}
 	m, _, err := s.machines.Ensure(ctx, spec)
 	if err != nil {
+		s.removeUnmade(ctx, user, b.ID)
 		return nil, serviceError(ctx, logger, err, "create box")
 	}
 	logger.Infof(ctx, "created box %s (%s) from %s", b.Name, b.ID, image)
@@ -154,6 +154,21 @@ func (s *Service) runDelete(op *operation, user string, m machines.Machine, save
 func (s *Service) deleting(box string) bool {
 	active := s.ops.activeFor(box)
 	return active != nil && active.phase == controlv1.Phase_PHASE_DELETING
+}
+
+func (s *Service) removeUnmade(ctx context.Context, user, box string) {
+	ctx = context.WithoutCancel(ctx)
+	logger := log.WithFunc("boxes.Service.removeUnmade").WithField("box", box)
+	switch _, err := s.current(ctx, user, box); {
+	case err == nil:
+		return
+	case !errors.Is(err, machines.ErrNotFound):
+		logger.Error(ctx, err, "look up the box a failed create left")
+		return
+	}
+	if err := s.registry.RemoveBox(ctx, user, box); err != nil {
+		logger.Error(ctx, err, "remove the box a failed create left")
+	}
 }
 
 func registryError(ctx context.Context, err error, action string) error {

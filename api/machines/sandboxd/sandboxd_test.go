@@ -1367,6 +1367,39 @@ func TestARefreshEndsALapsedOpAndWakesItsOwner(t *testing.T) {
 	}
 }
 
+func TestARefreshAdoptsTheClaimAnAPIDiedBeforeRecordingOnlyWhenItsUsersTenantHoldsIt(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	b := openSharedBackend(t, fake, db)
+	for id, until := range map[string]time.Time{"cb-lapsed": time.Now().Add(-time.Second), "cb-claiming": time.Now().Add(time.Hour), "cb-forged": time.Now().Add(-time.Second)} {
+		if _, err := db.UpdateMachine(t.Context(), id, func(m *cluster.Machine, _ bool) (bool, error) {
+			m.Owner, m.Image, m.CreatedAt, m.Op, m.OpUntil = "u-1", template, time.Now(), opClaim, until
+			return true, nil
+		}); err != nil {
+			t.Fatalf("UpdateMachine %s: %v", id, err)
+		}
+	}
+	for sandbox, claim := range map[string][2]string{"sb_lapsed": {"cb-lapsed", "u-1"}, "sb_claiming": {"cb-claiming", "u-1"}, "sb_forged": {"cb-forged", "mallory"}} {
+		fake.add(&fakeSandbox{row: row{ID: sandbox, Key: poolKey{Template: template, Size: "xlarge"}, Tenant: claim[1], Metadata: map[string]string{"cb_machine": claim[0], "cb_owner": "u-1"}}})
+	}
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	for id, want := range map[string]string{"cb-lapsed": "sb_lapsed", "cb-claiming": "", "cb-forged": ""} {
+		rec, err := db.Machine(t.Context(), id)
+		if err != nil {
+			t.Fatalf("Machine %s: %v", id, err)
+		}
+		var got row
+		if rec.Claim != nil {
+			_ = json.Unmarshal(rec.Claim, &got)
+		}
+		if got.ID != want {
+			t.Errorf("%s holds claim %q, want %q", id, got.ID, want)
+		}
+	}
+}
+
 func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)

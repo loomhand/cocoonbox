@@ -7,6 +7,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -35,6 +36,7 @@ const (
 	closeBound    = 10 * time.Second
 	// maxInstructions is the Mac bridge's cap on a server's instructions, within every agent CLI's limit.
 	maxInstructions = 2048
+	maxAnswer       = 32 << 20
 	acceptBoth      = "application/json, " + mcpwire.EventStream
 	unifiedHead     = "These tools run on the user's cocoonbox, a cloud computer, not on this machine. box_* tools manage the user's boxes; the other tools act on the box their box argument names, else the default box, and wake it when it sleeps."
 	boxArgument     = `{"type":"string","description":"The box's name or id, as box_list lists them; without it, the default box."}`
@@ -305,7 +307,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
 		return
 	}
-	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, nil); return nil })
+	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, nil) })
 	if status.Code(err) != codes.Unavailable {
 		if err != nil {
 			writeJSON(w, http.StatusOK, newResponse(id, failure(err), nil))
@@ -328,7 +330,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	switch {
 	case err == nil:
-		_, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, stream); return nil })
+		_, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
@@ -456,7 +458,7 @@ func (s *Server) open(ctx context.Context, user, box, image string, params jsont
 		if upstream = resp.Header.Get(mcpwire.SessionHeader); resp.StatusCode != http.StatusOK || upstream == "" {
 			return status.Errorf(codes.Unavailable, "the box agent answered initialize with %s", resp.Status)
 		}
-		return json.UnmarshalRead(resp.Body, &answer)
+		return decodeAnswer(resp.Body, &answer)
 	})
 	if err != nil {
 		return "", err
@@ -477,7 +479,7 @@ func (s *Server) open(ctx context.Context, user, box, image string, params jsont
 		} `json:"result"`
 	}
 	err = s.agents.Exchange(agentRequest(ctx, http.MethodPost, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`), upstream, acceptBoth), user, box, func(resp *http.Response) error {
-		return json.UnmarshalRead(resp.Body, &list)
+		return decodeAnswer(resp.Body, &list)
 	})
 	if err != nil || len(list.Result.Tools) == 0 {
 		logger.Warnf(ctx, "list the tools of image %s on box %s: %v", image, box, err)
@@ -506,12 +508,14 @@ func (s *Server) defaultBox(ctx context.Context) (*controlv1.Box, string, error)
 }
 
 // relay copies the agent's answer to the client as it arrives; into stream, which carries the wake's progress, it goes as events.
-func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) {
+func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) error {
 	if stream != nil && !strings.HasPrefix(resp.Header.Get("Content-Type"), mcpwire.EventStream) {
-		if data, err := io.ReadAll(resp.Body); err == nil {
-			stream.write(mcpwire.Event(bytes.TrimSpace(data)))
+		data, err := readAnswer(resp.Body)
+		if err != nil {
+			return err
 		}
-		return
+		stream.write(mcpwire.Event(bytes.TrimSpace(data)))
+		return nil
 	}
 	if stream == nil {
 		for _, h := range []string{"Content-Type", "Cache-Control"} {
@@ -527,14 +531,30 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
-				return
+				return nil
 			}
 			_ = rc.Flush()
 		}
 		if err != nil {
-			return
+			return nil
 		}
 	}
+}
+
+func readAnswer(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxAnswer+1))
+	if err == nil && len(data) > maxAnswer {
+		err = fmt.Errorf("the box agent's answer exceeds %d MiB", maxAnswer>>20)
+	}
+	return data, err
+}
+
+func decodeAnswer(r io.Reader, v any) error {
+	data, err := readAnswer(r)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
 }
 
 // takeBox takes the box argument out of a box tool call, returning the box it names, empty without one, and the body to send on.

@@ -193,6 +193,25 @@ func TestCreateRefusals(t *testing.T) {
 	}
 }
 
+func TestACreateWhoseMachineFailsLeavesNoBoxToCountAgainstTheQuota(t *testing.T) {
+	fake := newFakeMachines()
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	ctx := auth.WithUser(t.Context(), alice)
+	fake.ensureErr = machines.ErrCapacity
+	for range 3 {
+		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "two"}); err == nil {
+			t.Fatal("Create with no capacity succeeded")
+		}
+	}
+	if list, _ := svc.List(ctx, &controlv1.ListBoxesRequest{}); len(list.GetBoxes()) != 1 {
+		t.Fatalf("failed creates left boxes: %v", list.GetBoxes())
+	}
+	fake.ensureErr = nil
+	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "two"}); err != nil {
+		t.Fatalf("Create after the failures: %v", err)
+	}
+}
+
 func TestEnsureWithoutBoxesAddsOne(t *testing.T) {
 	fake := newFakeMachines()
 	registry := newFakeRegistry()

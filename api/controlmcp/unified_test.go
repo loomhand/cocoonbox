@@ -1,6 +1,7 @@
 package controlmcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -91,6 +92,27 @@ func TestRootCallWakesTheSleepingDefaultBox(t *testing.T) {
 	}
 	if l := lists.get("img:1"); string(l.Tools) != boxTools || l.Instructions != agentGuide {
 		t.Errorf("recorded tool list = %+v", l)
+	}
+}
+
+func TestABoxAgentAnswerPastTheCapFailsTheCallInsteadOfBeingReadWhole(t *testing.T) {
+	for _, method := range []string{"initialize", "tools/list", "tools/call"} {
+		srv, fake, agents, _ := newUnifiedServer(t)
+		fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+		agents.set(func(a *fakeAgents) { a.oversize = method })
+		session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+		rec := serveRoot(srv, http.MethodPost, aliceToken, session, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"},"_meta":{"progressToken":"tok"}}}`)
+		msgs := sseMessages(t, rec.Body.String())
+		last := msgs[len(msgs)-1]
+		if method == "tools/list" {
+			if text := callText(t, last["result"]); text != shellAnswer+boxes.BoxID("alice") {
+				t.Errorf("an oversized tools/list failed the call: %v", last)
+			}
+			continue
+		}
+		if text := callText(t, last["result"]); !strings.Contains(text, "exceeds 32 MiB") {
+			t.Errorf("oversized %s answer = %v, want an error naming the cap", method, last)
+		}
 	}
 }
 
@@ -567,6 +589,7 @@ type fakeAgents struct {
 	deaf     bool
 	lost     bool
 	hold     *sync.WaitGroup
+	oversize string
 }
 
 func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*http.Response) error) error {
@@ -600,6 +623,13 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 	a.sent = append(a.sent, msg.Method)
 	if a.lost {
 		return status.Error(codes.Unknown, "box agent unreachable")
+	}
+	if msg.Method == a.oversize {
+		if msg.Method == "initialize" {
+			session = "up" + string(rune('a'+len(a.sent)))
+			a.sessions[session] = true
+		}
+		return use(answer(http.StatusOK, session, `{"jsonrpc":"2.0","id":`+cmp.Or(string(msg.ID), "0")+`,"result":{"pad":"`+strings.Repeat("x", maxAnswer)+`"}}`))
 	}
 	switch {
 	case msg.Method == "initialize":
