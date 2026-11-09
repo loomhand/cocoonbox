@@ -132,20 +132,24 @@ impl Offload<'_> {
 
     /// Releases the copy and wipes what the stream left, after a failure before the inbox accepted.
     async fn roll_back(&self) {
-        if let Err(e) = wipe_secrets(self.layout, self.repo).await {
-            eprintln!("offload send: roll back: {e:?}");
-        }
         let (key, id) = (self.repo.to_owned(), self.id.to_owned());
         let released = with_index(self.layout, move |index| {
-            if let Some(c) = index.get_mut(&key).filter(|c| c.offload_id == id) {
-                c.offload_id.clear();
-                c.unreturned = false;
-            }
-            Ok(())
+            let Some(c) = index.get_mut(&key).filter(|c| c.offload_id == id) else {
+                return Ok(false);
+            };
+            c.offload_id.clear();
+            c.unreturned = false;
+            Ok(true)
         })
         .await;
-        if let Err(e) = released {
-            eprintln!("offload send: roll back: {e:?}");
+        match released {
+            Ok(true) => {
+                if let Err(e) = wipe_secrets(self.layout, self.repo).await {
+                    eprintln!("offload send: roll back: {e:?}");
+                }
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!("offload send: roll back: {e:?}"),
         }
     }
 
@@ -483,9 +487,10 @@ pub async fn send<R: Read + Send + 'static>(
         copy: &copy,
     };
     let mut timings = serde_json::Map::new();
-    let stage = layout.repo_dir(&repo).join(STAGE_DIR);
+    let stage = layout.repo_dir(&repo).join(STAGE_DIR).join(&id);
     let result = job.run(input, &stage, &mut timings).await;
     let _ = tokio::fs::remove_dir_all(&stage).await;
+    let _ = tokio::fs::remove_dir(layout.repo_dir(&repo).join(STAGE_DIR)).await;
     let mut out = match result {
         Ok(out) => out,
         Err(e) => {
@@ -1191,6 +1196,48 @@ mod tests {
         assert_eq!(hooks_blocked(&files).await, Some(files[3].clone()));
         std::fs::write(&files[1], r#"{"disableAllHooks": true}"#).unwrap();
         assert_eq!(hooks_blocked(&files).await, Some(files[1].clone()));
+    }
+
+    #[tokio::test]
+    async fn a_superseded_offload_rolls_back_nothing_of_the_one_that_took_its_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            state: dir.path().join("state"),
+            socket: dir.path().join("offload.sock"),
+            secrets: dir.path().join("secrets"),
+            workspace: dir.path().join("workspace"),
+            home: dir.path().to_path_buf(),
+            tmux: "tmux".into(),
+        };
+        let repo = "0123456789ab";
+        let copy = RepoCopy {
+            name: "gron".into(),
+            offload_id: "new".into(),
+            ..RepoCopy::default()
+        };
+        let held = copy.clone();
+        with_index(&layout, move |index| {
+            index.insert(repo.to_owned(), held);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let secret = layout.secrets_dir(repo).join("token");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, b"s").unwrap();
+        let offload = |id| Offload {
+            layout: &layout,
+            repo,
+            kind: "claude",
+            id,
+            copy: &copy,
+        };
+        offload("old").roll_back().await;
+        let index = read_index(&layout).await.unwrap();
+        assert!(secret.exists() && index[repo].offload_id == "new");
+        offload("new").roll_back().await;
+        let index = read_index(&layout).await.unwrap();
+        assert!(!secret.exists() && index[repo].offload_id.is_empty());
     }
 
     #[test]
