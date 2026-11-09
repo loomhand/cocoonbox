@@ -988,7 +988,6 @@ struct DeliveryReceipt {
 }
 
 impl DeliveryReceipt {
-    /// Reports whether the submission arrived and waits in the channel already.
     fn received(&mut self) -> bool {
         loop {
             match self.receiver.try_recv() {
@@ -1036,7 +1035,6 @@ struct Record {
 }
 
 impl Record {
-    /// The session may take a paste: idle, waiting or blocked, and not holding an unconfirmed one.
     fn deliverable(&self) -> bool {
         self.status.deliverable() && !self.unconfirmed
     }
