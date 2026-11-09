@@ -13,6 +13,7 @@ ROOT_FREE_G=10
 USAGE="usage: cb-image-cut [-p] <release tag> <base template> <vN>"
 
 die() { echo "cb-image-cut: $*" >&2; exit 1; }
+pinned() { echo "$2  $ROOT/vendor/$1" | sha256sum -c --quiet - || die "$ROOT/vendor/$1 is missing or does not match its pin"; }
 
 PROVISION=()
 while getopts p o; do
@@ -46,6 +47,16 @@ git -C "$ROOT/repo.git" merge-base --is-ancestor "$rev" main || die "$TAG ($rev)
 rm -rf "$SRC"
 install -d -m 0700 "$SRC"
 git -C "$ROOT/repo.git" archive "$rev" image | tar -x -C "$SRC"
+SHUTTLE_ARCH=x64
+# shellcheck source=image/desk/shuttle.sh
+. "$SRC/image/desk/shuttle.sh"
+pinned "$SHUTTLE_TARBALL" "$SHUTTLE_SHA256"
+# shellcheck source=image/silkd.sh
+. "$SRC/image/silkd.sh"
+for m in silkd silkd-static; do
+	unpack_silkd "$ROOT/vendor" "$m" "$SRC/$m" || die "$m of $ROOT/vendor/$SILKD_TARBALL is missing or does not match its pin"
+	rm "$SRC/$m"
+done
 install -d "$SRC/image/desk/vendor"
 install -m 0644 "$ROOT"/vendor/*.tar.gz "$SRC/image/desk/vendor/"
 curl -fsSL -o "$SRC/checksums.txt" "https://github.com/$REPO/releases/download/$TAG/checksums.txt"
