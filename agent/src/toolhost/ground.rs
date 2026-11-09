@@ -91,10 +91,14 @@ pub async fn act(
     };
     let k = act::scale(shuttle, owner, &a.session).await?;
     let start = Instant::now();
-    let mut found = scripts
-        .locate(&a.target.description, press)
-        .await
-        .unwrap_or_else(|e| json!({"found": false, "why": e}));
+    let located = scripts.locate(&a.target.description, press).await;
+    if press && let Err(e) = &located {
+        return Ok(Output::error(format!(
+            "the click on {:?} is unconfirmed and was not repeated: {e}; look at the screen before acting again",
+            a.target.description
+        )));
+    }
+    let mut found = located.unwrap_or_else(|e| json!({"found": false, "why": e}));
     timing::mark("a11y");
     let a11y_ms = start.elapsed().as_millis();
     let element = format!(
