@@ -98,8 +98,9 @@ when stdin is one, with this terminal's terminfo for a box that lacks it. The fi
 SIGTERM goes to the command; a second ends rsh, which kills it. rsh wakes a box that is not
 running.
 
-offload and back exit 0 when done, 1 on a failure (nothing changed on this Mac), 3 when the preflight
-blocks, and 4 when it warns and --yes was not given: ask the user, then run again with --yes.
+offload and back exit 0 when done, 1 on a failure (nothing changed on this Mac, unless the connection
+broke during the send), 3 when the preflight blocks, and 4 when it warns and --yes was not given: ask
+the user, then run again with --yes.
 upgrade always asks for --yes; hibernate asks for it while a box agent works on an offloaded task.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
@@ -1240,6 +1241,7 @@ func offloadFailed(_ error: OffloadError, json: Bool) -> Never {
     case .needsYes: 4
     default: 1
     }
+    let kept = if case .sendBroke = error { true } else { false }
     if json {
         printJSON(["ok": false, "code": code == 3 ? "refused" : code == 4 ? "confirm" : "failed", "error": error.description, "findings": findingObjects(error.findings)])
     } else {
@@ -1247,7 +1249,7 @@ func offloadFailed(_ error: OffloadError, json: Bool) -> Never {
         if error.findings.contains(where: { $0.outcome == .block && $0.check.contains("cli") }) {
             print("Open the CocoonBox app: \"Install <CLI> in Box…\" and \"Sign In to <CLI> in the Box…\" are in the Offloaded section's box menu. Or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
         }
-        FileHandle.standardError.write(Data("cocoonbox: \(error)\(code == 1 ? "; nothing changed on this Mac" : "")\n".utf8))
+        FileHandle.standardError.write(Data("cocoonbox: \(error)\(code == 1 && !kept ? "; nothing changed on this Mac" : "")\n".utf8))
     }
     exit(code)
 }

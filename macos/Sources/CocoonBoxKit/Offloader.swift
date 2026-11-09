@@ -7,6 +7,7 @@ public enum OffloadError: Error, CustomStringConvertible {
     case needsYes([Finding])
     case box(code: String, message: String, reply: [String: Any])
     case failed(String)
+    case sendBroke(String)
 
     public var description: String {
         switch self {
@@ -14,7 +15,7 @@ public enum OffloadError: Error, CustomStringConvertible {
         case .refused: "refused by the preflight; nothing changed"
         case .needsYes: "the preflight has warnings; go on only with the user's yes (--yes)"
         case .box(let code, let message, _): "the box said \(code): \(message)"
-        case .failed(let message): message
+        case .failed(let message), .sendBroke(let message): message
         }
     }
 
@@ -206,7 +207,7 @@ public struct Offloader: Sendable {
         } catch {
             let rejected = if case OffloadError.box = error { true } else { false }
             if sending, !rejected {
-                throw OffloadError.failed("the connection broke while the box took the task (\(BoxConnection.describe(error))); check `cocoonbox offload status`, then offload again or bring it back")
+                throw OffloadError.sendBroke("the connection broke while the box took the task (\(BoxConnection.describe(error))); check `cocoonbox offload status`, then offload again or bring it back")
             }
             store.remove(key)
             refs.forEach { ref in _ = try? repo.git("update-ref", "-d", ref) }
