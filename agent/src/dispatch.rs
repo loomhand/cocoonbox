@@ -173,7 +173,7 @@ impl Dispatcher {
             && let Err(e) = pulled
         {
             out.text = format!(
-                "{}\n(the flow library could not be reached, so this box's flows may be out of date: {e})",
+                "{}\n(syncing the flow library failed, so this box's flows may be out of date: {e})",
                 out.text
             );
         }
@@ -393,7 +393,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_flow_call_that_fails_after_a_failed_pull_says_the_library_was_unreachable() {
+    async fn a_flow_call_that_fails_after_a_failed_pull_says_the_library_sync_failed() {
         let (dir, tools, journal, _) = setup();
         let store = Store::open(&dir.path().join("flows.db")).unwrap();
         let sync = Syncer::new("http://127.0.0.1:9/mcp", store, tools.clone()).unwrap();
@@ -415,7 +415,7 @@ mod tests {
         assert!(out.is_error);
         assert!(out.text.starts_with("script_run failed\n"), "{}", out.text);
         assert!(
-            out.text.contains("the flow library could not be reached"),
+            out.text.contains("syncing the flow library failed"),
             "{}",
             out.text
         );

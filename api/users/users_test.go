@@ -13,10 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -800,12 +799,23 @@ func TestPasswordsAndTheUnknownNameCheckHashAtBcryptsDefaultCostUnlessTold(t *te
 			t.Fatalf("Open: %v", err)
 		}
 		t.Cleanup(svc.Close)
-		hash, err := hashPassword(password, svc.passwordCost)
-		if err != nil {
-			t.Fatal(err)
+		storedCost := func() int {
+			_, hash, err := svc.store.password(t.Context(), "qa1")
+			if err != nil {
+				t.Fatalf("read the password: %v", err)
+			}
+			cost, _ := bcrypt.Cost([]byte(hash))
+			return cost
 		}
-		if got, _ := bcrypt.Cost(hash); got != tc.want {
-			t.Errorf("PasswordCost %d: a password hashes at %d, want %d", tc.cost, got, tc.want)
+		u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
+		if got := storedCost(); got != tc.want {
+			t.Errorf("PasswordCost %d: Create hashes at %d, want %d", tc.cost, got, tc.want)
+		}
+		if err := svc.SetPassword(t.Context(), u.ID, password+" again"); err != nil {
+			t.Fatalf("SetPassword: %v", err)
+		}
+		if got := storedCost(); got != tc.want {
+			t.Errorf("PasswordCost %d: SetPassword hashes at %d, want %d", tc.cost, got, tc.want)
 		}
 		if got, _ := bcrypt.Cost(svc.dummyHash); got != tc.want {
 			t.Errorf("PasswordCost %d: the unknown-name check hashes at %d, want %d", tc.cost, got, tc.want)
