@@ -873,7 +873,6 @@ impl Inbox {
             rec.unconfirmed = true;
             self.note_outbox(rec, EntryKind::Blocked, error.clone())
                 .await?;
-            self.save(rec).await?;
             self.publish(rec, None);
         }
         Err(error)
