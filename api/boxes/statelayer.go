@@ -191,6 +191,10 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	if err := l.saves.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	defer l.saves.Release(1)
 	if l.shared == nil || l.versioned == nil {
 		unlock, err := l.lockCommit(ctx, p)
 		if err != nil {
@@ -240,10 +244,6 @@ func (l *stateLayer) lockCommit(ctx context.Context, p statePath) (func(), error
 }
 
 func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, string, head, error) {
-	if err := l.saves.Acquire(ctx, 1); err != nil {
-		return nil, "", head{}, err
-	}
-	defer l.saves.Release(1)
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return nil, "", head{}, fmt.Errorf("state key: %w", err)

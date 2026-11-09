@@ -3,6 +3,7 @@ package boxes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
@@ -172,5 +173,43 @@ func TestASaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothing(t 
 	}
 	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
 		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
+	}
+}
+
+func TestSavesWaitingForTheirCommitKeepTheirSaveSlots(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	layer.shared = clustertest.Open(t)
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	held, err := layer.shared.LockLong(t.Context(), "state:"+alice)
+	if err != nil {
+		t.Fatalf("hold the state lock: %v", err)
+	}
+	release := sync.OnceFunc(held)
+	t.Cleanup(release)
+	planned := func() int {
+		agent.mu.Lock()
+		defer agent.mu.Unlock()
+		return len(agent.planReqs)
+	}
+	done := make(chan error, saveFanout+1)
+	for i := range saveFanout + 1 {
+		p := statePath{user: alice, box: fmt.Sprintf("cb-commit-%d", i)}
+		go func() {
+			_, err := layer.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+			done <- err
+		}()
+	}
+	clustertest.WaitFor(t, "saveFanout plans", func() bool { return planned() == saveFanout })
+	time.Sleep(200 * time.Millisecond)
+	if got := planned(); got != saveFanout {
+		t.Errorf("plans while every commit waits = %d, want %d of %d", got, saveFanout, saveFanout+1)
+	}
+	release()
+	for range saveFanout + 1 {
+		if err := <-done; err != nil {
+			t.Errorf("save: %v", err)
+		}
 	}
 }
