@@ -120,7 +120,10 @@ class Viewer:
         self.sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
         head = b""
         while b"\r\n\r\n" not in head:
-            head += self.sock.recv(1)
+            chunk = self.sock.recv(1)
+            if not chunk:
+                raise EOFError("eof in the upgrade response")
+            head += chunk
         self.status = int(head.split()[1])
         self.buf = b""
         self.ended = None
@@ -259,7 +262,9 @@ def cut_check(what, share, action):
     guest = MCP(f"/cocoonbox.mcp/{share['share']['box_id']}", secret)
     guest.open()
     stream = guest.stream()
-    time.sleep(1)
+    deadline = time.time() + 5
+    while b"\r\n\r\n" not in stream.data and time.time() < deadline:
+        time.sleep(0.02)
     check(reply.get("ok") and stream.ended is None and viewer.ended is None, f"{what}: the page and a guest MCP stream are open")
     started = action()
     mcp_end = stream.wait(5)
@@ -364,14 +369,20 @@ def main():
     worker = MCP(path, named["secret"], os.environ["QA2_TOKEN"])
     worker.open()
     done = {}
+    marker = f"/tmp/share-accept-{os.getpid()}"
 
     def slow():
-        status, out = worker.call("shell", {"command": "sleep 15; echo slept", "timeout_s": 120})
+        status, out = worker.call("shell", {"command": f"touch {marker}; sleep 15; echo slept; rm -f {marker}", "timeout_s": 120})
         done["at"], done["out"] = time.time(), json.dumps(out.get("result", {}))
 
     thread = threading.Thread(target=slow)
     thread.start()
-    time.sleep(2)
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        _, probe = owner.call("shell", {"command": f"test -e {marker} && echo started"})
+        if "started" in json.dumps(probe.get("result", {})):
+            break
+        time.sleep(0.2)
     code, out, err = grpc("QA1_TOKEN", "cocoonbox.control.v1.Boxes/Rebase", {"box_id": box}, box)
     op = json.loads(out or "{}").get("id", "")
     code, events, err = grpc("QA1_TOKEN", "cocoonbox.control.v1.Boxes/WatchOperation", {"operation_id": op}, box)

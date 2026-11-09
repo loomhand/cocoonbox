@@ -97,7 +97,11 @@ def forward(sid, port):
     def serve():
         while True:
             c, _ = ls.accept()
-            s = relay(sid, port)
+            try:
+                s = relay(sid, port)
+            except ConnectionError:
+                c.close()
+                continue
             threading.Thread(target=pipe, args=(c, s), daemon=True).start()
             threading.Thread(target=pipe, args=(s, c), daemon=True).start()
 
