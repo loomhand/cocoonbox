@@ -16,9 +16,10 @@ macos: ## macOS app: build the app and run the swift-testing suite
 app: ## macOS app bundle dist/CocoonBox.app for CB_ENDPOINT, ad hoc signed
 	cd macos && scripts/bundle.sh
 
-image: ## Syntax-check the shell scripts, test cut.sh's dry run (Linux bash) and the package replay (docker)
+image: ## Syntax-check the shell scripts, ruff and pytest the Python, test cut.sh's dry run (Linux bash) and the package replay (docker)
 	git ls-files -z image deploy scripts | xargs -0 awk 'FNR == 1 { if (/^#!.*[\/ ](ba)?sh( |$$)/) print FILENAME; nextfile }' | xargs -n1 bash -n
-	python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" image/cut-proxy.py
+	{ git ls-files '*.py'; git ls-files -z image deploy scripts | xargs -0 awk 'FNR == 1 { if (/^#!.*python/) print FILENAME; nextfile }'; } | sort -u | xargs sh -c 'ruff format --check "$$@" && ruff check "$$@"' ruff
+	python3 -m pytest -q deploy/host/tests
 	bash image/test/cut-dry-run.sh
 	bash image/test/packages.sh
 
