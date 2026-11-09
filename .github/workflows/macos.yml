@@ -29,10 +29,9 @@ jobs:
           echo "CB_TESTING_INTEROP=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/usr/lib" >> "$GITHUB_ENV"
           swift --version
 
-      # the suite runs serially: in parallel on the runner's three cores no test finished in 30 minutes;
-      # the update-rate gate needs a 30 fps synthetic source, which the runner renders at about 18
+      # the suite runs serially: in parallel on the runner's three cores no test finished in 30 minutes
       - name: App build and tests
-        run: make macos MACOS_TEST_ARGS="--no-parallel --skip updateRateAcrossALongPath"
+        run: make macos MACOS_TEST_ARGS="--no-parallel"
 
       - name: Root package builds the Kit and the CLI
         run: bash -c 'source macos/scripts/toolchain.sh && swift build --product CocoonBoxKit && swift build --product CocoonBoxTerminal && swift build --product cocoonbox-cli'

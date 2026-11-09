@@ -106,6 +106,7 @@ check() {
 	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" = masked ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
 	for _ in $(seq 60); do [ -S /run/cocoonbox/desk.sock ] && [ -S /run/cocoonbox/driver.sock ] && break; sleep 0.5; done
+	[ -S /run/cocoonbox/driver.sock ]
 	[ "$(stat -c %a:%U:%G /run/cocoonbox)" = 2750:user:cbagent ]
 	[ "$(stat -c %a:%G /run/cocoonbox/desk.sock)" = 660:cbagent ]
 	[ "$(pgrep -u user -x cua-driver | wc -l)" = 1 ]

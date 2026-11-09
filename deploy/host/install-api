@@ -81,7 +81,7 @@ oauth:
 EOF
 	} > "$E/api.yaml"
 fi
-chmod 0600 "$E"/*
+find "$E" -maxdepth 1 -type f -exec chmod 0600 {} +
 umask 022
 
 install -m 0644 "$SRC/../../api/deploy/cocoonbox-api.service" /etc/systemd/system/cocoonbox-api.service

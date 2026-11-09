@@ -9,7 +9,8 @@ rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
 pkill -u user -x chrome || true
 pkill -u user -x mousepad || true
 pkill -u user -x soffice.bin || true
-sleep 2
+for _ in $(seq 20); do pgrep -u user -x 'chrome|mousepad|soffice.bin' >/dev/null || break; sleep 0.25; done
+! pgrep -u user -x 'chrome|mousepad|soffice.bin' >/dev/null || { echo "seal: chrome, mousepad or soffice.bin still runs" >&2; exit 1; }
 rm -rf /workspace/* /workspace/.[!.]* \
 	/home/user/.config/cocoonbox-chrome /home/user/.config/google-chrome /home/user/.cache/google-chrome /home/user/.cache/fontconfig \
 	/home/user/.config/Mousepad /home/user/.local/share/Mousepad /home/user/.cache/Mousepad /home/user/.local/share/recently-used.xbel \

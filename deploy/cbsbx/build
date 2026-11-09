@@ -8,12 +8,11 @@ SANDBOX=${1:?usage: build <sandbox repo> <commit> <cocoon repo> <commit> <out di
 SANDBOX_REV=${2:?}
 COCOON=${3:?}
 COCOON_REV=${4:?}
-OUT=${5:?}
+OUT=$(mkdir -p "${5:?}" && cd "$5" && pwd)
 GOENV="GOTOOLCHAIN=auto GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64"
 
 W=$(mktemp -d "$OUT.work.XXXXXX")
 trap 'git -C "$SANDBOX" worktree remove --force "$W/sandbox" 2>/dev/null || true; git -C "$COCOON" worktree remove --force "$W/cocoon" 2>/dev/null || true; rm -rf "$W"' EXIT
-mkdir -p "$OUT"
 git -C "$SANDBOX" worktree add --detach "$W/sandbox" "$SANDBOX_REV" >/dev/null
 git -C "$COCOON" worktree add --detach "$W/cocoon" "$COCOON_REV" >/dev/null
 srev=$(git -C "$W/sandbox" rev-parse --short=7 HEAD)

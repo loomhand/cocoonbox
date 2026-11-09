@@ -69,6 +69,7 @@ setup_users() {
 
 install_rootfs() {
 	log "rootfs files"
+	dpkg-divert --quiet --local --rename --add /usr/lib/libreoffice/program/ooenv
 	(cd "$SRC/rootfs" && find . -type f ! -path './etc/skel-cocoonbox/*') | while read -r f; do
 		case "$f" in
 		./usr/local/lib/cocoonbox/* | ./usr/local/bin/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;

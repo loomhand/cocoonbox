@@ -214,6 +214,7 @@ function Agent {
     & sc.exe config $Service obj= $ServiceAccount | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "sc config exit $LASTEXITCODE" }
     & sc.exe failure $Service reset= 0 actions= restart/3000/restart/3000/restart/3000 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc failure exit $LASTEXITCODE" }
     & sc.exe failureflag $Service 1 | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "sc failureflag exit $LASTEXITCODE" }
     $env_ = @(
@@ -233,7 +234,9 @@ function Agent {
     if (-not (Test-Path "$Data\agent.log")) { New-Item -ItemType File "$Data\agent.log" | Out-Null }
     Acl "$Data\agent.log" @('SYSTEM:F', 'Administrators:F', "${ServiceAccount}:M")
     & icacls.exe $Workspace /setowner $BoxUser /T /C /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls $Workspace /setowner exit $LASTEXITCODE" }
     & icacls.exe $Workspace /grant "${BoxUser}:(OI)(CI)F" /Q | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "icacls $Workspace /grant exit $LASTEXITCODE" }
     Start-Service $Service
 }
 
