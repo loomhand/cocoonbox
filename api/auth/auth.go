@@ -220,6 +220,8 @@ func (a *Authenticator) resolve(ctx context.Context, entry Entry, token, refusal
 		return Identity{}, status.Error(codes.Unauthenticated, refusal)
 	case errors.Is(err, ErrNotAllowed):
 		return Identity{}, status.Errorf(codes.PermissionDenied, "this token may not use %s", entry)
+	case err != nil && ctx.Err() != nil:
+		return Identity{}, status.FromContextError(ctx.Err()).Err()
 	case err != nil:
 		log.WithFunc("auth.Authenticator.resolve").Error(ctx, err, "resolve a bearer token")
 		return Identity{}, status.Error(codes.Unavailable, "checking the bearer token failed")
