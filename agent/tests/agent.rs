@@ -2535,9 +2535,14 @@ async fn a_cancel_while_the_turn_waits_for_a_quiesce_ends_it_without_a_model_cal
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     let saving = h.session_save.with_extension("started");
+    let release = h.session_save.with_extension("release");
     write_script(
         &h.session_save,
-        &format!("touch {}; sleep 3", saving.display()),
+        &format!(
+            "touch {}; i=0; while [ ! -e {r} ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done",
+            saving.display(),
+            r = release.display()
+        ),
     );
     let quiesced = {
         let mut state = state_client(&h).await;
@@ -2556,23 +2561,35 @@ async fn a_cancel_while_the_turn_waits_for_a_quiesce_ends_it_without_a_model_cal
         "the quiesce never started"
     );
     send(&mut agents, &agent_id, "hi").await;
-    while !quiesced.is_finished() {
-        agents
-            .cancel(authed(pb::CancelRequest {
-                agent_id: agent_id.clone(),
-            }))
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    quiesced.await.unwrap().unwrap();
+    let canceller = {
+        let mut agents = h.agents().await;
+        let agent_id = agent_id.clone();
+        tokio::spawn(async move {
+            loop {
+                agents
+                    .cancel(authed(pb::CancelRequest {
+                        agent_id: agent_id.clone(),
+                    }))
+                    .await
+                    .unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+    };
     let entries = wait_turn_end(&mut agents, &agent_id).await;
+    canceller.abort();
     let end = turn_end(&entries);
     assert!(!end.ok && end.error == "cancelled", "{end:?}");
+    assert!(
+        !quiesced.is_finished(),
+        "the quiesce ended before the turn did"
+    );
     assert!(
         h.gw_log.lock().unwrap().is_empty(),
         "the cancelled turn called the model"
     );
+    std::fs::write(&release, "").unwrap();
+    quiesced.await.unwrap().unwrap();
 }
 
 #[tokio::test]
