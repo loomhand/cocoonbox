@@ -163,10 +163,20 @@ impl Dispatcher {
             return self.tools.run(owner, name, args).await;
         };
         let plugin = self.plugins.iter().any(|p| p == name);
-        if flows::reads(name, &args) || (plugin && flows::runs_flow(&args)) {
-            sync.pull().await;
+        let pulled = if flows::reads(name, &args) || (plugin && flows::runs_flow(&args)) {
+            sync.pull().await
+        } else {
+            Ok(())
+        };
+        let mut out = self.tools.run(owner, name, args).await;
+        if out.is_error
+            && let Err(e) = pulled
+        {
+            out.text = format!(
+                "{}\n(the flow library could not be reached, so this box's flows may be out of date: {e})",
+                out.text
+            );
         }
-        let out = self.tools.run(owner, name, args).await;
         if flows::writes(name) || plugin {
             sync.kick();
         }
@@ -284,6 +294,7 @@ mod tests {
     #[derive(Default)]
     struct MockTools {
         calls: Mutex<Vec<(String, String, Value)>>,
+        failing: Mutex<Option<String>>,
     }
 
     #[tonic::async_trait]
@@ -293,6 +304,9 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((owner.to_owned(), name.to_owned(), args));
+            if self.failing.lock().unwrap().as_deref() == Some(name) {
+                return ToolOutput::error(format!("{name} failed"));
+            }
             ToolOutput {
                 text: format!("ran {name}"),
                 image: None,
@@ -375,6 +389,29 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e.body, Some(event::Body::ComputerAction(_)))),
             "a live highlight entered the replay ring"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_flow_call_that_fails_after_a_failed_pull_says_the_library_was_unreachable() {
+        let (dir, tools, _journal, dispatcher) = setup();
+        let store = Store::open(&dir.path().join("flows.db")).unwrap();
+        let sync = Syncer::new("http://127.0.0.1:9/mcp", store, tools.clone()).unwrap();
+        let dispatcher = dispatcher.with_flows(Some(Arc::new(sync)));
+        let flow = json!({"script": "flows/a.mts"});
+
+        let out = dispatcher.run("ag", None, "script_run", flow.clone()).await;
+        assert!(!out.is_error);
+        assert_eq!(out.text, "ran script_run");
+
+        *tools.failing.lock().unwrap() = Some("script_run".into());
+        let out = dispatcher.run("ag", None, "script_run", flow).await;
+        assert!(out.is_error);
+        assert!(out.text.starts_with("script_run failed\n"), "{}", out.text);
+        assert!(
+            out.text.contains("the flow library could not be reached"),
+            "{}",
+            out.text
         );
     }
 
