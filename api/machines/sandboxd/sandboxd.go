@@ -660,7 +660,7 @@ func (b *Backend) renewOp(ctx context.Context, stop context.CancelFunc, id, op s
 			return
 		case err == nil:
 			until = next
-		case !time.Now().Add(b.renewEvery).Before(until):
+		case !time.Now().Add(b.renewEvery + b.renewEvery/2).Before(until):
 			logger.Errorf(ctx, err, "stop %s, whose lease runs out unrenewed", op)
 			stop()
 			return
