@@ -14,7 +14,7 @@ import (
 
 const (
 	wakePushTimeout = 30 * time.Second
-	// doorKeyAge bounds how long a door key taken from a node opens its box's door.
+	// doorKeyAge is the age at which a running machine's door key is replaced.
 	doorKeyAge = time.Hour
 )
 
