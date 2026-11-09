@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -107,6 +108,15 @@ func TestAProviderThatCannotAnswerIsUnavailableNotUnauthenticated(t *testing.T) 
 	}
 }
 
+func TestACallerThatLeftDuringAuthIsCanceledNotUnavailable(t *testing.T) {
+	a := WithIdentities(provider{}, nil)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := a.Authenticate(ctx, EntryGRPC, "Bearer ext-slow"); status.Code(err) != codes.Canceled {
+		t.Errorf("a caller that hung up = %v, want Canceled", err)
+	}
+}
+
 func TestCocoonboxsOwnTokensNeverReachTheOutsideProvider(t *testing.T) {
 	outside := &recorder{}
 	a := WithIdentities(Outside(Tokens(anyToken{}), outside), nil)
@@ -157,7 +167,11 @@ func (noToken) ByTokenSHA256(context.Context, string) (string, bool) { return ""
 
 type provider map[string]Identity
 
-func (p provider) Resolve(_ context.Context, token string, entry Entry) (Identity, error) {
+func (p provider) Resolve(ctx context.Context, token string, entry Entry) (Identity, error) {
+	if token == "ext-slow" {
+		<-ctx.Done()
+		return Identity{}, fmt.Errorf("ask the identity webhook: %w", ctx.Err())
+	}
 	if token == "ext-mcp" && entry != EntryMCP {
 		return Identity{}, ErrNotAllowed
 	}
