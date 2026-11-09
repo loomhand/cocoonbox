@@ -618,8 +618,10 @@ final class AppModel {
         if !boxesLive {
             boxesLive = true
             lastError = nil
-            await refreshOffloads()
-            await refreshConnectors()
+            Task {
+                await refreshOffloads()
+                await refreshConnectors()
+            }
         }
         await loadRoutes()
     }
