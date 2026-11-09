@@ -473,6 +473,25 @@ async fn an_unconfirmed_paste_holds_the_queue_until_the_session_takes_a_prompt()
 }
 
 #[tokio::test]
+async fn a_fresh_cli_of_the_repo_starts_without_the_last_unconfirmed_paste() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.hook("claude", "Stop", json!({})).await;
+    let unconfirmed = b
+        .call(json!({"op": "send", "repo": REPO, "body": "SECOND"}))
+        .await;
+    assert_eq!(unconfirmed["delivery"], "unconfirmed", "{unconfirmed}");
+    std::fs::remove_file(b.fake.join(format!("sessions/cb-off-{REPO}-claude"))).unwrap();
+    let restarted = b.call(json!({"op": "restart", "repo": REPO})).await;
+    assert_eq!(restarted["delivery"], "started", "{restarted}");
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(b.layout.repo_dir(REPO).join("session.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(record["unconfirmed"], false, "{record}");
+}
+
+#[tokio::test]
 async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes_one_back() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;

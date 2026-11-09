@@ -456,6 +456,7 @@ impl Inbox {
         .await?;
         rec.status = Status::Working;
         rec.reported = false;
+        rec.unconfirmed = false;
         rec.queue.clear();
         rec.started_at_ms = crate::now_ms();
         rec.prompt_at_ms = rec.started_at_ms;
