@@ -77,6 +77,8 @@ jobs:
           agent_rev=${agent_rev##*+}
           shuttle_version=$(SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "$SHUTTLE_VERSION")
           shuttle_sha=$(SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "$SHUTTLE_SHA256")
+          silkd_version=$(. image/silkd.sh && echo "$SILKD_VERSION")
+          silkd_sha=$(. image/silkd.sh && echo "$SILKD_SHA256")
           echo "$GH_TOKEN" | oras login ghcr.io --registry-config "$cfg" --username "${{ github.actor }}" --password-stdin
           if oras resolve --registry-config "$cfg" "$image:$VERSION" >/dev/null 2>&1; then
             if ! oras manifest fetch --registry-config "$cfg" "$image:$VERSION" | grep -qF "\"io.github.loomhand.cocoonbox.agent-sha256\":\"$agent_sha\""; then
@@ -93,6 +95,8 @@ jobs:
               --annotation "io.github.loomhand.cocoonbox.agent-rev=$agent_rev" \
               --annotation "io.github.loomhand.cocoonbox.shuttle-version=$shuttle_version" \
               --annotation "io.github.loomhand.cocoonbox.shuttle-sha256=$shuttle_sha" \
+              --annotation "io.github.loomhand.cocoonbox.silkd-version=$silkd_version" \
+              --annotation "io.github.loomhand.cocoonbox.silkd-sha256=$silkd_sha" \
               "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
           fi
           oras tag --registry-config "$cfg" "$image:$VERSION" latest

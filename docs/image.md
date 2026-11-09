@@ -27,8 +27,9 @@ A runtime is a directory with a `provision.sh`; each `-r <dir>` copies one into 
 ## Versions and pins
 
 - `<family>:vN` counts up per family and is never re-cut: a fix is a new N. `cbcore:vN` is the template name on the sandboxd host; the published image is `base` (below).
-- A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256 and the shuttle archive's version and sha256. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
+- A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256, the shuttle archive's version and sha256, and silkd's version and the sha256 of its two builds. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
 - A new image becomes a pool default only after a full boot and the box acceptance on a host.
+- `image/silkd.sh` pins silkd as sandbox's own guest images carry it: the silkd carrier image `ghcr.io/cocoonstack/sandbox/silkd` by version and digest, and the sha256 of its `/silkd` (glibc, which `cbcore` takes) and `/silkd-static` (which `cbdroid` takes). `image/silkd.sh fetch image/desk/vendor` packs both next to the shuttle archive; a cut checks the build it installs against its pin.
 
 ## Publishing
 
@@ -37,7 +38,7 @@ cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/.
 - an accepted `cbcore:vN` is published as `ghcr.io/loomhand/cocoonbox/base:vN`, an OCI artifact (`oras push`, one layer of type `application/vnd.loomhand.cocoonbox.rootfs.tar+gzip`), and `latest` moves to it;
 - `vN` is immutable: it is pushed once, never re-tagged, and stays available for a rollback; the workflow refuses a `vN` that already exists, unless it carries this run's agent, in which case a re-run only moves `latest`;
 - `latest` always names the newest accepted `vN`;
-- the manifest's annotations pin the agent and shuttle the image carries (silkd comes from the cutting host's `/srv/cb/sbx/bin/silkd` and is not pinned):
+- the manifest's annotations pin the agent, shuttle and silkd the image carries:
 
   | Annotation | Value |
   |---|---|
@@ -47,9 +48,12 @@ cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/.
   | `io.github.loomhand.cocoonbox.agent-rev` | the revision after `+` in the agent's version (`0.1.0+<rev>`) |
   | `io.github.loomhand.cocoonbox.shuttle-version` | the [loomhand/shuttle](https://github.com/loomhand/shuttle) archive the desk daemon and runtime come from |
   | `io.github.loomhand.cocoonbox.shuttle-sha256` | sha256 of that linux-x64 archive |
+  | `io.github.loomhand.cocoonbox.silkd-version` | the [cocoonstack/sandbox](https://github.com/cocoonstack/sandbox) silkd the image carries |
+  | `io.github.loomhand.cocoonbox.silkd-sha256` | sha256 of that `/usr/local/bin/silkd` |
 
 - a host imports a version as its template: `oras pull ghcr.io/loomhand/cocoonbox/base:vN` and `cocoon image import cbcore:vN cocoonbox-cbcore-vN.tar.gz`;
 - `.github/workflows/image.yml` cuts and publishes on a self-hosted runner labelled `cocoon` on the sandboxd host, installed by `deploy/runner/install`:
   - the runner's job-started hook (`deploy/runner/job-started.sh`) fails every job before its first step unless it is CMGS's dispatch of `image.yml` on main, so no pull request reaches the host;
   - the runner user may run only `cb-image-cut` with sudo; it cuts from a root-owned tree of the release tag, which must be on main, with the release's agent checked against `checksums.txt`, and refuses a `cbcore:vN` that exists or a cbsbx headroom under 35G;
+  - the cut takes the vendor tarballs, shuttle's archive and silkd's, from `/var/lib/cb-image/vendor` on the host; when a pin moves, refresh them on a machine with docker with `image/desk/shuttle.sh fetch <dir>` and `image/silkd.sh fetch <dir>` and copy them there, since the host has no docker and a cut refuses to start without them;
   - the `cut` job leaves `cbcore:vN` and its tarball for the box acceptance on that host; the `publish` job waits for an approval in the `ghcr-publish` environment, checks the tarball's agent against the release again and pushes with the job's `GITHUB_TOKEN` through a registry config under `RUNNER_TEMP`.

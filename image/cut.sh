@@ -35,6 +35,8 @@ cbdesk) echo "family cbdesk is frozen: its boxes keep the agent their image carr
 esac
 TEMPLATE=$FAMILY:$V
 SRC="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=image/silkd.sh
+. "$SRC/silkd.sh"
 if [ "$FAMILY" = cbcore ] && [ ${#RUNTIMES[@]} = 0 ]; then
 	RUNTIMES=("$SRC/desk")
 fi
@@ -85,6 +87,7 @@ if [ "$DRY" = 1 ]; then
 	exit 0
 fi
 
+[ -f "$SRC/desk/vendor/$SILKD_TARBALL" ] || { echo "missing $SRC/desk/vendor/$SILKD_TARBALL: fetch it with image/silkd.sh fetch image/desk/vendor" >&2; exit 1; }
 step "boot $BASE as $VM"
 "$COCOON" vm run --name "$VM" --cpu 4 --memory 8G --storage 40G --nics 0 --no-direct-io "$BASE"
 for _ in $(seq 180); do active && break; sleep 1; done
@@ -137,7 +140,9 @@ guest -i "$VM" -- bash -s < "$SRC/seal.sh"
 step "stop"
 "$COCOON" vm stop "$VM"
 step "export $TARBALL"
-"$SRC/export-rootfs.sh" "$VM" "$S/bin/silkd" "$TARBALL"
+unpack_silkd "$SRC/desk/vendor" silkd "$TARBALL.silkd"
+"$SRC/export-rootfs.sh" "$VM" "$TARBALL.silkd" "$TARBALL"
+rm "$TARBALL.silkd"
 "$COCOON" vm rm "$VM"
 step "import"
 "$COCOON" image import "$TEMPLATE" "$TARBALL"
