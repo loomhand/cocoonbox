@@ -111,6 +111,10 @@ func (e *entry) state() (machines.State, string) {
 	}
 }
 
+func (e *entry) failedOnLiveClaim() bool {
+	return e.opErr != "" && e.row != nil && !e.row.Hibernated && !e.row.Archived && e.row.Failed == ""
+}
+
 // sandbox is the id of e's claim, "" for none or a nil e.
 func (e *entry) sandbox() string {
 	if e == nil || e.row == nil {

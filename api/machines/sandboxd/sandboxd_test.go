@@ -650,6 +650,29 @@ func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	}
 }
 
+func TestAHibernateThatFailedOnALiveClaimRunsAgain(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateFails = 1
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateFailed)
+	h, err = b.Hibernate(t.Context(), boxID)
+	if err != nil || h.State != machines.StateHibernating {
+		t.Fatalf("Hibernate after a failed hibernate = %+v, %v, want hibernating", h, err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	if got := fake.count("hibernate"); got != 2 {
+		t.Errorf("hibernates = %d, want 2", got)
+	}
+}
+
 func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -1922,6 +1945,7 @@ type fakeSandboxd struct {
 	patchStatus    int
 	getStatus      int
 	refusals       int
+	hibernateFails int
 	hold           chan struct{}
 	agent          string
 	tenants        map[string]tenantRequest
@@ -2086,6 +2110,11 @@ func (f *fakeSandboxd) handler() http.Handler {
 		case "wake":
 			sb.row.Hibernated, sb.row.Archived, sb.row.Failed = false, false, ""
 		case "hibernate":
+			if f.hibernateFails > 0 {
+				f.hibernateFails--
+				writeError(w, http.StatusInternalServerError, "hibernate failed")
+				return
+			}
 			sb.row.Hibernated = true
 		case "release":
 			delete(f.sandboxes, sb.row.ID)

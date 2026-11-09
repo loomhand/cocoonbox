@@ -286,6 +286,19 @@ func TestSupersededOperationFails(t *testing.T) {
 	}
 }
 
+func TestHibernateAllHibernatesABoxWhoseHibernateFailed(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateFailed, Detail: "hibernate failed", Revision: 1})
+	svc := newService(fake, testDefaults, newFakeRegistry())
+
+	if err := svc.HibernateAll(t.Context(), alice); err != nil {
+		t.Fatalf("HibernateAll = %v", err)
+	}
+	if m, _ := fake.Get(t.Context(), aliceBox); m.State != machines.StateHibernating {
+		t.Errorf("the box after HibernateAll is %v, want hibernating", m.State)
+	}
+}
+
 func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
