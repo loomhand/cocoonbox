@@ -1037,22 +1037,29 @@ func (b *Backend) snapshot(ctx context.Context) (map[string]*entry, error) {
 	return known, nil
 }
 
-// index applies the rows node addr lists to the machines of known whose claim they are; a row moves a machine to addr only from node from, where the backend itself followed the claim from, and only while the machine is still there.
+// index applies the rows node addr lists to the machines of known whose claim they are, or that have no claim and no live op and whose user's tenant holds the row; a row moves a machine to addr only from node from, where the backend itself followed the claim from, and only while the machine is still there.
 func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[string]*entry, from string) error {
-	placed := func(e *entry, sandbox string) bool {
-		return sandbox != "" && e.sandbox() == sandbox && (e.ownerAddr == addr || from != "" && e.ownerAddr == from)
+	now := time.Now()
+	placed := func(e *entry, r row) bool {
+		if e == nil || r.ID == "" {
+			return false
+		}
+		if e.row == nil {
+			return r.Tenant != "" && r.Tenant == e.owner && !e.busy(now)
+		}
+		return e.row.ID == r.ID && (e.ownerAddr == addr || from != "" && e.ownerAddr == from)
 	}
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
 		e := known[id]
-		if !placed(e, r.ID) {
+		if !placed(e, r) {
 			continue
 		}
-		if reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
+		if e.row != nil && reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
 			continue
 		}
 		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
-			if !placed(e, r.ID) {
+			if !placed(e, r) {
 				return e, false
 			}
 			cur := r
