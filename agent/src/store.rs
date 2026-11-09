@@ -219,23 +219,23 @@ impl Store {
         .await
     }
 
-    /// Deletes agents named `prefix*` that are neither running nor waiting and were last
+    /// Deletes agents of main model `model` that are neither running nor waiting and were last
     /// updated before `before_ms`, with their turns and entries; returns their ids.
     pub async fn prune_agents(
         &self,
-        prefix: String,
+        model: &'static str,
         before_ms: i64,
     ) -> Result<Vec<String>, String> {
         self.call(move |c| {
             let tx = c.transaction()?;
             let ids: Vec<String> = {
                 let mut stmt = tx.prepare(
-                    "SELECT id FROM agents WHERE substr(name, 1, length(?1)) = ?1
+                    "SELECT id FROM agents WHERE main_model = ?1
                      AND status NOT IN (?2, ?3) AND updated_at_ms < ?4",
                 )?;
                 let rows = stmt.query_map(
                     params![
-                        prefix,
+                        model,
                         i32::from(AgentStatus::Running),
                         i32::from(AgentStatus::WaitingForUser),
                         before_ms
@@ -521,6 +521,29 @@ mod tests {
             .await
             .unwrap()
             .id
+    }
+
+    #[tokio::test]
+    async fn prune_takes_only_mcp_agents_whatever_an_owner_agent_is_named() {
+        let (_dir, s) = open();
+        let owner = s
+            .create_agent("mcp: fix the build".into(), "m".into())
+            .await
+            .unwrap();
+        let mcp = s
+            .create_agent("mcp:client@sh-1".into(), "external".into())
+            .await
+            .unwrap();
+        let pruned = s.prune_agents("external", i64::MAX).await.unwrap();
+        assert_eq!(pruned, [mcp.id]);
+        let left: Vec<String> = s
+            .list_agents()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        assert_eq!(left, [owner.id]);
     }
 
     #[tokio::test]

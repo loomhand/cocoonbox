@@ -31,6 +31,7 @@ pub const PATH: &str = "/mcp";
 
 const SESSION_HEADER: &str = "mcp-session-id";
 const AGENT_PREFIX: &str = "mcp:";
+const EXTERNAL_MODEL: &str = "external";
 const PROTOCOLS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const FALLBACK_PROTOCOL: &str = "2025-06-18";
 const KEEPALIVE: Duration = Duration::from_secs(25);
@@ -147,7 +148,7 @@ impl Mcp {
             .with_state(self)
     }
 
-    /// Closes idle sessions and prunes closed `mcp:*` agents until the process exits.
+    /// Closes idle sessions and prunes closed MCP agents until the process exits.
     pub fn spawn_reaper(self: &Arc<Self>) {
         let mcp = Arc::clone(self);
         let period = (self.idle / 2).min(MAX_REAP_PERIOD);
@@ -203,7 +204,7 @@ impl Mcp {
         }
     }
 
-    /// Deletes closed `mcp:*` agents untouched for longer than the prune age.
+    /// Deletes closed MCP agents untouched for longer than the prune age.
     async fn prune(&self) {
         let age = i64::try_from(self.rt.cfg.mcp_prune_after.as_millis()).unwrap_or(i64::MAX);
         let before = crate::now_ms().saturating_sub(age);
@@ -211,7 +212,7 @@ impl Mcp {
             .rt
             .journal
             .store
-            .prune_agents(AGENT_PREFIX.to_owned(), before)
+            .prune_agents(EXTERNAL_MODEL, before)
             .await
         {
             Ok(ids) if !ids.is_empty() => {
@@ -321,7 +322,7 @@ impl Mcp {
                 let agent = self
                     .rt
                     .journal
-                    .create(name, "external".to_owned())
+                    .create(name, EXTERNAL_MODEL.to_owned())
                     .await
                     .map_err(internal)?;
                 let turn_id = self
