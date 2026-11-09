@@ -3,6 +3,7 @@ package connect
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -79,6 +80,14 @@ type conn struct {
 type credential struct {
 	header string
 	value  string
+}
+
+func keyCredential(header, key string) credential {
+	header = cmp.Or(header, headerAuthorization)
+	if strings.EqualFold(header, headerAuthorization) && !strings.Contains(key, " ") {
+		key = "Bearer " + key
+	}
+	return credential{header: header, value: key}
 }
 
 type upstream struct {

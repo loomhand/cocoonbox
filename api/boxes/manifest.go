@@ -23,7 +23,6 @@ import (
 
 const (
 	manifestVersion = 1
-	manifestLimit   = 256 << 20
 	nonceSize       = 12
 
 	kindFile    = "file"
@@ -32,6 +31,8 @@ const (
 )
 
 var (
+	manifestLimit int64 = 256 << 20
+
 	errBadPath = errors.New("invalid box path")
 
 	idLabel   = []byte("cocoonbox state chunk id v1")

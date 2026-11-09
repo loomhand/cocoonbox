@@ -120,6 +120,8 @@ func TestGCCompactsDeltaManifestsAndRebuildsThemExactly(t *testing.T) {
 }
 
 func TestGCKeepsFullManifestWhenDeltaExceedsRestoreLimit(t *testing.T) {
+	defer func(limit int64) { manifestLimit = limit }(manifestLimit)
+	manifestLimit = 4 * mib
 	env := newDeltaEnv(t)
 	p := statePath{user: alice, box: aliceBox}
 	key, _ := env.keys.StateKey(env.ctx, alice)
@@ -132,7 +134,7 @@ func TestGCKeepsFullManifestWhenDeltaExceedsRestoreLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := make([]manifestFile, (manifestLimit-mib)/(len(raw)+1))
+	files := make([]manifestFile, (manifestLimit-manifestLimit/256)/int64(len(raw)+1))
 	f.MtimeMs++
 	for i := range files {
 		files[i] = f
@@ -148,7 +150,7 @@ func TestGCKeepsFullManifestWhenDeltaExceedsRestoreLimit(t *testing.T) {
 		t.Fatalf("compacted %d; full %v, delta %v", r.compacted, env.store.has(p.manifest(id)), env.store.has(p.manifest(id)+deltaSuffix))
 	}
 	plain, err := env.svc.state.manifestPlain(env.ctx, p, key, id)
-	if err != nil || len(plain) > manifestLimit || !matchesID(key.Secret, id, plain) {
+	if err != nil || int64(len(plain)) > manifestLimit || !matchesID(key.Secret, id, plain) {
 		t.Fatalf("kept manifest has %d bytes: %v", len(plain), err)
 	}
 }
