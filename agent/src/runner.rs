@@ -544,7 +544,6 @@ impl Runtime {
             Ok(None) => return,
             Err(_) => self.cfg.model_main.clone(),
         };
-        let gate = Arc::clone(&self.turns).read_owned().await;
         let cancel = CancellationToken::new();
         {
             let mut state = lock(&slot.state);
@@ -553,6 +552,10 @@ impl Runtime {
             }
             state.cancel = Some(cancel.clone());
         }
+        let gate = tokio::select! {
+            g = Arc::clone(&self.turns).read_owned() => Some(g),
+            () = cancel.cancelled() => None,
+        };
         let ctx = TurnCtx {
             agent_id: agent_id.to_owned(),
             turn_id,
@@ -560,7 +563,7 @@ impl Runtime {
             blocks: AtomicU32::new(1),
             model,
             slot,
-            gate: Mutex::new(Some(gate)),
+            gate: Mutex::new(gate),
             checkpoint: self.cfg.checkpoint_nudge.map(|after| {
                 Mutex::new(Checkpoint {
                     start: Instant::now(),
@@ -573,10 +576,14 @@ impl Runtime {
             .set_status(agent_id, AgentStatus::Running)
             .await;
         let mut usage = Tally::default();
-        let result = tokio::select! {
-            r = self.main_loop(&ctx, &mut usage) => r,
-            () = cancel.cancelled() => Err("cancelled".to_owned()),
-            () = self.stop.cancelled() => Err(SHUTTING_DOWN.to_owned()),
+        let result = if cancel.is_cancelled() {
+            Err("cancelled".to_owned())
+        } else {
+            tokio::select! {
+                r = self.main_loop(&ctx, &mut usage) => r,
+                () = cancel.cancelled() => Err("cancelled".to_owned()),
+                () = self.stop.cancelled() => Err(SHUTTING_DOWN.to_owned()),
+            }
         };
         {
             let mut state = lock(&ctx.slot.state);

@@ -2530,6 +2530,52 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 }
 
 #[tokio::test]
+async fn a_cancel_while_the_turn_waits_for_a_quiesce_ends_it_without_a_model_call() {
+    let h = Harness::start(vec![("chat/completions", chat_text("ran"))]).await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    let saving = h.session_save.with_extension("started");
+    write_script(
+        &h.session_save,
+        &format!("touch {}; sleep 3", saving.display()),
+    );
+    let quiesced = {
+        let mut state = state_client(&h).await;
+        tokio::spawn(async move {
+            state
+                .plan(authed(pb::PlanRequest {
+                    key: Some(state_key()),
+                    consistency: pb::Consistency::Quiesced.into(),
+                    parent: String::new(),
+                }))
+                .await
+        })
+    };
+    assert!(
+        wait_until(Duration::from_secs(2), || saving.exists()).await,
+        "the quiesce never started"
+    );
+    send(&mut agents, &agent_id, "hi").await;
+    while !quiesced.is_finished() {
+        agents
+            .cancel(authed(pb::CancelRequest {
+                agent_id: agent_id.clone(),
+            }))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    quiesced.await.unwrap().unwrap();
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let end = turn_end(&entries);
+    assert!(!end.ok && end.error == "cancelled", "{end:?}");
+    assert!(
+        h.gw_log.lock().unwrap().is_empty(),
+        "the cancelled turn called the model"
+    );
+}
+
+#[tokio::test]
 async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it() {
     let h = Harness::start(vec![
         (
