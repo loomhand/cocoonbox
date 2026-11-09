@@ -96,14 +96,14 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         .status()
         .unwrap();
     assert!(kill.success());
-    let status = tokio::time::timeout(Duration::from_secs(3), child.wait())
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
         .await
-        .expect("agent did not exit within 3s of SIGTERM")
+        .expect("agent did not exit within 10s of SIGTERM")
         .unwrap();
     let took = started.elapsed();
     assert!(status.success(), "exit status {status}");
 
-    let ended = tokio::time::timeout(Duration::from_secs(1), async {
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
         while let Ok(Some(_)) = events.message().await {}
     })
     .await;

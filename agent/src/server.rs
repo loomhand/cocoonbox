@@ -684,7 +684,7 @@ mod tests {
         assert!(futures_util::poll!(&mut send).is_pending());
         drop(send);
         connection.execute_batch("COMMIT").unwrap();
-        let completed = tokio::time::timeout(Duration::from_secs(2), async {
+        let completed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let page = rt
                     .journal

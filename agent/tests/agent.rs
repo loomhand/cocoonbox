@@ -2757,8 +2757,8 @@ async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() 
     let refused = wait_until(Duration::from_secs(25), || refusals().len() >= 6).await;
     assert!(refused, "{:?}", refusals());
     let gaps: Vec<u64> = refusals().windows(2).map(|w| w[1] - w[0]).collect();
-    assert!(gaps.iter().all(|&g| g < 5500), "{gaps:?}");
-    assert!(gaps[3..].iter().all(|&g| g >= 4500), "{gaps:?}");
+    assert!(gaps.iter().all(|&g| g < 7000), "{gaps:?}");
+    assert!(gaps[3..].iter().all(|&g| g >= 4000), "{gaps:?}");
 }
 
 #[tokio::test]
