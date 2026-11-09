@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"testing"
@@ -97,6 +98,32 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 	slices.Sort(pushed)
 	if want := []string{aliceBox, aliceBox + "-2", BoxID(bob)}; !slices.Equal(pushed, want) {
 		t.Errorf("pushed to %v, want %v", pushed, want)
+	}
+}
+
+func TestRefreshRotatesOnlyAStaleDoorKeyOfTheCurrentIncarnation(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
+	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateRunning, Incarnation: "vm2"})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1"})
+	conn := &fakeConnect{stale: map[string]string{aliceBox: "vm1", aliceBox + "-2": "vm1"}}
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	svc.EnableConnect(conn)
+
+	svc.refreshCredentials(t.Context())
+	doors := map[string]string{}
+	for _, c := range fake.credCalls() {
+		if c.secrets["GH_GIT"] == "" {
+			t.Errorf("push to %s = %+v, want the owner's credentials", c.machine, c.secrets)
+		}
+		doors[c.machine] = c.secrets[connectKeyEnv]
+	}
+	want := map[string]string{aliceBox: "Bearer door:" + aliceBox + ":vm1:rotated", aliceBox + "-2": "", BoxID(bob): ""}
+	if !maps.Equal(doors, want) {
+		t.Errorf("door keys pushed = %v, want %v", doors, want)
+	}
+	if rotated := conn.rotations(); !slices.Equal(rotated, []string{aliceBox}) {
+		t.Errorf("rotated = %v, want %s only", rotated, aliceBox)
 	}
 }
 
@@ -211,12 +238,14 @@ func waitCreds(t *testing.T, fake *fakeMachines, n int) []credCall {
 type fakeConnect struct {
 	keyErr error
 	gate   chan struct{}
+	stale  map[string]string
 
 	mu      sync.Mutex
 	reads   []string
 	dropped []string
 	live    []string
 	prunes  int
+	rotated []string
 }
 
 func (c *fakeConnect) DoorKey(_ context.Context, machine, _, incarnation string) (string, error) {
@@ -241,6 +270,17 @@ func (c *fakeConnect) PruneDoorKeys(_ context.Context, live []string, _ time.Tim
 	return 0, nil
 }
 
+func (c *fakeConnect) StaleDoorKeys(context.Context, time.Duration) (map[string]string, error) {
+	return c.stale, nil
+}
+
+func (c *fakeConnect) RotateDoorKey(_ context.Context, machine, _, incarnation string, push func(key string) error) error {
+	c.mu.Lock()
+	c.rotated = append(c.rotated, machine)
+	c.mu.Unlock()
+	return push("door:" + machine + ":" + incarnation + ":rotated")
+}
+
 func (c *fakeConnect) Credentials(ctx context.Context, owner string) (machines.Credentials, error) {
 	if c.gate != nil {
 		select {
@@ -262,6 +302,12 @@ func (c *fakeConnect) owners() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Sorted(slices.Values(c.reads))
+}
+
+func (c *fakeConnect) rotations() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.rotated)
 }
 
 func (c *fakeConnect) doorKeys() ([]string, []string) {

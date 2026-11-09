@@ -31,6 +31,24 @@ func (s *Service) DoorKey(ctx context.Context, machine, owner, incarnation strin
 	return key, nil
 }
 
+// StaleDoorKeys maps each machine whose newest door key is older than age to that key's incarnation.
+func (s *Service) StaleDoorKeys(ctx context.Context, age time.Duration) (map[string]string, error) {
+	return s.store.staleDoorKeys(ctx, age)
+}
+
+// RotateDoorKey issues machine's incarnation a new door key beside its current ones, hands it to push, and drops the incarnation's other keys once push succeeds.
+func (s *Service) RotateDoorKey(ctx context.Context, machine, owner, incarnation string, push func(key string) error) error {
+	key := randomToken()
+	hash := utils.HashHex(key)
+	if err := s.store.addDoorKey(ctx, hash, machine, owner, incarnation); err != nil {
+		return err
+	}
+	if err := push(key); err != nil {
+		return err
+	}
+	return s.store.keepDoorKey(ctx, machine, incarnation, hash)
+}
+
 // DropDoorKey deletes the door key of machine, which is gone.
 func (s *Service) DropDoorKey(ctx context.Context, machine string) error {
 	return s.store.dropDoorKeys(ctx, machine)

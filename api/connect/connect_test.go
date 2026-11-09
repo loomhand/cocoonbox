@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1259,6 +1260,59 @@ func TestDoorKeysGoWithTheirMachineAndPruneKeepsLiveAndNewerOnes(t *testing.T) {
 	}
 	if n, err := env.svc.PruneDoorKeys(t.Context(), nil, cutoff); err != nil || n != 0 {
 		t.Errorf("PruneDoorKeys without machines = %d, %v, want 0", n, err)
+	}
+}
+
+func TestARotatedDoorKeyOverlapsTheOldOneUntilItsPushLands(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	srv := httptest.NewServer(env.svc.NewBoxDoor(fakeAuthn{}))
+	t.Cleanup(srv.Close)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + listItems + `","arguments":{}}}`
+	door := func(key string) int { return post(t, srv.URL, "Bearer "+key, body).StatusCode }
+	old, err := env.svc.DoorKey(t.Context(), "cb-m1", alice, "inc1")
+	if err != nil {
+		t.Fatalf("DoorKey: %v", err)
+	}
+	if _, err := env.svc.DoorKey(t.Context(), "cb-m2", alice, "inc1"); err != nil {
+		t.Fatalf("DoorKey cb-m2: %v", err)
+	}
+	if stale, err := env.svc.StaleDoorKeys(t.Context(), time.Hour); err != nil || len(stale) != 0 {
+		t.Fatalf("StaleDoorKeys of fresh keys = %v, %v, want none", stale, err)
+	}
+	var aged int
+	if err := env.row(t, "WITH u AS (UPDATE connect_door_keys SET created_at = now() - interval '2 hours' WHERE machine_id = 'cb-m1' RETURNING 1) SELECT count(*) FROM u").Scan(&aged); err != nil || aged != 1 {
+		t.Fatalf("age the key of cb-m1 = %d, %v", aged, err)
+	}
+	if stale, err := env.svc.StaleDoorKeys(t.Context(), time.Hour); err != nil || !maps.Equal(stale, map[string]string{"cb-m1": "inc1"}) {
+		t.Fatalf("StaleDoorKeys = %v, %v, want cb-m1 of inc1", stale, err)
+	}
+	pushErr := errors.New("node down")
+	var failed string
+	if err := env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc1", func(key string) error { failed = key; return pushErr }); !errors.Is(err, pushErr) {
+		t.Fatalf("RotateDoorKey with a failed push = %v, want %v", err, pushErr)
+	}
+	if got := door(old); got != http.StatusOK {
+		t.Errorf("old key after a failed push = %d, want 200", got)
+	}
+	var cur string
+	err = env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc1", func(key string) error {
+		cur = key
+		if o, n := door(old), door(key); o != http.StatusOK || n != http.StatusOK {
+			t.Errorf("during the push: old key %d, new key %d, want both 200", o, n)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RotateDoorKey: %v", err)
+	}
+	for key, want := range map[string]int{old: http.StatusUnauthorized, failed: http.StatusUnauthorized, cur: http.StatusOK} {
+		if got := door(key); got != want {
+			t.Errorf("after the rotation, key %.8s = %d, want %d", key, got, want)
+		}
+	}
+	if stale, err := env.svc.StaleDoorKeys(t.Context(), time.Hour); err != nil || len(stale) != 0 {
+		t.Errorf("StaleDoorKeys after the rotation = %v, %v, want none", stale, err)
 	}
 }
 

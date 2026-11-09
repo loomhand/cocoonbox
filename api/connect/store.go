@@ -322,6 +322,42 @@ func (s *store) putDoorKey(ctx context.Context, keySHA256, machine, user, incarn
 	})
 }
 
+func (s *store) addDoorKey(ctx context.Context, keySHA256, machine, user, incarnation string) error {
+	if _, err := s.pool.Exec(ctx, "INSERT INTO connect_door_keys (key_sha256, machine_id, user_id, incarnation) VALUES ($1, $2, $3, $4)",
+		keySHA256, machine, user, incarnation); err != nil {
+		return fmt.Errorf("store door key: %w", err)
+	}
+	return nil
+}
+
+// keepDoorKey drops the door keys of machine's incarnation other than keySHA256.
+func (s *store) keepDoorKey(ctx context.Context, machine, incarnation, keySHA256 string) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id = $1 AND incarnation = $2 AND key_sha256 <> $3",
+		machine, incarnation, keySHA256); err != nil {
+		return fmt.Errorf("drop superseded door keys: %w", err)
+	}
+	return nil
+}
+
+func (s *store) staleDoorKeys(ctx context.Context, age time.Duration) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT machine_id, incarnation FROM (
+		SELECT DISTINCT ON (machine_id) machine_id, incarnation, created_at FROM connect_door_keys ORDER BY machine_id, created_at DESC
+	) newest WHERE created_at < now() - make_interval(secs => $1)`, age.Seconds())
+	if err != nil {
+		return nil, fmt.Errorf("list stale door keys: %w", err)
+	}
+	stale := map[string]string{}
+	var machine, incarnation string
+	_, err = pgx.ForEachRow(rows, []any{&machine, &incarnation}, func() error {
+		stale[machine] = incarnation
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list stale door keys: %w", err)
+	}
+	return stale, nil
+}
+
 // doorKey returns the user and machine of the door key whose hash is keySHA256.
 func (s *store) doorKey(ctx context.Context, keySHA256 string) (string, string, error) {
 	var user, machine string
