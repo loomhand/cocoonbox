@@ -332,11 +332,11 @@ impl Inbox {
                 .await?;
             tokio::time::sleep(PASTE_SETTLE).await;
         }
-        if interrupt || (rec.status.deliverable() && rec.queue.is_empty()) {
+        if interrupt || (rec.deliverable() && rec.queue.is_empty()) {
             self.deliver(rec, &body).await
         } else {
             rec.queue.push(body);
-            if rec.status.deliverable() {
+            if rec.deliverable() {
                 self.deliver_later(rec.repo.clone());
             }
             Ok(Delivery::Queued)
@@ -731,6 +731,7 @@ impl Inbox {
         } else {
             None
         };
+        rec.unconfirmed &= hook != "UserPromptSubmit";
         rec.status = match hook {
             "UserPromptSubmit" => Status::Working,
             "Notification" if before == Status::Blocked => Status::Blocked,
@@ -751,7 +752,7 @@ impl Inbox {
         if rec.status != before {
             self.publish(rec, None);
         }
-        if rec.status.deliverable() && !rec.queue.is_empty() {
+        if rec.deliverable() && !rec.queue.is_empty() {
             self.deliver_later(rec.repo.clone());
         }
         Ok(())
@@ -790,7 +791,7 @@ impl Inbox {
             let Some(rec) = recs.get_mut(&repo) else {
                 return;
             };
-            if !rec.status.deliverable() || rec.queue.is_empty() {
+            if !rec.deliverable() || rec.queue.is_empty() {
                 return;
             }
             let body = rec.queue.remove(0);
@@ -859,13 +860,16 @@ impl Inbox {
             "Claude Code did not confirm the exact pasted message within {SUBMIT_WAIT:?}; delivery is unconfirmed. It may already be processing a prompt combined with existing input. No automatic retry was made. Before retrying, replace BOX_ID and inspect with: cocoonbox rsh --box BOX_ID tmux capture-pane -p -t {session} -S -80"
         );
         let mut recs = self.records.lock().await;
+        if receipt.received() {
+            return Ok(());
+        }
         if let Some(rec) = recs.get_mut(&receipt.repo)
             && rec.offload_id == receipt.offload_id
             && rec.prompt_at_ms == receipt.prompt_at_ms
             && rec.status == Status::Working
         {
-            // the queue stays paused: another paste could append to unsubmitted input
             rec.status = Status::Blocked;
+            rec.unconfirmed = true;
             self.note_outbox(rec, EntryKind::Blocked, error.clone())
                 .await?;
             self.save(rec).await?;
@@ -983,6 +987,17 @@ struct DeliveryReceipt {
 }
 
 impl DeliveryReceipt {
+    /// Reports whether the submission arrived and waits in the channel already.
+    fn received(&mut self) -> bool {
+        loop {
+            match self.receiver.try_recv() {
+                Ok((repo, digest)) if repo == self.repo && digest == self.digest => return true,
+                Ok(_) | Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => return false,
+            }
+        }
+    }
+
     async fn wait(&mut self) -> Result<(), broadcast::error::RecvError> {
         loop {
             match self.receiver.recv().await {
@@ -1014,9 +1029,17 @@ struct Record {
     /// The last prompt the inbox gave the CLI.
     #[serde(default)]
     prompt_at_ms: i64,
+    /// The CLI never reported taking the last paste, which may still sit in its input.
+    #[serde(default)]
+    unconfirmed: bool,
 }
 
 impl Record {
+    /// The session may take a paste: idle, waiting or blocked, and not holding an unconfirmed one.
+    fn deliverable(&self) -> bool {
+        self.status.deliverable() && !self.unconfirmed
+    }
+
     fn tmux(&self) -> String {
         tmux_session(&self.repo, &self.cli)
     }
@@ -1676,6 +1699,27 @@ mod tests {
             receipt.wait().await,
             Err(broadcast::error::RecvError::Closed)
         );
+    }
+
+    #[test]
+    fn a_receipt_finds_a_submission_already_in_its_channel() {
+        let (submitted, receiver) = broadcast::channel(4);
+        let mut receipt = DeliveryReceipt {
+            repo: "repo".into(),
+            offload_id: "offload".into(),
+            prompt_at_ms: 1,
+            digest: prompt_digest("SECOND"),
+            receiver,
+        };
+        assert!(!receipt.received());
+        submitted
+            .send(("other".into(), prompt_digest("SECOND")))
+            .unwrap();
+        assert!(!receipt.received());
+        submitted
+            .send(("repo".into(), prompt_digest("SECOND")))
+            .unwrap();
+        assert!(receipt.received());
     }
 
     #[test]

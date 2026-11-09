@@ -436,6 +436,43 @@ async fn a_queued_back_without_confirmation_wakes_outbox_readers() {
 }
 
 #[tokio::test]
+async fn an_unconfirmed_paste_holds_the_queue_until_the_session_takes_a_prompt() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    b.call(json!({"op": "send", "repo": REPO, "body": "", "back": true}))
+        .await;
+    b.call(json!({"op": "send", "repo": REPO, "body": "AFTER"}))
+        .await;
+    b.hook("claude", "Stop", json!({})).await;
+    until("the BACK to go unconfirmed", || {
+        std::fs::read_to_string(b.layout.repo_dir(REPO).join("session.json"))
+            .is_ok_and(|r| r.contains("\"unconfirmed\":true"))
+    })
+    .await;
+    let waiting = b
+        .hook(
+            "claude",
+            "Notification",
+            json!({"message": "Claude is waiting for your input"}),
+        )
+        .await;
+    assert_eq!(waiting["status"], "blocked", "{waiting}");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(b.tmux_log().matches("load-buffer").count(), 1);
+    b.hook(
+        "claude",
+        "UserPromptSubmit",
+        json!({"prompt": "the BACK and what was typed"}),
+    )
+    .await;
+    b.hook("claude", "Stop", json!({})).await;
+    until("AFTER to be pasted", || {
+        std::fs::read_to_string(b.fake.join("buffer")).unwrap_or_default() == "AFTER"
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes_one_back() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;
