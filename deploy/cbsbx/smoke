@@ -84,9 +84,11 @@ def relay(sid, port):
     while b"\r\n\r\n" not in head:
         d = s.recv(1)
         if not d:
+            s.close()
             raise ConnectionError("relay closed during upgrade")
         head += d
     if b" 101 " not in head.split(b"\r\n")[0]:
+        s.close()
         raise ConnectionError(head.split(b"\r\n")[0].decode())
     return s
 
@@ -110,7 +112,7 @@ def forward(sid, port):
             c, _ = ls.accept()
             try:
                 s = relay(sid, port)
-            except ConnectionError:
+            except OSError:
                 c.close()
                 continue
             threading.Thread(target=pipe, args=(c, s), daemon=True).start()
