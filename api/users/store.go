@@ -30,8 +30,13 @@ const (
 	boxColumns = "id, owner, name, agent, created_at, vcpus, memory_mib, disk_gib"
 )
 
-//go:embed migrations/*.sql
-var migrations embed.FS
+var (
+	// Migrations is the users tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: "schema_migrations", Lock: migrationLock}
+
+	//go:embed migrations/*.sql
+	migrations embed.FS
+)
 
 // store keeps the users tables in PostgreSQL.
 type store struct {
@@ -40,7 +45,7 @@ type store struct {
 }
 
 func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}

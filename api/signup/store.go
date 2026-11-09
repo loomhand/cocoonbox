@@ -27,6 +27,9 @@ const (
 var (
 	errNoInvite = errors.New("no usable invite")
 
+	// Migrations is the signup tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: "signup_schema_migrations", Lock: migrationLock}
+
 	//go:embed migrations/*.sql
 	migrations embed.FS
 )
@@ -44,7 +47,7 @@ type store struct {
 }
 
 func openStore(ctx context.Context, dsn string) (*store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "signup_schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}

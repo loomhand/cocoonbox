@@ -16,6 +16,7 @@ LoadCredential=pg.dsn:/etc/cocoonbox/pg.dsn
 LoadCredential=master.key:/etc/cocoonbox/master.key
 StateDirectory=cocoonbox-api
 StateDirectoryMode=0700
+ExecStartPre=+/usr/local/bin/cocoonbox-api -config /etc/cocoonbox/api.yaml migrate -dsn-file /etc/cocoonbox/pg-migrate.dsn
 ExecStart=/usr/local/bin/cocoonbox-api -config %d/api.yaml
 Restart=always
 RestartSec=2

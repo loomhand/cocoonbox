@@ -40,6 +40,9 @@ var (
 	// ErrStale reports a conditional write that lost to a write after the read.
 	ErrStale = errors.New("cluster row changed since it was read")
 
+	// Migrations is the cluster tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: schemaTable, Lock: migrationLock}
+
 	//go:embed migrations/*.sql
 	migrations embed.FS
 )
@@ -66,7 +69,7 @@ type Store struct {
 
 // Open connects to dsn and applies the cluster migrations.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, schemaTable, migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +155,6 @@ func ParseChange(payload string) (Change, error) {
 		return Change{}, fmt.Errorf("decode a notify: %w", err)
 	}
 	return c, nil
-}
-
-// PendingMigrations connects to dsn and returns the cluster migrations it lacks, applying none.
-func PendingMigrations(ctx context.Context, dsn string) ([]string, error) {
-	return migrate.Pending(ctx, dsn, migrations, schemaTable)
 }
 
 func notifyChange(ctx context.Context, tx pgx.Tx, channel string, c Change) error {

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs cocoonbox-api with its unit and drop-ins; idempotent. A missing /etc/cocoonbox/api.yaml is written from the
-# environment, and a missing master.key, edge-signing.key and pg.dsn are made fresh. Needs install-pg, install-gw and
+# environment, and a missing master.key, edge-signing.key, pg.dsn and pg-migrate.dsn are made fresh. Needs install-pg, install-gw and
 # deploy/cbsbx/install first, and /etc/cocoonbox/store.env (STORE_ACCESS_KEY, STORE_SECRET_KEY of the state bucket).
 # An api.yaml written while /etc/cocoonbox/connect.env exists turns Connect on; connect.env and login.env go into the unit environment.
 #   CB_PUBLIC_URL      the api's public https origin (required)
@@ -27,6 +27,7 @@ umask 077
 [ -s "$E/master.key" ] || head -c 32 /dev/urandom > "$E/master.key"
 [ -s "$E/edge-signing.key" ] || openssl genpkey -algorithm ed25519 -out "$E/edge-signing.key" 2>/dev/null
 [ -s "$E/pg.dsn" ] || echo 'postgres:///cocoonbox?host=/var/run/postgresql&user=cocoonbox-api' > "$E/pg.dsn"
+[ -s "$E/pg-migrate.dsn" ] || echo 'postgres:///cocoonbox?host=/var/run/postgresql&user=cocoonbox-migrate' > "$E/pg-migrate.dsn"
 if [ ! -s "$E/api.yaml" ]; then
 	: "${CB_PUBLIC_URL:?CB_PUBLIC_URL is required}" "${CB_IMAGE:?CB_IMAGE is required}" "${CB_STATE_ENDPOINT:?CB_STATE_ENDPOINT is required}"
 	{

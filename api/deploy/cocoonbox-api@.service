@@ -18,6 +18,7 @@ EnvironmentFile=-/etc/cocoonbox/connect.env
 EnvironmentFile=-/etc/cocoonbox/login.env
 StateDirectory=cocoonbox-api-%i
 StateDirectoryMode=0700
+ExecStartPre=+/usr/local/bin/cocoonbox-api -config /etc/cocoonbox/api-%i.yaml migrate -dsn-file /etc/cocoonbox/pg-migrate.dsn
 ExecStart=/usr/local/bin/cocoonbox-api -config %d/api.yaml
 Restart=always
 RestartSec=2

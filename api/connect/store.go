@@ -21,8 +21,13 @@ const (
 	grantColumns = "id, user_id, connector, kind, mcp_url, account_label, status, policy, sealed, token_expires_at"
 )
 
-//go:embed migrations/*.sql
-var migrations embed.FS
+var (
+	// Migrations is the connect tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: "connect_schema_migrations", Lock: migrationLock}
+
+	//go:embed migrations/*.sql
+	migrations embed.FS
+)
 
 type grant struct {
 	id        string
@@ -83,7 +88,7 @@ type store struct {
 }
 
 func openStore(ctx context.Context, dsn string) (*store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "connect_schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}

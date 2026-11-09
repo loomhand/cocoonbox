@@ -23,6 +23,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/config"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/migrate"
 	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -47,17 +48,16 @@ func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
 	if err := os.WriteFile(cfg.Accounts.DSNFile, []byte(dsn), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || !strings.Contains(out.String(), "migrations the next start applies") {
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || !strings.Contains(out.String(), "migrations the next migrate applies") {
 		t.Fatalf("check with migrations pending = %q, %v; want them listed", out.String(), err)
 	}
-	if pending, err := cluster.PendingMigrations(t.Context(), dsn); err != nil || len(pending) == 0 {
+	if pending, err := migrate.Pending(t.Context(), dsn, cluster.Migrations); err != nil || len(pending) == 0 {
 		t.Errorf("pending migrations after check = %v, %v; want check to apply none", pending, err)
 	}
-	st, err := cluster.Open(t.Context(), dsn)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+	out.Reset()
+	if err := runCLI(t.Context(), cfg, []string{"migrate"}, nil, &out); err != nil || out.String() != "migrations applied\n" {
+		t.Fatalf("migrate = %q, %v", out.String(), err)
 	}
-	st.Close()
 	out.Reset()
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
 		t.Errorf("check of a valid config = %q, %v", out.String(), err)

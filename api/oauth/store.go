@@ -25,8 +25,13 @@ const (
 		ARRAY(SELECT n.connect_grant FROM oauth_connectors n WHERE n.grant_id = g.id ORDER BY n.connect_grant)`
 )
 
-//go:embed migrations/*.sql
-var migrations embed.FS
+var (
+	// Migrations is the oauth tables' schema.
+	Migrations = migrate.Set{FS: migrations, Table: "oauth_schema_migrations", Lock: migrationLock}
+
+	//go:embed migrations/*.sql
+	migrations embed.FS
+)
 
 // code is an authorization code's consent, kept until the client redeems it once; label names a first-party client's device.
 type code struct {
@@ -58,7 +63,7 @@ type store struct {
 }
 
 func openStore(ctx context.Context, dsn string) (*store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "oauth_schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
 	}
