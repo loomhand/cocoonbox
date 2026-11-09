@@ -1199,6 +1199,41 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	}
 }
 
+func TestNoMoreThanSaveFanoutSavesOfAProcessPlanAndUploadAtOnce(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	gate := make(chan struct{})
+	var uploading atomic.Int32
+	agent.onUpload = func(machines.Endpoint) {
+		uploading.Add(1)
+		<-gate
+	}
+	done := make(chan error, saveFanout+1)
+	for i := range saveFanout + 1 {
+		p := statePath{user: alice, box: fmt.Sprintf("cb-fanout-%d", i)}
+		go func() {
+			_, err := layer.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+			done <- err
+		}()
+	}
+	clustertest.WaitFor(t, "saveFanout uploads", func() bool { return uploading.Load() == saveFanout })
+	time.Sleep(100 * time.Millisecond)
+	agent.mu.Lock()
+	plans := len(agent.planReqs)
+	agent.mu.Unlock()
+	if got := uploading.Load(); got != saveFanout || plans != saveFanout {
+		t.Errorf("saves planning or uploading at once = %d uploads, %d plans; want %d of %d", got, plans, saveFanout, saveFanout+1)
+	}
+	close(gate)
+	for range saveFanout + 1 {
+		if err := <-done; err != nil {
+			t.Errorf("save: %v", err)
+		}
+	}
+}
+
 type stateEnv struct {
 	ctx   context.Context
 	svc   *Service

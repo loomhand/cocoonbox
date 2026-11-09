@@ -35,6 +35,7 @@ const (
 	commitRetryDelay = time.Second
 	staleAttempts    = 8
 	scheduledSaves   = 4
+	saveFanout       = 32
 	// pinTTL outlasts the longest operation that holds a pin, should its process die before it unpins.
 	pinTTL = stateTimeout + 10*time.Minute
 )
@@ -167,6 +168,7 @@ type stateLayer struct {
 
 	locks     utils.Locks
 	scheduled *semaphore.Weighted
+	saves     *semaphore.Weighted
 
 	mu    sync.Mutex
 	users map[string]*sync.RWMutex
@@ -181,7 +183,7 @@ type stateLayer struct {
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
-		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves),
+		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves), saves: semaphore.NewWeighted(saveFanout),
 		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{}, failed: map[statePath]time.Time{},
 	}
@@ -238,6 +240,10 @@ func (l *stateLayer) lockCommit(ctx context.Context, p statePath) (func(), error
 }
 
 func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, string, head, error) {
+	if err := l.saves.Acquire(ctx, 1); err != nil {
+		return nil, "", head{}, err
+	}
+	defer l.saves.Release(1)
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return nil, "", head{}, fmt.Errorf("state key: %w", err)
