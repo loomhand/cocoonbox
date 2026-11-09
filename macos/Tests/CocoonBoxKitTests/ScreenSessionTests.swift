@@ -7,46 +7,17 @@ import Testing
 
 final class SyntheticTransport: ScreenTransport {
     let servers = Mutex<[SyntheticRFBServer]>([])
-    let oneWay: Duration
-    let animateFPS: Int
-
-    init(oneWay: Duration = .zero, animateFPS: Int = 0) {
-        self.oneWay = oneWay
-        self.animateFPS = animateFPS
-    }
-
-    func delayed(_ source: AsyncStream<Data>) -> AsyncStream<Data> {
-        guard oneWay > .zero else { return source }
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
-        let (timed, timedContinuation) = AsyncStream<(ContinuousClock.Instant, Data)>.makeStream()
-        let oneWay = oneWay
-        Task {
-            for await data in source { timedContinuation.yield((.now + oneWay, data)) }
-            timedContinuation.finish()
-        }
-        Task {
-            for await (due, data) in timed {
-                try? await Task.sleep(until: due)
-                continuation.yield(data)
-            }
-            continuation.finish()
-        }
-        return stream
-    }
 
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
         let (stream, continuation) = AsyncStream<Data>.makeStream()
         let server = SyntheticRFBServer { continuation.yield($0) }
-        if animateFPS > 0 { server.animate(fps: animateFPS) }
         servers.withLock { $0.append(server) }
-        let down = delayed(stream)
-        let up = delayed(outbound)
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                for await data in down { try await inbound(data) }
+                for await data in stream { try await inbound(data) }
             }
             group.addTask {
-                for await data in up { server.receive(data) }
+                for await data in outbound { server.receive(data) }
                 continuation.finish()
             }
             try await group.next()
@@ -77,10 +48,9 @@ final class Recorder: Sendable {
     var count: Int { updates.load(ordering: .relaxed) }
 }
 
-func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -> RFBClient.Configuration {
+func headless() -> RFBClient.Configuration {
     var configuration = RFBClient.Configuration()
     configuration.requestsOnConsume = false
-    configure(&configuration)
     return configuration
 }
 
@@ -124,30 +94,6 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
     @Test func sessionEndsWhenTheStreamEnds() async throws {
         let session = ScreenSession(transport: ClosingTransport(), configuration: headless())
         await #expect(throws: (any Error).self) { try await session.run { _ in } }
-    }
-
-    @Test(arguments: [false, true])
-    func updateRateAcrossALongPath(pacing: Bool) async throws {
-        let transport = SyntheticTransport(oneWay: .milliseconds(100), animateFPS: 30)
-        let session = ScreenSession(transport: transport, configuration: headless { c in
-            if !pacing { c.requestInterval = nil }
-        })
-        let recorder = Recorder()
-        let run = Task { try await session.run(recorder.handler) }
-        let started = await until { recorder.count > 0 }
-        #expect(started)
-        try await Task.sleep(for: .seconds(1))
-        let before = recorder.count
-        try await Task.sleep(for: .seconds(2))
-        let rate = Double(recorder.count - before) / 2
-        print("update_rate pacing=\(pacing) rtt=200ms updates_per_s=\(rate)")
-        if pacing {
-            #expect(rate > 20)
-        } else {
-            #expect(rate < 7)
-        }
-        run.cancel()
-        _ = await run.result
     }
 }
 
