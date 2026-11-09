@@ -1096,7 +1096,10 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, know
 			log.WithFunc("sandboxd.Backend.dropUnlisted").WithField("machine", id).Warnf(ctx, "another node lists sandbox %s, but no agreed owner took it; the machine stays", at.sandbox)
 			continue
 		}
-		dropped, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.sandbox() == at.sandbox && e.ownerAddr == at.addr })
+		_, answered := lists[at.addr]
+		dropped, err := b.drop(ctx, id, func(e *entry) bool {
+			return !e.busy(now) && e.sandbox() == at.sandbox && e.ownerAddr == at.addr && (answered || !e.row.Archived)
+		})
 		if err != nil {
 			return err
 		}
