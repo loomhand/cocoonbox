@@ -41,6 +41,7 @@ const (
 
 var (
 	errIndexCollected = errors.New("the gc rewrote the chunk index after the save read it; save again")
+	errStateDeleted   = errors.New("the user's state was deleted during the save")
 
 	objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -84,6 +85,7 @@ type snapshotRecord struct {
 	Chunks []chunk `json:"chunks"`
 
 	indexGeneration int64
+	indexed         bool
 }
 
 // timeline lists a box's kept snapshots; the GC prunes it and every reader takes the kept set from it.
@@ -187,45 +189,89 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	if l.shared == nil || l.versioned == nil {
+		unlock, err := l.lockCommit(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+		rec, keyID, h, err := l.prepare(ctx, auth, p, ep, consistency, progress)
+		if err != nil {
+			return nil, err
+		}
+		if err := l.finish(ctx, p, keyID, rec, image, parked, h); err != nil {
+			return nil, err
+		}
+		return rec, nil
+	}
+	unlockBox := l.locks.Lock(p.box)
+	rec, keyID, h, err := l.prepare(ctx, auth, p, ep, consistency, progress)
+	unlockBox()
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := l.lockCommit(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := l.finish(ctx, p, keyID, rec, image, parked, h); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+// lockCommit takes the user's shared lock, the box and the user's gc lock, in the gc's order; the GC sweep takes the last exclusively, so no save is between its index read and its commit.
+func (l *stateLayer) lockCommit(ctx context.Context, p statePath) (func(), error) {
 	release, err := l.lockShared(ctx, p.user)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
 	unlock := l.locks.Lock(p.box)
-	defer unlock()
-	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
 	user := l.userLock(p.user)
 	user.RLock()
-	defer user.RUnlock()
+	return func() {
+		user.RUnlock()
+		unlock()
+		release()
+	}, nil
+}
+
+func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, string, head, error) {
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
-		return nil, fmt.Errorf("state key: %w", err)
+		return nil, "", head{}, fmt.Errorf("state key: %w", err)
 	}
 	h, err := l.head(ctx, p)
 	if err != nil {
-		return nil, err
+		return nil, "", head{}, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
 	rec, err := l.snapshot(ctx, auth, p, ep, stateKey, consistency, h.Latest, progress)
 	if h.Latest != "" && status.Code(err) == codes.InvalidArgument {
-		log.WithFunc("boxes.stateLayer.save").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
+		log.WithFunc("boxes.stateLayer.prepare").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
 		rec, err = l.snapshot(ctx, auth, p, ep, stateKey, consistency, "", progress)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", head{}, err
 	}
 	rec.Parent = h.Latest
+	return rec, key.ID, h, nil
+}
+
+func (l *stateLayer) finish(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, image string, parked bool, h head) error {
 	now := time.Now()
 	rec.SavedAtMs = now.UnixMilli()
 	base, err := l.deltaBase(ctx, p, now)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := l.commit(ctx, p, key.ID, rec, base, head{Image: image, Parked: parked, version: h.version}); err != nil {
-		return nil, err
+	err = l.commit(ctx, p, keyID, rec, base, head{Image: image, Parked: parked, version: h.version})
+	if errors.Is(err, errStateDeleted) {
+		_, deleteErr := DeleteState(ctx, l.store, p.user)
+		return errors.Join(err, deleteErr)
 	}
-	return rec, nil
+	return err
 }
 
 func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
@@ -254,11 +300,11 @@ func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, 
 	if rec == nil {
 		return nil, errors.New("plan: agent sent no plan")
 	}
-	stored, generation, err := l.index(ctx, p, key.GetKeyId())
+	stored, generation, indexed, err := l.index(ctx, p, key.GetKeyId())
 	if err != nil {
 		return nil, err
 	}
-	rec.indexGeneration = generation
+	rec.indexGeneration, rec.indexed = generation, indexed
 	var missing []chunk
 	seen := map[string]bool{}
 	for _, c := range rec.Chunks {
@@ -413,7 +459,7 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	if err := l.retry(ctx, func() error { return l.putRecord(ctx, p, rec, base) }); err != nil {
 		return err
 	}
-	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks, rec.indexGeneration) }); err != nil {
+	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec) }); err != nil {
 		return err
 	}
 	if err := l.retry(ctx, func() error { return l.addToTimeline(ctx, p, rec.timelineEntry) }); err != nil {
@@ -446,16 +492,19 @@ func (l *stateLayer) swapHead(ctx context.Context, p statePath, h head) (int64, 
 	return next, err
 }
 
-// addToIndex merges chunks into the user's index, failing the save when a gc rewrote the index after its read at generation.
-func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk, generation int64) error {
+// addToIndex merges rec's chunks into the user's index, failing the save when a gc rewrote the index after the save read it or the user's state was deleted since.
+func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, rec *snapshotRecord) error {
 	unlock := l.locks.Lock(p.index())
 	defer unlock()
-	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, _ bool) (bool, error) {
-		if idx.Generation != generation {
+	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, found bool) (bool, error) {
+		switch {
+		case rec.indexed && !found:
+			return false, errStateDeleted
+		case idx.Generation != rec.indexGeneration:
 			return false, errIndexCollected
 		}
 		stored := idx.stored(keyID)
-		for _, c := range chunks {
+		for _, c := range rec.Chunks {
 			stored[c.ID] = true
 		}
 		idx.KeyID, idx.Chunks = keyID, slices.Sorted(maps.Keys(stored))
@@ -531,7 +580,7 @@ func (l *stateLayer) pinned(ctx context.Context, p statePath) (map[string]bool, 
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
 	err := fn()
-	for attempt := 1; err != nil && !errors.Is(err, store.ErrStale) && !errors.Is(err, errIndexCollected) && attempt < commitAttempts; attempt++ {
+	for attempt := 1; err != nil && !errors.Is(err, store.ErrStale) && !errors.Is(err, errIndexCollected) && !errors.Is(err, errStateDeleted) && attempt < commitAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
 			return err
@@ -666,12 +715,16 @@ func (l *stateLayer) invalidateAll() {
 	l.dropped++
 }
 
-func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, error) {
+func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, bool, error) {
 	var idx chunkIndex
-	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, 0, err
+	err := getJSON(ctx, l.store, p.index(), &idx)
+	if errors.Is(err, store.ErrNotFound) {
+		return idx.stored(keyID), 0, false, nil
 	}
-	return idx.stored(keyID), idx.Generation, nil
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return idx.stored(keyID), idx.Generation, true, nil
 }
 
 func (l *stateLayer) userLock(user string) *sync.RWMutex {
