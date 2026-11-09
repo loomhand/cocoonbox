@@ -180,8 +180,7 @@ impl StateEngine {
             .map_err(|e| StateError::Failed(format!("plan task: {e}")))?
     }
 
-    /// Uploads the listed chunks of the pinned snapshot; the call that carries the manifest
-    /// writes it last and unpins the snapshot, so a large upload may span several calls.
+    /// Uploads the listed chunks of the pinned snapshot; the call with the manifest writes it last and unpins, so an upload may span calls.
     pub async fn upload(
         &self,
         req: pb::UploadRequest,
@@ -244,8 +243,7 @@ impl StateEngine {
         Ok(())
     }
 
-    /// Replaces the user state with the manifest's; the first message names the manifest, chunk
-    /// URLs arrive in pages and are fetched as they come, and the loop's writers pause for the swap.
+    /// Replaces the user state with the manifest's; chunk URLs arrive in pages and are fetched as they come, and the loop's writers pause for the swap.
     pub async fn restore<S>(
         &self,
         mut reqs: S,
@@ -262,8 +260,7 @@ impl StateEngine {
         result
     }
 
-    /// Copies the scope's paths of the manifest into a new folder under `~/Restored`, staged and
-    /// renamed into place at the end; nothing else is written, paused or restarted.
+    /// Copies the scope's paths of the manifest into a new folder under `~/Restored`, staged then renamed into place; nothing else is touched.
     pub async fn restore_paths<S>(
         &self,
         mut reqs: S,
@@ -468,8 +465,7 @@ impl StateEngine {
         Ok(())
     }
 
-    /// Writes every target as its chunk urls arrive, fetching each chunk once; a chunk used more
-    /// than once goes through `cache`. Fails if a chunk never got a url.
+    /// Writes every target as its chunk urls arrive, fetching each chunk once (a reused chunk goes through `cache`); fails if a chunk never got a url.
     async fn fill<S>(
         &self,
         keys: &Arc<Keys>,
@@ -1423,8 +1419,7 @@ fn chrome_start(closed: bool, restored: bool) -> Option<Value> {
     }
 }
 
-/// The manifest's records under the scope's paths, each with its root; refuses a target that is
-/// not one plain folder name, a path outside the roots, and a path the manifest lacks.
+/// The manifest's records under the scope's paths, each with its root; refuses a target that is not one plain folder name, a path outside the roots, and a path the manifest lacks.
 fn select<'a>(
     roots: &'a [Root],
     manifest: &'a Manifest,

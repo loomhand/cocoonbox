@@ -234,6 +234,7 @@ type endpoint struct {
 }
 
 func newEndpoint(t *testing.T) *endpoint {
+	t.Helper()
 	ep := &endpoint{reviews: map[string]review{}, raw: map[string]string{}}
 	ep.Server = httptest.NewTLSServer(http.HandlerFunc(ep.serve))
 	t.Cleanup(ep.Close)

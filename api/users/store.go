@@ -38,7 +38,6 @@ var (
 	migrations embed.FS
 )
 
-// store keeps the users tables in PostgreSQL.
 type store struct {
 	pool  *pgxpool.Pool
 	locks *pgxpool.Pool
@@ -330,7 +329,6 @@ func (s *store) holds(ctx context.Context, query string, arg any) (bool, error) 
 	return holds, err
 }
 
-// allDevices returns every device token by user id.
 func (s *store) allDevices(ctx context.Context) (map[string][]deviceToken, error) {
 	rows, err := s.pool.Query(ctx, "SELECT user_id, id, sha256 FROM user_tokens ORDER BY created_at, id")
 	if err != nil {

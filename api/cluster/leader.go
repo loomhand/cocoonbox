@@ -118,7 +118,7 @@ func lock(ctx context.Context, pool *pgxpool.Pool, name string) (func(), error) 
 		_ = conn.Hijack().Close(closeCtx)
 	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
-		// A canceled wait may still have taken the lock, which only closing the session drops.
+		// a canceled wait may still have taken the lock, which only closing the session drops.
 		drop()
 		return nil, fmt.Errorf("lock %s: %w", name, err)
 	}
