@@ -98,6 +98,7 @@ type Backend struct {
 	entryAddr            string
 	ctx                  context.Context
 	leaseFor, renewEvery time.Duration
+	watchEvery           time.Duration
 
 	nodeMu sync.Mutex
 	nodes  map[string]*client
@@ -139,7 +140,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		away:      map[string]time.Time{},
 		full:      map[string]bool{},
 
-		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
+		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew, watchEvery: watchInterval,
 	}
 	if err = b.checkNodes(ctx, advertised); err != nil {
 		return nil, err
@@ -295,7 +296,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 	out := make(chan machines.Machine)
 	go func() {
 		defer close(out)
-		tick := time.Tick(watchInterval)
+		tick := time.Tick(b.watchEvery)
 		seen, last := false, ""
 		for {
 			changed := b.changes(id)

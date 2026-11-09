@@ -1107,13 +1107,13 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
+	b.watchEvery = time.Hour
 	ctx, cancel := context.WithTimeout(t.Context(), waitFor)
 	defer cancel()
 	watch := b.Watch(ctx, boxID, 0)
 	if m := <-watch; m.State != machines.StateRunning {
 		t.Fatalf("first watch state = %+v", m)
 	}
-	start := time.Now()
 	if _, err := b.Hibernate(t.Context(), boxID); err != nil {
 		t.Fatalf("Hibernate: %v", err)
 	}
@@ -1129,9 +1129,6 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	}
 	if m := <-watch; m.Meta["wake"] != "inc|w1" {
 		t.Fatalf("watch after SetMeta = %+v", m)
-	}
-	if took := time.Since(start); took >= watchInterval/2 {
-		t.Errorf("watch took %s to send the op end and the meta change, want under %s", took, watchInterval/2)
 	}
 }
 
