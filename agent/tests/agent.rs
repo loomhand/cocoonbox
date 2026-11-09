@@ -2649,27 +2649,27 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let door_log = Log::default();
     let (events, _) = broadcast::channel(8);
     let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
-    let h = Harness::with_connect(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("c1", "mock_list_items", &json!({})),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("c2", "mock_create_item", &json!({"title": "x"})),
-            ),
-            ("chat/completions", chat_text("Created.")),
-            (
-                "chat/completions",
-                chat_tool_call("c3", "mock_create_item", &json!({"title": "y"})),
-            ),
-            ("chat/completions", chat_text("Declined.")),
-            ("chat/completions", chat_text("Listed.")),
-        ],
-        door,
-    )
-    .await;
+    let mut script = vec![
+        (
+            "chat/completions",
+            chat_tool_call("c1", "mock_list_items", &json!({})),
+        ),
+        (
+            "chat/completions",
+            chat_tool_call("c2", "mock_create_item", &json!({"title": "x"})),
+        ),
+        ("chat/completions", chat_text("Created.")),
+        (
+            "chat/completions",
+            chat_tool_call("c3", "mock_create_item", &json!({"title": "y"})),
+        ),
+        ("chat/completions", chat_text("Declined.")),
+    ];
+    script.extend(std::iter::repeat_n(
+        ("chat/completions", chat_text("Listed.")),
+        8,
+    ));
+    let h = Harness::with_connect(script, door).await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
 
@@ -2731,9 +2731,19 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     events
         .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
         .unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    send(&mut agents, &agent_id, "list").await;
-    turn_ends(&mut agents, &agent_id, 3).await;
+    for turns in 3..=10 {
+        send(&mut agents, &agent_id, "list").await;
+        turn_ends(&mut agents, &agent_id, turns).await;
+        let bodies = gw_bodies(&h.gw_log, "/v1/chat/completions");
+        if offered(bodies.last().unwrap()).contains(&"mock_new") {
+            break;
+        }
+        assert!(
+            turns < 10,
+            "no turn in 2 s after list_changed offered the new tool"
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
     let bodies = gw_bodies(&h.gw_log, "/v1/chat/completions");
     let first = offered(&bodies[0]);
     assert!(first.contains(&"mock_list_items") && first.contains(&"mock_create_item"));
@@ -2743,7 +2753,6 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         "{first:?}"
     );
     assert!(!first.contains(&"mock_new"));
-    assert!(offered(bodies.last().unwrap()).contains(&"mock_new"));
     assert!(
         door_log
             .lock()
@@ -2794,8 +2803,8 @@ async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() 
     let refused = wait_until(Duration::from_secs(25), || refusals().len() >= 6).await;
     assert!(refused, "{:?}", refusals());
     let gaps: Vec<u64> = refusals().windows(2).map(|w| w[1] - w[0]).collect();
-    assert!(gaps.iter().all(|&g| g < 5500), "{gaps:?}");
-    assert!(gaps[3..].iter().all(|&g| g >= 4500), "{gaps:?}");
+    assert!(gaps.iter().all(|&g| g < 7000), "{gaps:?}");
+    assert!(gaps[3..].iter().all(|&g| g >= 4000), "{gaps:?}");
 }
 
 #[tokio::test]

@@ -39,8 +39,15 @@ jobs:
           go-version-file: api/go.mod
           cache-dependency-path: api/go.sum
 
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 -e MINIO_ROOT_USER=cbtest -e MINIO_ROOT_PASSWORD=cbtest-secret \
+            cgr.dev/chainguard/minio:latest@sha256:616286de6ef3a1892876b126e745e152d8e03add6357203f8a1f854bdd1dce76 server /data
+          timeout 60 sh -c 'until curl -fsS http://localhost:9000/minio/health/live; do sleep 1; done'
+
       - name: Format, lint, test, build
         env:
           GOWORK: "off"
           COCOONBOX_TEST_DSN: postgres://postgres:cbtest@localhost:5432/postgres?sslmode=disable
+          COCOONBOX_TEST_S3: http://cbtest:cbtest-secret@localhost:9000
         run: make api

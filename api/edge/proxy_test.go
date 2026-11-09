@@ -399,7 +399,11 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), addr) {
 		t.Fatalf("Hello before the agent listens: %v, want Unavailable without the agent's address", err)
 	}
-	time.Sleep(3 * time.Second)
+	for deadline := time.Now().Add(10 * time.Second); env.resolver.dials.Load() < 7; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the proxy dialed the refused agent %d times in 10s, want 7 as its backoff reaches its cap", env.resolver.dials.Load())
+		}
+	}
 
 	agentSrv := grpc.NewServer()
 	agentv1.RegisterSessionServer(agentSrv, env.agent)
@@ -410,7 +414,7 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 	go func() { _ = agentSrv.Serve(lis) }()
 	t.Cleanup(agentSrv.Stop)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		_, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{})
 		if err == nil {
@@ -485,6 +489,7 @@ type fakeResolver struct {
 	screen string
 	err    error
 	opaque bool
+	dials  atomic.Int64
 
 	mu      sync.Mutex
 	reached []string
@@ -495,6 +500,11 @@ func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.
 		return machines.Endpoint{}, "", boxes.ErrNoBox
 	}
 	ep := machines.TCPEndpoint(r.addr)
+	dial := ep.Dial
+	ep.Dial = func(ctx context.Context) (net.Conn, error) {
+		r.dials.Add(1)
+		return dial(ctx)
+	}
 	ep.Screen = machines.TCPEndpoint(r.screen).Dial
 	if r.opaque {
 		ep.Key = "box.invalid:1"

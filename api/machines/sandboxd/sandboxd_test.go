@@ -1107,13 +1107,13 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
+	b.watchEvery = time.Hour
 	ctx, cancel := context.WithTimeout(t.Context(), waitFor)
 	defer cancel()
 	watch := b.Watch(ctx, boxID, 0)
 	if m := <-watch; m.State != machines.StateRunning {
 		t.Fatalf("first watch state = %+v", m)
 	}
-	start := time.Now()
 	if _, err := b.Hibernate(t.Context(), boxID); err != nil {
 		t.Fatalf("Hibernate: %v", err)
 	}
@@ -1129,9 +1129,6 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	}
 	if m := <-watch; m.Meta["wake"] != "inc|w1" {
 		t.Fatalf("watch after SetMeta = %+v", m)
-	}
-	if took := time.Since(start); took >= watchInterval/2 {
-		t.Errorf("watch took %s to send the op end and the meta change, want under %s", took, watchInterval/2)
 	}
 }
 
@@ -1292,9 +1289,9 @@ func TestAWatchOnAnotherBackendSeesAMachineRecreatedUnderItsID(t *testing.T) {
 
 func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	db := clustertest.Open(t)
+	db, dsn := clustertest.OpenDSN(t)
 	b := newSharedBackend(t, fake, db)
-	b.leaseFor, b.renewEvery = 400*time.Millisecond, 20*time.Millisecond
+	b.leaseFor, b.renewEvery = 400*time.Millisecond, 100*time.Millisecond
 	m := claimRunning(t, b)
 	if _, err := db.UpdateMachine(t.Context(), boxID, func(r *cluster.Machine, _ bool) (bool, error) {
 		r.Op, r.OpUntil = opHibernate, time.Now().Add(b.leaseFor)
@@ -1310,14 +1307,34 @@ func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 		t.Fatal("an op whose lease renews was stopped")
 	}
 	db.Close()
-	start := time.Now()
 	select {
 	case <-ctx.Done():
-		if waited := time.Since(start); waited >= b.leaseFor {
-			t.Errorf("the op stopped %v after the last renewal, past its %v lease", waited, b.leaseFor)
+		stopped := time.Now()
+		renewed, err := clustertest.OpenReplica(t, dsn).Machine(t.Context(), boxID)
+		if err != nil {
+			t.Fatalf("Machine: %v", err)
+		}
+		if !stopped.Before(renewed.OpUntil) {
+			t.Errorf("the op stopped at %v, past the lease it last renewed to %v", stopped, renewed.OpUntil)
 		}
 	case <-time.After(waitFor):
 		t.Fatal("an op whose lease could not be renewed kept running")
+	}
+}
+
+func TestALeaseThatTheNextRenewalMightMissRunsOut(t *testing.T) {
+	now, every := time.Now(), 20*time.Second
+	for _, tc := range []struct {
+		until time.Time
+		out   bool
+	}{
+		{now.Add(every), true},
+		{now.Add(every + time.Millisecond), true},
+		{now.Add(2 * every), false},
+	} {
+		if got := leaseRunsOut(now, tc.until, every); got != tc.out {
+			t.Errorf("leaseRunsOut with %v left = %t, want %t", tc.until.Sub(now), got, tc.out)
+		}
 	}
 }
 

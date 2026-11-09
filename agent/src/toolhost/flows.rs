@@ -397,8 +397,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path().to_path_buf();
         let writes = watch::channel(0).0;
-        tokio::spawn(super::watch(ws.clone(), writes.clone()));
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        watching(ws.clone(), writes.clone()).await;
         let next = |after: u64| {
             let writes = writes.clone();
             async move {
@@ -448,8 +447,7 @@ mod tests {
             "a(x): one\nb(): two\nc() once: three\n",
         )
         .unwrap();
-        tokio::spawn(super::watch(ws.clone(), watch::channel(0).0));
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        watching(ws.clone(), watch::channel(0).0).await;
         let index_becomes = |want: &'static str| {
             let path = flows.join("INDEX");
             async move {
@@ -480,5 +478,15 @@ mod tests {
         std::fs::remove_dir_all(&flows).unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         assert!(!flows.exists(), "the removed folder came back");
+    }
+
+    #[cfg(target_os = "linux")]
+    async fn watching(workspace: PathBuf, writes: watch::Sender<u64>) {
+        let mut watcher = Box::pin(super::watch(workspace, writes));
+        assert!(
+            futures_util::poll!(&mut watcher).is_pending(),
+            "the watcher ended"
+        );
+        tokio::spawn(watcher);
     }
 }

@@ -19,6 +19,12 @@ export COCOONBOX_CONFIG_DIR="$work/config"
 export HOME="$work/home"
 export CFFIXED_USER_HOME="$work/home"
 export CB_KEYCHAIN_FILE="$work/test.keychain-db"
+cleanup() {
+  kill "${mock:-}" 2>/dev/null || true
+  security delete-keychain "$CB_KEYCHAIN_FILE" 2>/dev/null || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
 mkdir -p "$HOME" "$work/workspace"
 security create-keychain -p test "$CB_KEYCHAIN_FILE"
 security set-keychain-settings "$CB_KEYCHAIN_FILE"
@@ -28,13 +34,8 @@ mkdir -p "$work/box" "$work/bin"
 ln -s "$PWD/scripts/offload-box-stub" "$work/bin/cocoonbox-agent"
 HOME="$work/box" PATH="$work/bin:$PATH" "$bin/MockBox" --port "$port" --boot-ms 1500 --workspace "$work/workspace" >"$work/mockbox.log" 2>&1 &
 mock=$!
-cleanup() {
-  kill "$mock" 2>/dev/null || true
-  security delete-keychain "$CB_KEYCHAIN_FILE" 2>/dev/null || true
-  rm -rf "$work"
-}
-trap cleanup EXIT
 for _ in $(seq 100); do grep -q "mockbox listening" "$work/mockbox.log" && break; sleep 0.1; done
+grep -q "mockbox listening" "$work/mockbox.log" || { echo "MockBox did not start within 10 s" >&2; cat "$work/mockbox.log" >&2; exit 1; }
 echo mock-token | "$bin/cocoonbox-cli" login
 
 python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" "$release" <<'PY'

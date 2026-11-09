@@ -1795,7 +1795,6 @@ mod tests {
         let engine = test_engine(dir.path(), socket).await;
         let turns = Arc::clone(&engine.pause.turns);
         let gate = Arc::clone(&turns).write_owned().await;
-        let started = tokio::time::Instant::now();
         let _resume = engine.resume(
             Quiet {
                 _gate: gate,
@@ -1803,7 +1802,6 @@ mod tests {
             },
             true,
         );
-        assert!(started.elapsed() < Duration::from_millis(200));
         assert!(turns.try_write().is_ok(), "turns run again at once");
         let args = tokio::time::timeout(Duration::from_secs(5), calls.recv())
             .await

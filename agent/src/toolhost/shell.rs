@@ -330,7 +330,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut sh = shell(dir.path()).await;
         let out = sh
-            .run("echo start; sleep 30", Some(Duration::from_millis(300)))
+            .run("echo start; sleep 30", Some(Duration::from_secs(2)))
             .await
             .unwrap();
         assert!(
