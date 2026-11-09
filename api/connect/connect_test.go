@@ -797,13 +797,27 @@ func TestCutOffRevokesMarksForAReconnectAndNamesWhatNoVendorRevoked(t *testing.T
 	}
 }
 
+func TestAKeyWithoutASchemeInAuthorizationIsABearerToken(t *testing.T) {
+	for _, tc := range []struct{ header, key, wantHeader, wantValue string }{
+		{"", "sk-1", headerAuthorization, "Bearer sk-1"},
+		{"authorization", "sk-1", "authorization", "Bearer sk-1"},
+		{"", "Bearer sk-1", headerAuthorization, "Bearer sk-1"},
+		{"", "Basic dTpw", headerAuthorization, "Basic dTpw"},
+		{"X-Api-Key", "sk-1", "X-Api-Key", "sk-1"},
+	} {
+		if got := keyCredential(tc.header, tc.key); got.header != tc.wantHeader || got.value != tc.wantValue {
+			t.Errorf("keyCredential(%q, %q) = %+v", tc.header, tc.key, got)
+		}
+	}
+}
+
 func TestAKeyConnectorSendsItsHeader(t *testing.T) {
 	env := newEnv(t)
 	req := StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "keyed", URL: env.vendor.KeyedURL(), Header: "X-Api-Key", Key: "wrong"}
 	if _, err := env.svc.Start(t.Context(), req); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("wrong key: %v", err)
 	}
-	req.Key = connecttest.Key
+	req.Key = connecttest.Key + " \n"
 	if started, err := env.svc.Start(t.Context(), req); err != nil || started.URL != "" || started.Nonce != "" || started.Connector != "keyed" {
 		t.Fatalf("Start = %+v, %v", started, err)
 	}

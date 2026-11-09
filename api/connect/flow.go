@@ -30,7 +30,7 @@ type StartRequest struct {
 	User          string
 	SessionSHA256 string
 	Connector     string
-	// Name and URL describe a custom connector; with Key it is stored at once and sent in Header (default Authorization).
+	// Name and URL describe a custom connector; with Key it is stored at once and sent in Header (default Authorization, as a bearer token when it has no scheme).
 	Name   string
 	URL    string
 	Header string
@@ -50,11 +50,12 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 	switch e.auth {
 	case authCustom:
 		var err error
+		req.Key = strings.TrimSpace(req.Key)
 		if connector, mcpURL, err = s.customTarget(req); err != nil {
 			return nil, err
 		}
 		if req.Key != "" {
-			return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{header: cmp.Or(req.Header, headerAuthorization), value: req.Key})
+			return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, keyCredential(req.Header, req.Key))
 		}
 	case authOpen:
 		return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{})

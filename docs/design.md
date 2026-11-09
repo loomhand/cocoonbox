@@ -1146,6 +1146,7 @@ OAuth clients:
   This is what brings Notion and Linear without any per-vendor code.
 - **API keys** (a custom MCP server):
   - The page sends the key and its header name with `begin`, over TLS.
+  - A key for `Authorization` without a scheme is sent as `Bearer <key>`.
   - The api lists the server's tools with it, then stores it sealed.
   - The key never enters a transcript, a config file or the Keychain.
 
