@@ -65,7 +65,7 @@ impl Syncer {
         let sync = Arc::clone(self);
         // detached: ends with stop
         tokio::spawn(async move {
-            sync.pull().await;
+            let _ = sync.pull().await;
             let mut seen = 0;
             loop {
                 if let Err(e) = sync.push().await {
@@ -93,14 +93,16 @@ impl Syncer {
     }
 
     /// Brings the library's flows into the box within a bounded time, then rebuilds the index while it is stale.
-    pub async fn pull(&self) {
-        match tokio::time::timeout(PULL_BUDGET, self.try_pull()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => eprintln!("flows: pull: {e}"),
-            Err(_) => eprintln!("flows: pull: no answer in {PULL_BUDGET:?}"),
+    pub async fn pull(&self) -> Result<(), String> {
+        let pulled = match tokio::time::timeout(PULL_BUDGET, self.try_pull()).await {
+            Ok(r) => r,
+            Err(_) => Err(format!("no answer in {PULL_BUDGET:?}")),
+        };
+        if let Err(e) = &pulled {
+            eprintln!("flows: pull: {e}");
         }
         if !self.stale_index.load(Ordering::SeqCst) {
-            return;
+            return pulled;
         }
         let _gate = self.gate.lock().await;
         if self.stale_index.load(Ordering::SeqCst) {
@@ -109,6 +111,7 @@ impl Syncer {
                 Err(e) => eprintln!("flows: index: {e}"),
             }
         }
+        pulled
     }
 
     /// Asks for a push of the flows changed since the last one.
@@ -338,7 +341,7 @@ mod tests {
         door.put("save.json", "{\"v\":1}");
         door.put("note.mts", "export function main() {}");
         let b = Box_::new(&door);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.file("save.json").as_deref(), Some("{\"v\":1}"));
         assert_eq!(
             b.file("note.mts").as_deref(),
@@ -352,7 +355,7 @@ mod tests {
         b.sync.push().await.unwrap();
         assert_eq!(door.content("mine.json").as_deref(), Some("{\"mine\":1}"));
         b.sync.push().await.unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(door.puts(), 1);
         assert_eq!(b.indexed(), 1);
     }
@@ -363,11 +366,11 @@ mod tests {
         door.put("a.json", "{\"v\":1}");
         door.put("b.json", "{\"v\":1}");
         let b = Box_::new(&door);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         door.put("a.json", "{\"v\":2}");
         door.put("b.json", "{\"v\":2}");
         b.write("b.json", "{\"local\":true}");
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.file("a.json").as_deref(), Some("{\"v\":2}"));
         assert_eq!(b.file("b.json").as_deref(), Some("{\"local\":true}"));
         b.sync.push().await.unwrap();
@@ -381,12 +384,12 @@ mod tests {
             door.put(name, "{}");
         }
         let b = Box_::new(&door);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         door.delete("gone.json");
         door.delete("edited.json");
         b.write("edited.json", "{\"edited\":1}");
         std::fs::remove_file(b.ws.join("flows/local.json")).unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.file("gone.json"), None);
         assert_eq!(b.file("local.json"), None, "a box delete is not undone");
         assert_eq!(door.content("local.json").as_deref(), Some("{}"));
@@ -396,7 +399,7 @@ mod tests {
             Some("{\"edited\":1}")
         );
         door.put("local.json", "{\"v\":2}");
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.file("local.json").as_deref(), Some("{\"v\":2}"));
     }
 
@@ -408,9 +411,9 @@ mod tests {
             door.put(name, "{}");
         }
         let b = Box_::new(&door);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         std::fs::remove_dir_all(b.ws.join("flows")).unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         for name in names {
             assert_eq!(b.file(name).as_deref(), Some("{}"), "{name}");
         }
@@ -418,7 +421,7 @@ mod tests {
         std::fs::remove_dir_all(b.ws.join("flows")).unwrap();
         b.write("new.json", "{\"new\":1}");
         b.sync.push().await.unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         for name in names {
             assert_eq!(b.file(name).as_deref(), Some("{}"), "{name}");
         }
@@ -426,7 +429,7 @@ mod tests {
         assert_eq!(door.content("new.json").as_deref(), Some("{\"new\":1}"));
 
         std::fs::remove_file(b.ws.join("flows/a.json")).unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.file("a.json"), None, "a box delete is not undone");
 
         let c = Box_::new(&door);
@@ -436,7 +439,7 @@ mod tests {
             .set_flow_row("b.json".to_owned(), rev, digest(b"{}"))
             .await
             .unwrap();
-        c.sync.pull().await;
+        c.sync.pull().await.unwrap();
         assert_eq!(c.file("b.json").as_deref(), Some("{}"), "lost before marks");
     }
 
@@ -446,10 +449,10 @@ mod tests {
         door.put("a.json", "{}");
         door.put("b.mts", "x");
         let b = Box_::new(&door);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         std::fs::remove_file(b.ws.join("flows/a.json")).unwrap();
         std::fs::remove_file(b.ws.join("flows/b.mts")).unwrap();
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!((b.file("a.json"), b.file("b.mts")), (None, None));
 
         let old = b.ws.join("old");
@@ -459,7 +462,7 @@ mod tests {
             let entry = entry.unwrap();
             std::fs::copy(entry.path(), b.ws.join("flows").join(entry.file_name())).unwrap();
         }
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!((b.file("a.json"), b.file("b.mts")), (None, None));
 
         let c = Box_::new(&door);
@@ -470,7 +473,7 @@ mod tests {
             .set_flow_row("a.json".to_owned(), rev, digest(b"{}"))
             .await
             .unwrap();
-        c.sync.pull().await;
+        c.sync.pull().await.unwrap();
         assert_eq!(c.file("a.json"), None);
         assert_eq!(c.file("b.mts").as_deref(), Some("x"));
     }
@@ -523,7 +526,7 @@ mod tests {
         door.put("save.json", "{\"v\":1}");
         let b = Box_::new(&door);
         b.tools.stall_write.store(true, Ordering::SeqCst);
-        b.sync.pull().await;
+        assert!(b.sync.pull().await.is_err());
         assert_eq!(b.file("save.json").as_deref(), Some("{\"v\":1}"));
         assert_eq!(b.indexed(), 1);
     }
@@ -535,14 +538,14 @@ mod tests {
         let b = Box_::new(&door);
         b.tools.stall_index.store(true, Ordering::SeqCst);
         tokio::select! {
-            () = b.sync.pull() => panic!("the pull did not stall in flows_index"),
+            _ = b.sync.pull() => panic!("the pull did not stall in flows_index"),
             () = b.tools.index_started.notified() => {}
         }
         assert_eq!(b.file("save.json").as_deref(), Some("{\"v\":1}"));
         assert_eq!(b.indexed(), 0);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.indexed(), 1);
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
         assert_eq!(b.indexed(), 1);
     }
 
@@ -550,8 +553,8 @@ mod tests {
     async fn the_first_pull_after_a_start_reindexes_once_with_nothing_to_write() {
         let door = Door::start().await;
         let b = Box_::new(&door);
-        b.sync.pull().await;
-        b.sync.pull().await;
+        b.sync.pull().await.unwrap();
+        b.sync.pull().await.unwrap();
         assert_eq!(b.indexed(), 1);
     }
 
@@ -559,7 +562,7 @@ mod tests {
     async fn an_unreachable_library_leaves_the_box_as_it_is() {
         let b = Box_::at("http://127.0.0.1:9/mcp");
         b.write("a.json", "{}");
-        b.sync.pull().await;
+        assert!(b.sync.pull().await.is_err());
         assert!(b.sync.push().await.is_err());
         assert_eq!(b.file("a.json").as_deref(), Some("{}"));
     }

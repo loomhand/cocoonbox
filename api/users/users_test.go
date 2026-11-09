@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -168,7 +169,7 @@ func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	gate := &gatedTenants{Tenants: userstest.NewTenants(), open: make(chan struct{})}
 	svc, err := Open(t.Context(), Options{
 		DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: gate,
-		FirstBoxID: firstBoxID, EnsureLimit: limit,
+		FirstBoxID: firstBoxID, EnsureLimit: limit, PasswordCost: bcrypt.MinCost,
 	})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -788,6 +789,40 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	}
 }
 
+func TestPasswordsAndTheUnknownNameCheckHashAtBcryptsDefaultCostUnlessTold(t *testing.T) {
+	for _, tc := range []struct{ cost, want int }{{0, bcrypt.DefaultCost}, {bcrypt.MinCost, bcrypt.MinCost}} {
+		svc, err := Open(t.Context(), Options{
+			DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: userstest.NewTenants(),
+			FirstBoxID: firstBoxID, EnsureLimit: 4, PasswordCost: tc.cost,
+		})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		t.Cleanup(svc.Close)
+		storedCost := func() int {
+			_, hash, err := svc.store.password(t.Context(), "qa1")
+			if err != nil {
+				t.Fatalf("read the password: %v", err)
+			}
+			cost, _ := bcrypt.Cost([]byte(hash))
+			return cost
+		}
+		u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
+		if got := storedCost(); got != tc.want {
+			t.Errorf("PasswordCost %d: Create hashes at %d, want %d", tc.cost, got, tc.want)
+		}
+		if err := svc.SetPassword(t.Context(), u.ID, password+" again"); err != nil {
+			t.Fatalf("SetPassword: %v", err)
+		}
+		if got := storedCost(); got != tc.want {
+			t.Errorf("PasswordCost %d: SetPassword hashes at %d, want %d", tc.cost, got, tc.want)
+		}
+		if got, _ := bcrypt.Cost(svc.dummyHash); got != tc.want {
+			t.Errorf("PasswordCost %d: the unknown-name check hashes at %d, want %d", tc.cost, got, tc.want)
+		}
+	}
+}
+
 type gatedTenants struct {
 	*userstest.Tenants
 	open         chan struct{}
@@ -847,7 +882,7 @@ func openTestService(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenan
 
 func openFlavored(t *testing.T, dsn string, gw GWKeys, tenants machines.Tenants, flavor machines.Flavor) *Service {
 	t.Helper()
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, BoxFlavor: flavor})
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, BoxFlavor: flavor, PasswordCost: bcrypt.MinCost})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

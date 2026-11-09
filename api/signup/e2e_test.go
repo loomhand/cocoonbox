@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
@@ -767,7 +768,7 @@ func (e *env) openUsers(t *testing.T) *users.Service {
 	t.Helper()
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: e.dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: e.gw, Tenants: userstest.NewTenants(),
-		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] }, EnsureLimit: 4,
+		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] }, EnsureLimit: 4, PasswordCost: bcrypt.MinCost,
 	})
 	if err != nil {
 		t.Fatalf("open users: %v", err)

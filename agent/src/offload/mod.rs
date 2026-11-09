@@ -85,6 +85,10 @@ pub enum Fail {
     /// Nothing changed; `extra` adds fields such as `findings`.
     Refused(String, Value),
     Failed(String),
+    Unconfirmed {
+        error: String,
+        seq: u64,
+    },
     Inbox(String),
 }
 
@@ -98,6 +102,12 @@ impl Fail {
             Self::Usage(e) => (2, "usage", e, Value::Null),
             Self::Refused(e, extra) => (3, "refused", e, extra),
             Self::Failed(e) => (1, "failed", e, Value::Null),
+            Self::Unconfirmed { error, seq } => (
+                1,
+                "delivery_unconfirmed",
+                error,
+                json!({"seq": seq, "delivery": "unconfirmed"}),
+            ),
             Self::Inbox(e) => (4, "inbox", e, Value::Null),
         };
         let mut out = json!({"ok": false, "code": code, "error": one_line(&error)});
@@ -253,9 +263,10 @@ pub async fn call(layout: &Layout, req: &Value) -> Result<Value, Fail> {
         .as_str()
         .unwrap_or("the inbox failed")
         .to_owned();
-    Err(match resp["code"].as_str() {
-        Some("invalid") => Fail::Usage(error),
-        Some("refused") => Fail::refused(error),
+    Err(match (resp["code"].as_str(), resp["seq"].as_u64()) {
+        (Some("invalid"), _) => Fail::Usage(error),
+        (Some("refused"), _) => Fail::refused(error),
+        (Some("delivery_unconfirmed"), Some(seq)) => Fail::Unconfirmed { error, seq },
         _ => Fail::Failed(error),
     })
 }
@@ -458,7 +469,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "begin" => packer::begin(layout, &a).await?,
         "send" => {
             if a.flag("message") || a.flag("back") {
-                packer::message(layout, &a, stdin_text().await?).await?
+                packer::message(layout, &a, stdin_text(handover::MAX_BODY).await?).await?
             } else {
                 let stdin = std::io::stdin();
                 packer::send(layout, &a, stdin).await?
@@ -491,7 +502,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         }
         "end" => packer::end(layout, &a.repo()?).await?,
         "restart" => call(layout, &json!({"op": "restart", "repo": a.repo()?})).await?,
-        "post" => packer::post(layout, &a, stdin_text().await?).await?,
+        "post" => packer::post(layout, &a, stdin_text(handover::MAX_BODY).await?).await?,
         "env" => {
             let repo = a.repo_or_env()?;
             let report = if a.flag("no-wait") {
@@ -516,7 +527,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "event" => {
             let payload = match a.positional.first() {
                 Some(p) => serde_json::from_str(p),
-                None => serde_json::from_str(&stdin_text().await?),
+                None => serde_json::from_str(&stdin_text(handover::MAX_PROMPT * 2).await?),
             }
             .unwrap_or(Value::Null);
             let mut req = json!({
@@ -547,11 +558,11 @@ fn read_index_file(path: &Path) -> Result<Index, String> {
     }
 }
 
-async fn stdin_text() -> Result<String, Fail> {
-    tokio::task::spawn_blocking(|| {
+async fn stdin_text(max: usize) -> Result<String, Fail> {
+    tokio::task::spawn_blocking(move || {
         let mut raw = Vec::new();
         std::io::stdin()
-            .take(handover::MAX_BODY as u64 + 1)
+            .take(max as u64 + 1)
             .read_to_end(&mut raw)
             .map(|_| String::from_utf8_lossy(&raw).into_owned())
             .map_err(|e| Fail::Usage(format!("read stdin: {e}")))
@@ -656,5 +667,41 @@ mod tests {
             let args = Args::parse(["--kind".to_owned(), kind.to_owned()]).unwrap();
             assert_eq!(args.kind().is_ok(), ok, "{kind}");
         }
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_delivery_keeps_its_seq_in_cli_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            state: dir.path().join("state"),
+            socket: dir.path().join("inbox.sock"),
+            secrets: dir.path().join("secrets"),
+            workspace: dir.path().join("workspace"),
+            home: dir.path().join("home"),
+            tmux: "tmux".into(),
+        };
+        let listener = tokio::net::UnixListener::bind(&layout.socket).unwrap();
+        let response = json!({"ok": false, "code": "delivery_unconfirmed", "error": "not confirmed", "seq": 7, "delivery": "unconfirmed"});
+        let expected = response.clone();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut stream)
+                .read_line(&mut line)
+                .await
+                .unwrap();
+            stream
+                .write_all(format!("{response}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+        let error = call(
+            &layout,
+            &json!({"op": "send", "repo": "0123456789ab", "body": "BACK"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.output(), (1, expected));
+        server.await.unwrap();
     }
 }

@@ -152,6 +152,8 @@ type Options struct {
 	BoxFlavor machines.Flavor
 	// EnsureLimit sizes the user lock pool, which bounds the creates Ensure runs at once.
 	EnsureLimit int32
+	// PasswordCost is the bcrypt cost of new passwords and of the unknown-name check; 0 is bcrypt.DefaultCost.
+	PasswordCost int
 }
 
 // record is a user row with the values the console never sees.
@@ -195,7 +197,8 @@ type Service struct {
 	boxFlavor    machines.Flavor
 	nextMiss     atomic.Int64
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
-	dummyHash []byte
+	dummyHash    []byte
+	passwordCost int
 
 	mu           sync.RWMutex
 	byID         map[string]record
@@ -231,13 +234,14 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	dummy, err := bcrypt.GenerateFromPassword([]byte(utils.RandomHex(secretBytes)), bcrypt.DefaultCost)
+	cost := cmp.Or(opts.PasswordCost, bcrypt.DefaultCost)
+	dummy, err := bcrypt.GenerateFromPassword([]byte(utils.RandomHex(secretBytes)), cost)
 	if err != nil {
 		st.close()
 		return nil, err
 	}
 	s := &Service{
-		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, boxFlavor: opts.BoxFlavor, dummyHash: dummy,
+		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, boxFlavor: opts.BoxFlavor, dummyHash: dummy, passwordCost: cost,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
 		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
@@ -566,7 +570,7 @@ func (s *Service) SetPassword(ctx context.Context, id, password string) error {
 	if _, err := s.record(id); err != nil {
 		return err
 	}
-	hash, err := hashPassword(password)
+	hash, err := hashPassword(password, s.passwordCost)
 	if err != nil {
 		return err
 	}
@@ -894,7 +898,7 @@ func (s *Service) admissible(nu NewUser) ([]byte, error) {
 	var hash []byte
 	if nu.Password != "" {
 		var err error
-		if hash, err = hashPassword(nu.Password); err != nil {
+		if hash, err = hashPassword(nu.Password, s.passwordCost); err != nil {
 			return nil, err
 		}
 	}
@@ -1198,11 +1202,11 @@ func liveIn(parent context.Context, lives map[string]life, key string) context.C
 	return l.ctx
 }
 
-func hashPassword(password string) ([]byte, error) {
+func hashPassword(password string, cost int) ([]byte, error) {
 	if len(password) < minPassword || len(password) > maxPassword {
 		return nil, fmt.Errorf("%w: a password is %d to %d bytes", ErrInvalid, minPassword, maxPassword)
 	}
-	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return bcrypt.GenerateFromPassword([]byte(password), cost)
 }
 
 func deref[T any](p *T, def T) T {
