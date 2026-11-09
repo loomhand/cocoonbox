@@ -41,7 +41,9 @@ def handle(client: socket.socket) -> None:
                 upstream = socket.create_connection((url.hostname, url.port or 80), 30)
                 path = (url.path or "/") + ("?" + url.query if url.query else "")
                 headers = [h for h in lines[1:] if h.split(":", 1)[0].strip().lower() not in HOP]
-                upstream.sendall("\r\n".join([f"{method} {path} {version}", *headers, "Connection: close", "", ""]).encode("latin-1"))
+                upstream.sendall(
+                    "\r\n".join([f"{method} {path} {version}", *headers, "Connection: close", "", ""]).encode("latin-1")
+                )
         except (OSError, ValueError) as e:
             print(f"cut-proxy: {method} {target}: {e}", file=sys.stderr, flush=True)
             client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")

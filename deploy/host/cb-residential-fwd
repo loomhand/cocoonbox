@@ -10,6 +10,7 @@ env:   RESIDENTIAL_UPSTREAM=host:port  RESIDENTIAL_AUTH=user:pass
 """
 
 import base64
+import contextlib
 import os
 import socket
 import socketserver
@@ -95,10 +96,8 @@ def pipe(a: socket.socket, b: socket.socket) -> None:
         except OSError:
             pass
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 dst.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
 
     back = threading.Thread(target=copy, args=(b, a), daemon=True)
     back.start()

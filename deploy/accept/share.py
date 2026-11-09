@@ -41,14 +41,21 @@ print(rx.value, ry.value)
 
 class Console:
     def __init__(self, name):
-        status, headers, body = http("POST", "/cb/api/login", {"name": name, "password": os.environ[name.upper() + "_PASSWORD"]})
+        status, headers, body = http(
+            "POST", "/cb/api/login", {"name": name, "password": os.environ[name.upper() + "_PASSWORD"]}
+        )
         if status != 200:
             sys.exit(f"sign-in of {name} failed: {status} {body[:200]!r}")
         self.name = name
         self.cookie = headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
 
     def call(self, method, path, body=None):
-        status, _, raw = http(method, "/cb/api/" + path, None if method == "GET" else (body or {}), {"Cookie": "cb_session=" + self.cookie})
+        status, _, raw = http(
+            method,
+            "/cb/api/" + path,
+            None if method == "GET" else (body or {}),
+            {"Cookie": "cb_session=" + self.cookie},
+        )
         return status, (json.loads(raw) if raw.strip() else None)
 
     def token(self):
@@ -109,11 +116,18 @@ class Viewer:
 
     def __init__(self, secret, cookie=None):
         u = urlsplit(ENDPOINT)
-        self.sock = ssl.create_default_context().wrap_socket(socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname)
+        self.sock = ssl.create_default_context().wrap_socket(
+            socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname
+        )
         key = base64.b64encode(os.urandom(16)).decode()
         lines = [
-            "GET /cb/s/ws HTTP/1.1", f"Host: {u.hostname}", "Upgrade: websocket", "Connection: Upgrade",
-            f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13", f"Origin: {ENDPOINT}",
+            "GET /cb/s/ws HTTP/1.1",
+            f"Host: {u.hostname}",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            f"Sec-WebSocket-Key: {key}",
+            "Sec-WebSocket-Version: 13",
+            f"Origin: {ENDPOINT}",
         ]
         if cookie:
             lines.append("Cookie: cb_session=" + cookie)
@@ -213,12 +227,15 @@ class Viewer:
             except (EOFError, OSError):
                 pass
             self.ended = time.time()
+
         threading.Thread(target=run, daemon=True).start()
 
 
 def raw_stream(path, headers):
     u = urlsplit(ENDPOINT)
-    sock = ssl.create_default_context().wrap_socket(socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname)
+    sock = ssl.create_default_context().wrap_socket(
+        socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname
+    )
     lines = [f"GET {path} HTTP/1.1", f"Host: {u.hostname}", "Accept: text/event-stream", "Connection: close"]
     lines += [f"{k}: {v}" for k, v in headers.items()]
     sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
@@ -227,10 +244,24 @@ def raw_stream(path, headers):
 
 def grpc(token_var, method, body, box):
     args = [
-        "grpcurl", "-expand-headers", "-import-path", str(PROTO),
-        "-proto", "cocoonbox/control/v1/boxes.proto", "-proto", "cocoonbox/agent/v1/agents.proto", "-proto", "cocoonbox/agent/v1/session.proto",
-        "-H", "authorization: Bearer ${" + token_var + "}", "-H", "x-cocoonbox-box: " + box,
-        "-d", json.dumps(body), urlsplit(ENDPOINT).hostname + ":443", method,
+        "grpcurl",
+        "-expand-headers",
+        "-import-path",
+        str(PROTO),
+        "-proto",
+        "cocoonbox/control/v1/boxes.proto",
+        "-proto",
+        "cocoonbox/agent/v1/agents.proto",
+        "-proto",
+        "cocoonbox/agent/v1/session.proto",
+        "-H",
+        "authorization: Bearer ${" + token_var + "}",
+        "-H",
+        "x-cocoonbox-box: " + box,
+        "-d",
+        json.dumps(body),
+        urlsplit(ENDPOINT).hostname + ":443",
+        method,
     ]
     out = subprocess.run(args, capture_output=True, text=True, timeout=600)
     return out.returncode, out.stdout, out.stderr
@@ -265,7 +296,10 @@ def cut_check(what, share, action):
     deadline = time.time() + 5
     while b"\r\n\r\n" not in stream.data and time.time() < deadline:
         time.sleep(0.02)
-    check(reply.get("ok") and stream.ended is None and viewer.ended is None, f"{what}: the page and a guest MCP stream are open")
+    check(
+        reply.get("ok") and stream.ended is None and viewer.ended is None,
+        f"{what}: the page and a guest MCP stream are open",
+    )
     started = action()
     mcp_end = stream.wait(5)
     deadline = time.time() + 5
@@ -277,7 +311,10 @@ def cut_check(what, share, action):
     status, _ = MCP(guest.path, secret).post("ping")
     check(status == 403, f"{what}: the old link answers {status} on MCP, want 403 (PermissionDenied)")
     again = Viewer(secret)
-    check(again.status == 101 and again.reply().get("code") == "permissiondenied", f"{what}: the old link's page is refused with PermissionDenied")
+    check(
+        again.status == 101 and again.reply().get("code") == "permissiondenied",
+        f"{what}: the old link's page is refused with PermissionDenied",
+    )
 
 
 def main():
@@ -305,8 +342,10 @@ def main():
     viewer = Viewer(secret)
     check(viewer.status == 101 and viewer.reply().get("ok"), "the page's WebSocket admits the link's secret")
     version, types, result, width, height = viewer.handshake()
-    check(version.startswith(b"RFB 003.00") and types == b"\x01" and result == 0 and (width, height) == (1280, 800),
-          f"RFB handshake through the bridge: {version!r}, security {types!r}, {width}x{height}")
+    check(
+        version.startswith(b"RFB 003.00") and types == b"\x01" and result == 0 and (width, height) == (1280, 800),
+        f"RFB handshake through the bridge: {version!r}, security {types!r}, {width}x{height}",
+    )
     check(viewer.update(), "a framebuffer update reaches the viewer")
     target = ((before or (0, 0))[0] + 333) % width, ((before or (0, 0))[1] + 222) % height
     viewer.send(struct.pack(">BBHH", 5, 1, *target) + struct.pack(">BBHH", 5, 0, *target))
@@ -326,20 +365,38 @@ def main():
     status, out = guest.call("screenshot", {"max_edge": 320})
     check(status == 200 and not out.get("result", {}).get("isError"), "a guest screenshot works")
     note("Manual: open the link in a browser; the screen shows and ignores the mouse and keys.")
-    note("Manual: claude mcp add ... with the share snippet; `claude mcp list` shows it and /mcp lists only the read-only tools.")
+    note(
+        "Manual: claude mcp add ... with the share snippet; "
+        "`claude mcp list` shows it and /mcp lists only the read-only tools."
+    )
 
     print("== 2. allow write, then take it back")
     qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": True})
     status, out = guest.call("shell", {"command": "echo guest-write"})
     check("guest-write" in json.dumps(out.get("result", {})), "with write on, the next guest shell call runs")
     status, tools = guest.tools()
-    check(not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
-          "with write on the guest lists no lifecycle tool and no FillCredential")
-    status, _, _ = http("POST", "/cocoonbox.mcp/control", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, {"Authorization": "Bearer " + secret})
+    check(
+        not {"fill_credential", "box_ensure", "box_save", "box_upgrade", "box_hibernate"} & set(tools),
+        "with write on the guest lists no lifecycle tool and no FillCredential",
+    )
+    status, _, _ = http(
+        "POST",
+        "/cocoonbox.mcp/control",
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        {"Authorization": "Bearer " + secret},
+    )
     check(status == 401, f"the control MCP refuses the share secret ({status})")
     os.environ["SHARE_SECRET"] = secret
-    code, _, err = grpc("SHARE_SECRET", "cocoonbox.agent.v1.Session/FillCredential", {"origin": "https://example.com", "username": "u", "password": "p"}, box)
-    check(code != 0 and "Unauthenticated" in err, "Session.FillCredential with the share secret is refused (Unauthenticated)")
+    code, _, err = grpc(
+        "SHARE_SECRET",
+        "cocoonbox.agent.v1.Session/FillCredential",
+        {"origin": "https://example.com", "username": "u", "password": "p"},
+        box,
+    )
+    check(
+        code != 0 and "Unauthenticated" in err,
+        "Session.FillCredential with the share secret is refused (Unauthenticated)",
+    )
     qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": False})
     status, out = guest.call("shell", {"command": "echo again"})
     check(out.get("error", {}).get("code") == -32602, "with write off again, the next guest shell call is refused")
@@ -350,11 +407,16 @@ def main():
     check(status == 200 and named["share"]["users"] == ["qa2"], "qa1 creates a share for qa2")
     check(MCP(path, named["secret"]).open() == 401, "the link alone is refused (401)")
     check(MCP(path, named["secret"], os.environ["QA2_TOKEN"]).open() == 200, "the link with qa2's token is admitted")
-    check(MCP(path, named["secret"], os.environ["QA3_TOKEN"]).open() == 403, "the link with qa3's token is refused (403)")
+    check(
+        MCP(path, named["secret"], os.environ["QA3_TOKEN"]).open() == 403, "the link with qa3's token is refused (403)"
+    )
     page = Viewer(named["secret"])
     check(page.reply().get("code") == "unauthenticated", "the page without a console session asks to sign in")
     check(Viewer(named["secret"], qa2.cookie).reply().get("ok"), "the page with qa2's console session is admitted")
-    check(Viewer(named["secret"], qa3.cookie).reply().get("code") == "permissiondenied", "the page with qa3's console session is refused")
+    check(
+        Viewer(named["secret"], qa3.cookie).reply().get("code") == "permissiondenied",
+        "the page with qa3's console session is refused",
+    )
 
     print("== 4. who shows as an agent")
     names = [a["name"] for a in agents(box)]
@@ -372,7 +434,9 @@ def main():
     marker = f"/tmp/share-accept-{os.getpid()}"
 
     def slow():
-        status, out = worker.call("shell", {"command": f"touch {marker}; sleep 15; echo slept; rm -f {marker}", "timeout_s": 120})
+        status, out = worker.call(
+            "shell", {"command": f"touch {marker}; sleep 15; echo slept; rm -f {marker}", "timeout_s": 120}
+        )
         done["at"], done["out"] = time.time(), json.dumps(out.get("result", {}))
 
     thread = threading.Thread(target=slow)
@@ -389,7 +453,9 @@ def main():
     rebased = time.time()
     thread.join()
     check("slept" in done.get("out", ""), "the guest's shell call ran to its end")
-    check(rebased > done.get("at", rebased + 1), f"the Rebase finished {rebased - done.get('at', 0):.1f}s after the call")
+    check(
+        rebased > done.get("at", rebased + 1), f"the Rebase finished {rebased - done.get('at', 0):.1f}s after the call"
+    )
     check('"PHASE_DONE"' in events, "the Rebase is done")
     control.call("box_ensure", {"wait": True})
 

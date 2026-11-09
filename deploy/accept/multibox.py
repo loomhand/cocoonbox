@@ -3,7 +3,8 @@
 
 A scratch user (CB_USER, default mb1) exists with max boxes 2 and exactly one box, main; its console password comes
 from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses the real
-users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the state store's credentials, which it only reads.
+users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the
+state store's credentials, which it only reads.
 A failed run can leave the box test; delete it in the console before the next run.
 """
 
@@ -58,17 +59,22 @@ def claims():
 
 
 def stored(key):
-    script = (". /etc/cocoonbox/store.env; set -- $(python3 -c 'import yaml; s = yaml.safe_load(open(\"/etc/cocoonbox/api.yaml\"))[\"state\"]; "
-              "print(\"https\" if s.get(\"secure\") else \"http\", s[\"endpoint\"], s[\"bucket\"], s.get(\"region\") or \"us-east-1\")'); "
-              "printf 'user = \"%s:%s\"\\n' \"$STORE_ACCESS_KEY\" \"$STORE_SECRET_KEY\" | "
-              "curl -sf -o /dev/null -I -K - --aws-sigv4 \"aws:amz:$4:s3\" \"$1://$2/$3/" + key + "\"")
+    script = (
+        ". /etc/cocoonbox/store.env; set -- $(python3 -c 'import yaml; "
+        's = yaml.safe_load(open("/etc/cocoonbox/api.yaml"))["state"]; '
+        'print("https" if s.get("secure") else "http", s["endpoint"], s["bucket"], s.get("region") or "us-east-1")\'); '
+        'printf \'user = "%s:%s"\\n\' "$STORE_ACCESS_KEY" "$STORE_SECRET_KEY" | '
+        'curl -sf -o /dev/null -I -K - --aws-sigv4 "aws:amz:$4:s3" "$1://$2/$3/' + key + '"'
+    )
     return sudo("sh", "-c", script).returncode == 0
 
 
 def main():
     if USER in REAL:
         sys.exit(f"{USER} is a real user; run this with a scratch user only")
-    status, headers, body = http("POST", "/cb/api/login", {"name": USER, "password": os.environ[USER.upper() + "_PASSWORD"]})
+    status, headers, body = http(
+        "POST", "/cb/api/login", {"name": USER, "password": os.environ[USER.upper() + "_PASSWORD"]}
+    )
     if status != 200:
         sys.exit(f"sign-in of {USER} failed: {status}")
     cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
@@ -78,7 +84,10 @@ def main():
     if uid in REAL or me["user"]["name"] in REAL:
         sys.exit(f"{USER} has id {uid}, a real user")
     if me["user"]["max_boxes"] != 2 or [b["name"] for b in me["boxes"]] != ["main"]:
-        sys.exit(f"{USER} needs max boxes 2 and only its box main; it has max boxes {me['user']['max_boxes']} and boxes {[b['name'] for b in me['boxes']]}")
+        sys.exit(
+            f"{USER} needs max boxes 2 and only its box main; "
+            f"it has max boxes {me['user']['max_boxes']} and boxes {[b['name'] for b in me['boxes']]}"
+        )
     _, _, raw = http("POST", "/cb/api/me/token", {}, cookie)
     token = json.loads(raw)["token"]
 
@@ -96,15 +105,24 @@ def main():
     check(result.get("structuredContent", {}).get("state") == "running", f"main ({main_id}) runs")
 
     _, result, _ = control.tool("box_create", {"name": "test"})
-    check(result.get("isError") and f"box main ({main_id}) is running" in text(result), "1. creating test while main runs is refused, naming main: " + text(result)[:160])
+    check(
+        result.get("isError") and f"box main ({main_id}) is running" in text(result),
+        "1. creating test while main runs is refused, naming main: " + text(result)[:160],
+    )
     _, result, _ = control.tool("box_hibernate", {"box": "main"})
     check(result.get("structuredContent", {}).get("state") == "hibernated", "1. main hibernates")
     started = time.time()
     _, result, _ = control.tool("box_create", {"name": "test"})
     test_id = result.get("structuredContent", {}).get("box_id", "")
-    check(result.get("structuredContent", {}).get("state") == "running", f"1. test ({test_id}) is created and runs in {time.time() - started:.0f}s")
+    check(
+        result.get("structuredContent", {}).get("state") == "running",
+        f"1. test ({test_id}) is created and runs in {time.time() - started:.0f}s",
+    )
     _, result, _ = control.tool("box_ensure", {"box": "main"})
-    check(result.get("isError") and f"box test ({test_id}) is running" in text(result), "1. waking main while test runs is refused, naming test")
+    check(
+        result.get("isError") and f"box test ({test_id}) is running" in text(result),
+        "1. waking main while test runs is refused, naming test",
+    )
 
     # clones share a hostname, so each box answers from its own identity file
     hosts = {}
@@ -125,7 +143,10 @@ def main():
     # no box runs, so the running limit cannot answer first
     control.tool("box_hibernate", {"box": "main"})
     _, result, _ = control.tool("box_create", {"name": "third"})
-    check(result.get("isError") and "quota" in text(result), "3. a third box is refused by max boxes: " + text(result)[:120])
+    check(
+        result.get("isError") and "quota" in text(result),
+        "3. a third box is refused by max boxes: " + text(result)[:120],
+    )
 
     other = box_id("dev")
     status, _ = MCP("/cocoonbox.mcp/" + other, token).post("ping")
@@ -134,21 +155,36 @@ def main():
     check(result.get("isError") and "no box" in text(result), "5. the control MCP refuses another user's box id")
 
     control.tool("box_ensure", {"box": "test"})
-    machines = [r["metadata"]["cb_machine"] for r in claims() if (r.get("metadata") or {}).get("cb_machine", "").startswith(test_id)]
+    machines = [
+        r["metadata"]["cb_machine"]
+        for r in claims()
+        if (r.get("metadata") or {}).get("cb_machine", "").startswith(test_id)
+    ]
     _, result, notes = control.tool("box_delete", {"box": "test", "confirm": True}, progress=True)
     check(result.get("structuredContent", {}).get("box_id") == test_id, "4. box_delete test")
-    check(any(n.startswith("saving:") for n in notes) and any(n.startswith("deleting:") for n in notes), "4. the delete saved before it removed the machine: " + " | ".join(notes[-3:])[:200])
+    check(
+        any(n.startswith("saving:") for n in notes) and any(n.startswith("deleting:") for n in notes),
+        "4. the delete saved before it removed the machine: " + " | ".join(notes[-3:])[:200],
+    )
     left = [r for r in claims() if (r.get("metadata") or {}).get("cb_machine", "").startswith(test_id)]
     check(machines and not left, f"4. test's claims {machines} are released")
     check(stored(f"{uid}/boxes/{test_id}/head.json"), "4. test's last snapshot is still in the store")
     _, result, _ = control.tool("box_list")
     check([b["name"] for b in result.get("structuredContent", {}).get("boxes", [])] == ["main"], "4. only main is left")
     _, result, _ = control.tool("box_ensure", {"box": "main"})
-    check(result.get("structuredContent", {}).get("state") == "running", "4. main still wakes with the user's gw key in place")
+    check(
+        result.get("structuredContent", {}).get("state") == "running",
+        "4. main still wakes with the user's gw key in place",
+    )
     control.tool("box_hibernate", {"box": "main"})
 
-    print("manual: one Claude Code session through the bridge (cocoonbox mcp, no restart and no config change): box_list,")
-    print("        box_create test, box_ensure test, shell uname -n with box=test and with box=main, then box_delete test.")
+    print(
+        "manual: one Claude Code session through the bridge (cocoonbox mcp, no restart and no config change): box_list,"
+    )
+    print(
+        "        box_create test, box_ensure test, shell uname -n with box=test and with box=main, "
+        "then box_delete test."
+    )
     print(f"{len(failures)} failed" if failures else "all passed")
     return 1 if failures else 0
 
