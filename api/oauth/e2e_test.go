@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -691,7 +693,7 @@ func newEnv(t *testing.T) *env {
 	dsn := clustertest.EmptyDSN(t)
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: userstest.NewTenants(),
-		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] }, EnsureLimit: 4,
+		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] }, EnsureLimit: 4, PasswordCost: bcrypt.MinCost,
 	})
 	if err != nil {
 		t.Fatalf("open users: %v", err)

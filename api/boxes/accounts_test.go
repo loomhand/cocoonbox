@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -97,7 +99,7 @@ type disableEnv struct {
 func newDisableEnv(t *testing.T) *disableEnv {
 	t.Helper()
 	gw := userstest.NewGW()
-	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: userstest.NewTenants(), FirstBoxID: BoxID, EnsureLimit: 4})
+	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: userstest.NewTenants(), FirstBoxID: BoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost})
 	if err != nil {
 		t.Fatalf("open users: %v", err)
 	}

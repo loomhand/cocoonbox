@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -164,7 +166,7 @@ func openUsers(t *testing.T, dsn string) *users.Service {
 	t.Helper()
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: userstest.NewGW(), Tenants: userstest.NewTenants(),
-		FirstBoxID: func(user string) string { return "cb-" + utils.HashHex(user)[:12] }, EnsureLimit: 4,
+		FirstBoxID: func(user string) string { return "cb-" + utils.HashHex(user)[:12] }, EnsureLimit: 4, PasswordCost: bcrypt.MinCost,
 	})
 	if err != nil {
 		t.Fatalf("open users: %v", err)
