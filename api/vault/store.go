@@ -52,7 +52,6 @@ func (s *store) secrets(ctx context.Context, owner string) ([]*secret, error) {
 	return pgx.CollectRows(rows, scanSecret)
 }
 
-// versions returns every owner's key ids with their versions.
 func (s *store) versions(ctx context.Context) (map[string][]string, error) {
 	rows, err := s.pool.Query(ctx, "SELECT owner, id || ':' || version FROM vault_secrets")
 	if err != nil {

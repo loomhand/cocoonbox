@@ -168,19 +168,19 @@ func TestTokenEndpointRefusesABadRedemption(t *testing.T) {
 			v := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect}, "code_verifier": {verifier}}
 			bad := v.Clone()
 			tt.mutate(bad)
-			if status, body := e.tokenError(t, bad); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
-				t.Errorf("%d %s, want invalid_grant", status, body)
+			if st, body := e.tokenError(t, bad); st != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+				t.Errorf("%d %s, want invalid_grant", st, body)
 			}
-			if status, body := e.tokenError(t, v); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
-				t.Errorf("the right redemption after a refused one: %d %s, want invalid_grant", status, body)
+			if st, body := e.tokenError(t, v); st != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+				t.Errorf("the right redemption after a refused one: %d %s, want invalid_grant", st, body)
 			}
 		})
 	}
 	code, verifier, redirect := e.code(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 	v := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect}, "code_verifier": {verifier}}
 	e.token(t, v)
-	if status, body := e.tokenError(t, v); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
-		t.Errorf("a code redeemed twice: %d %s", status, body)
+	if st, body := e.tokenError(t, v); st != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+		t.Errorf("a code redeemed twice: %d %s", st, body)
 	}
 }
 
@@ -208,13 +208,13 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			q := base()
 			tt.mutate(q)
-			status, body := e.consoleStatus(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()})
+			st, body := e.consoleStatus(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()})
 			var refusal struct {
 				Redirect string `json:"redirect"`
 			}
 			_ = json.Unmarshal([]byte(body), &refusal)
-			if status != http.StatusBadRequest || (refusal.Redirect != "") != tt.redirect {
-				t.Errorf("%d %s, want 400 with redirect %t", status, body, tt.redirect)
+			if st != http.StatusBadRequest || (refusal.Redirect != "") != tt.redirect {
+				t.Errorf("%d %s, want 400 with redirect %t", st, body, tt.redirect)
 			}
 			if tt.redirect && (!strings.Contains(refusal.Redirect, "state=st") || !strings.HasPrefix(refusal.Redirect, "http://127.0.0.1/callback?")) {
 				t.Errorf("redirect = %q", refusal.Redirect)
@@ -577,8 +577,8 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 	} {
 		q := authorizeQuery(clientID, strings.Repeat("v", 43), tc.scope)
 		body := map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "connectors": []string{tc.connector}}
-		if status, text := e.consoleStatus(t, http.MethodPost, "oauth/approve", body); status != http.StatusBadRequest {
-			t.Errorf("approve %s with %q: %d %s, want 400", tc.connector, tc.scope, status, text)
+		if st, text := e.consoleStatus(t, http.MethodPost, "oauth/approve", body); st != http.StatusBadRequest {
+			t.Errorf("approve %s with %q: %d %s, want 400", tc.connector, tc.scope, st, text)
 		}
 	}
 
@@ -622,11 +622,11 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 	if names := slices.Collect(maps.Keys(e.rootTools(t, e.userToken))); slices.Contains(names, "mock_list_items") {
 		t.Errorf("the user token on the unified MCP lists %v, want no account tools", names)
 	}
-	if status, _ := e.door(t, access); status != http.StatusUnauthorized {
-		t.Errorf("the mode B door answers an access token with %d, want 401", status)
+	if st, _ := e.door(t, access); st != http.StatusUnauthorized {
+		t.Errorf("the mode B door answers an access token with %d, want 401", st)
 	}
-	if status, body := e.door(t, e.userToken); status != http.StatusOK || !strings.Contains(body, "mock_list_items") || !strings.Contains(body, "other_list_items") {
-		t.Errorf("the mode B door for the user token: %d %s", status, body)
+	if st, body := e.door(t, e.userToken); st != http.StatusOK || !strings.Contains(body, "mock_list_items") || !strings.Contains(body, "other_list_items") {
+		t.Errorf("the mode B door for the user token: %d %s", st, body)
 	}
 }
 
@@ -906,9 +906,9 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 
 func (e *env) console(t *testing.T, method, path string, body, out any) {
 	t.Helper()
-	status, data := e.consoleStatus(t, method, path, body)
-	if status >= http.StatusMultipleChoices {
-		t.Fatalf("%s %s: %d %s", method, path, status, data)
+	st, data := e.consoleStatus(t, method, path, body)
+	if st >= http.StatusMultipleChoices {
+		t.Fatalf("%s %s: %d %s", method, path, st, data)
 	}
 	if out != nil {
 		if err := json.Unmarshal([]byte(data), out); err != nil {

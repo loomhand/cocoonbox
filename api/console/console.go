@@ -164,7 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Security-Policy", csp)
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		// A JSON body is not a simple request, so a cross-site form or fetch cannot send one without a preflight.
+		// a JSON body is not a simple request, so a cross-site form or fetch cannot send one without a preflight.
 		if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
 			writeError(w, http.StatusUnsupportedMediaType, "requests must send application/json")
 			return

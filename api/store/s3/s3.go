@@ -126,7 +126,7 @@ func (s *S3) GetVersion(ctx context.Context, key string) ([]byte, string, error)
 	if err != nil {
 		return nil, "", fmt.Errorf("read %s: %w", key, err)
 	}
-	// After a read, Stat answers from the same GET response, so the version matches data.
+	// after a read, Stat answers from the same GET response, so the version matches data.
 	info, err := obj.Stat()
 	if err != nil {
 		return nil, "", fmt.Errorf("stat %s: %w", key, err)

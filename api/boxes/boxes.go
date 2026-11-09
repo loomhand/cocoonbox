@@ -504,7 +504,7 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	}
 	held := time.Now()
 	return func() {
-		// The next holder in another process reads the operations from the table, so the ones written under the lock reach it first.
+		// the next holder in another process reads the operations from the table, so the ones written under the lock reach it first.
 		if keys := s.ops.heldSince(user, held); len(keys) > 0 {
 			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 			if err := s.mirror.FlushKeys(flushCtx, keys); err != nil {

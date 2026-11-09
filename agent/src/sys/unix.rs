@@ -64,8 +64,7 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// Opens a pseudo-terminal of `rows` by `cols`; returns its non-blocking master end and its
-/// slave end, both close-on-exec.
+/// Opens a pseudo-terminal of `rows` by `cols`; returns its non-blocking master and slave ends, both close-on-exec.
 pub fn openpty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {
     let (mut master, mut slave) = (-1, -1);
     let size = winsize(rows, cols);
@@ -216,8 +215,7 @@ pub fn group_id(name: &str) -> Option<u32> {
     (rc == 0 && !found.is_null()).then_some(group.gr_gid)
 }
 
-/// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path
-/// or symlink that leaves `dir` fails with `EXDEV`.
+/// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path or symlink that leaves `dir` fails with `EXDEV`.
 #[cfg(target_os = "linux")]
 pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
     let path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
@@ -243,8 +241,7 @@ pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an
-/// absolute path or any symlink fails with `EXDEV`.
+/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an absolute path or any symlink fails with `EXDEV`.
 #[cfg(target_os = "macos")]
 pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
     let rel = super::beneath(path)?;

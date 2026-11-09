@@ -58,7 +58,7 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 
 func (s *Service) provisionStale(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.provisionStale")
-	// The keys are read before the machines, so a key issued after the listing never counts as ended.
+	// the keys are read before the machines, so a key issued after the listing never counts as ended.
 	keys, err := s.accounts.MachineKeys(ctx, "")
 	if err != nil {
 		logger.Error(ctx, err, "list machine keys")
