@@ -145,12 +145,15 @@ func TestASharedGCAndAnUploadingSaveOfOneProcessBothFinish(t *testing.T) {
 	}
 }
 
-func TestASharedSaveWhoseUserStateIsDeletedDuringItsUploadLeavesNothing(t *testing.T) {
+func TestASaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothing(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
 	layer := st.layer(agent)
-	layer.shared = clustertest.Open(t)
-	svc := &Service{state: layer}
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	other := st.layer(agent)
+	other.shared = clustertest.OpenReplica(t, dsn)
+	svc := &Service{state: other}
 	p := statePath{user: alice, box: aliceBox}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
 	saveLive(t, layer, p, "a")

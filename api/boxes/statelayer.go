@@ -85,6 +85,7 @@ type snapshotRecord struct {
 	Chunks []chunk `json:"chunks"`
 
 	indexGeneration int64
+	indexed         bool
 }
 
 // timeline lists a box's kept snapshots; the GC prunes it and every reader takes the kept set from it.
@@ -169,7 +170,6 @@ type stateLayer struct {
 
 	mu    sync.Mutex
 	users map[string]*sync.RWMutex
-	gone  map[string]bool
 	heads map[statePath]head
 	// dropped counts the invalidations, so a head read before one is not cached after it.
 	dropped uint64
@@ -182,7 +182,7 @@ type stateLayer struct {
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves),
-		users: map[string]*sync.RWMutex{}, gone: map[string]bool{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{}, failed: map[statePath]time.Time{},
 	}
 }
@@ -260,20 +260,18 @@ func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, e
 }
 
 func (l *stateLayer) finish(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, image string, parked bool, h head) error {
-	l.mu.Lock()
-	gone := l.gone[p.user]
-	l.mu.Unlock()
-	if gone {
-		_, err := DeleteState(ctx, l.store, p.user)
-		return errors.Join(errStateDeleted, err)
-	}
 	now := time.Now()
 	rec.SavedAtMs = now.UnixMilli()
 	base, err := l.deltaBase(ctx, p, now)
 	if err != nil {
 		return err
 	}
-	return l.commit(ctx, p, keyID, rec, base, head{Image: image, Parked: parked, version: h.version})
+	err = l.commit(ctx, p, keyID, rec, base, head{Image: image, Parked: parked, version: h.version})
+	if errors.Is(err, errStateDeleted) {
+		_, deleteErr := DeleteState(ctx, l.store, p.user)
+		return errors.Join(err, deleteErr)
+	}
+	return err
 }
 
 func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
@@ -302,11 +300,11 @@ func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, 
 	if rec == nil {
 		return nil, errors.New("plan: agent sent no plan")
 	}
-	stored, generation, err := l.index(ctx, p, key.GetKeyId())
+	stored, generation, indexed, err := l.index(ctx, p, key.GetKeyId())
 	if err != nil {
 		return nil, err
 	}
-	rec.indexGeneration = generation
+	rec.indexGeneration, rec.indexed = generation, indexed
 	var missing []chunk
 	seen := map[string]bool{}
 	for _, c := range rec.Chunks {
@@ -461,7 +459,7 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	if err := l.retry(ctx, func() error { return l.putRecord(ctx, p, rec, base) }); err != nil {
 		return err
 	}
-	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks, rec.indexGeneration) }); err != nil {
+	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec) }); err != nil {
 		return err
 	}
 	if err := l.retry(ctx, func() error { return l.addToTimeline(ctx, p, rec.timelineEntry) }); err != nil {
@@ -494,16 +492,19 @@ func (l *stateLayer) swapHead(ctx context.Context, p statePath, h head) (int64, 
 	return next, err
 }
 
-// addToIndex merges chunks into the user's index, failing the save when a gc rewrote the index after its read at generation.
-func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk, generation int64) error {
+// addToIndex merges rec's chunks into the user's index, failing the save when a gc rewrote the index after the save read it or the user's state was deleted since.
+func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, rec *snapshotRecord) error {
 	unlock := l.locks.Lock(p.index())
 	defer unlock()
-	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, _ bool) (bool, error) {
-		if idx.Generation != generation {
+	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, found bool) (bool, error) {
+		switch {
+		case rec.indexed && !found:
+			return false, errStateDeleted
+		case idx.Generation != rec.indexGeneration:
 			return false, errIndexCollected
 		}
 		stored := idx.stored(keyID)
-		for _, c := range chunks {
+		for _, c := range rec.Chunks {
 			stored[c.ID] = true
 		}
 		idx.KeyID, idx.Chunks = keyID, slices.Sorted(maps.Keys(stored))
@@ -579,7 +580,7 @@ func (l *stateLayer) pinned(ctx context.Context, p statePath) (map[string]bool, 
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
 	err := fn()
-	for attempt := 1; err != nil && !errors.Is(err, store.ErrStale) && !errors.Is(err, errIndexCollected) && attempt < commitAttempts; attempt++ {
+	for attempt := 1; err != nil && !errors.Is(err, store.ErrStale) && !errors.Is(err, errIndexCollected) && !errors.Is(err, errStateDeleted) && attempt < commitAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
 			return err
@@ -714,12 +715,16 @@ func (l *stateLayer) invalidateAll() {
 	l.dropped++
 }
 
-func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, error) {
+func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, bool, error) {
 	var idx chunkIndex
-	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, 0, err
+	err := getJSON(ctx, l.store, p.index(), &idx)
+	if errors.Is(err, store.ErrNotFound) {
+		return idx.stored(keyID), 0, false, nil
 	}
-	return idx.stored(keyID), idx.Generation, nil
+	if err != nil {
+		return nil, 0, false, err
+	}
+	return idx.stored(keyID), idx.Generation, true, nil
 }
 
 func (l *stateLayer) userLock(user string) *sync.RWMutex {
