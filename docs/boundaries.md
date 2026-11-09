@@ -31,7 +31,7 @@ Each component is a stack; a layer calls only the interface of the layer directl
 gRPC services (Boxes) · edge (gRPC + MCP proxy)
         │ machines.Machines: lifecycle (Ensure / Get / List / Hibernate / Delete / Watch / Changes),
         │   Address, SetMeta, Deliver, SetCredentials, DropMissing, SetEgress
-        │ machines.Tenants: PutTenant / DeleteTenant
+        │ machines.Tenants: PutTenant / DeleteTenant / StaleTenants
         ▼
 backend: sandboxd (claims and tenants on the cbsbx instance, one client)
 ```
@@ -82,4 +82,4 @@ Consequences:
 **`user` has passwordless sudo since desktop v10.** The in-box split between `user`, `cbagent` and root no longer protects anything from the desktop user or from the tools agents run as `user`: they can read `agent.env`, `/var/lib/cocoonbox` (agent.db) and the identity file, and replace the agent binary. Both invariants still hold, because neither relies on that split:
 - No cross-box path: box isolation lives on the host (the sandboxd none lane: no NIC, egress only through the proxy allowlist, `CB-OUTPUT`). Root in the guest can rewrite the guest firewall or the identity file, which affects only its own box. The identity file holds only the edge's public key, and the edge never sends one box's credential to another box.
 - No credential at rest: the host proxy injects the gw key and `agent.env` holds the placeholder. The state key and the presigned URLs arrive per request and cover only the box's own state.
-- Residue: up to v11, clones of one golden share its ssh host keys (bench.md, Known gaps), readable by `user`; using them needs a path to another box's traffic, which the host blocks. v12 has no sshd and no host keys.
+- Residue: claims are memory clones of one golden, so up to v11 they share its ssh host keys, readable by `user`; using them needs a path to another box's traffic, which the host blocks. v12 has no sshd and no host keys.
