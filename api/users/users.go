@@ -438,7 +438,7 @@ func (s *Service) List() []User {
 	return out
 }
 
-// Create adds a user with its first box, gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
+// Create adds a user with its first box and tenant and sets its gw cap, unlimited for an admin; a failure leaves none of them behind.
 func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 	nu.ID = cmp.Or(nu.ID, idPrefix+utils.RandomHex(idBytes))
 	if !namePattern.MatchString(nu.Name) {
