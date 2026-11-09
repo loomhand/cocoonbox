@@ -610,8 +610,7 @@ async fn wipe_secrets(layout: &Layout, repo: &str) -> Result<(), Fail> {
     }
 }
 
-/// Reads the tar stream in order: small members into memory, the bundle and a worktree's
-/// HEAD and index into `stage`, secrets straight onto the tmpfs.
+/// Reads the tar in order: small members to memory, bundle and worktree HEAD/index to `stage`, secrets to tmpfs.
 fn unpack<R: Read>(input: R, stage: &Path, secrets: &Path) -> Result<Unpacked, Fail> {
     let mut out = Unpacked::default();
     let mut archive = tar::Archive::new(input);
@@ -693,8 +692,7 @@ fn safe_rel(rel: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
-/// Indexes a bundle's pack into the copy and returns the bundle's refs. `git bundle unbundle`
-/// refuses here: the refs rsync brought already name objects that only the bundle holds.
+/// Indexes a bundle's pack into the copy and returns its refs; `git bundle unbundle` refuses, as rsync's refs name objects only the bundle holds.
 async fn index_bundle(dir: &Path, bundle: &Path) -> Result<Vec<(String, String)>, String> {
     let file = tokio::fs::File::open(bundle)
         .await
@@ -983,8 +981,7 @@ async fn write_excludes(layout: &Layout, dir: &Path) -> Result<(), Fail> {
     .await
 }
 
-/// The copy's git-ignored directories as `git ls-files -oi --exclude-standard --directory` lists
-/// them, relative and with their trailing `/`.
+/// The copy's git-ignored directories, relative and with their trailing `/`.
 async fn ignored_dirs(dir: &Path) -> Result<Vec<String>, String> {
     let listed = git(
         dir,
@@ -998,8 +995,7 @@ async fn ignored_dirs(dir: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// Starts the repo's ssh-agent as a transient user unit with its socket on the tmpfs, adds the
-/// keys and deletes them.
+/// Starts the repo's ssh-agent as a transient user unit with its socket on the tmpfs, adds the keys, deletes them.
 async fn start_ssh_agent(
     layout: &Layout,
     repo: &str,

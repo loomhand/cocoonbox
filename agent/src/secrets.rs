@@ -30,8 +30,7 @@ impl Secrets {
         }
     }
 
-    /// Registers card `field` typed as `value`: the number and the cvc by their digits; other fields
-    /// are not secret.
+    /// Registers card `field` typed as `value`: the number and the cvc by their digits; other fields are not secret.
     pub fn register(&self, field: &str, value: &str) {
         let digits: String = value.chars().filter(char::is_ascii_digit).collect();
         let mut values = self.values.write().unwrap_or_else(PoisonError::into_inner);
@@ -53,14 +52,12 @@ impl Secrets {
         self.replace(text, false);
     }
 
-    /// Like [`Secrets::scrub`] for text a model wrote, where a cvc goes even far from its label and a
-    /// number also when misread.
+    /// Like [`Secrets::scrub`] for model text: a cvc goes even far from its label, a number also when misread.
     pub fn scrub_prose(&self, text: &mut String) {
         self.replace(text, true);
     }
 
-    /// The next part of streamed model text `text`, of which the first `sent` bytes went out, scrubbed
-    /// like [`Secrets::scrub_prose`]; a trailing number that more text could extend is held until `end`.
+    /// The unsent part of streamed model text `text` past its first `sent` bytes, scrubbed like [`Secrets::scrub_prose`]; a trailing number more text could extend waits for `end`.
     pub fn stream(&self, text: &str, sent: &mut usize, end: bool) -> String {
         let values = self.values.read().unwrap_or_else(PoisonError::into_inner);
         let from = *sent;
@@ -107,8 +104,7 @@ impl Registry {
     }
 }
 
-/// Where the run of digits joined by single spaces, dashes or dots that ends `text`, or ends it but for one
-/// such separator, starts; the length of `text` when none does.
+/// Where the digit run (single space, dash or dot joins) that ends `text`, or ends it but for one separator, starts; `text.len()` when none.
 fn open_run(text: &str) -> usize {
     let bytes = text.as_bytes();
     let separator = |i: usize| matches!(bytes[i], b' ' | b'-' | b'.');
@@ -182,8 +178,7 @@ fn replace_numbers(
     })
 }
 
-/// The stretches of [`MIN_FRAGMENT`] digits of `number` in which no digit fills more than [`MAX_REPEAT`]
-/// places, as integers; a stretch such as 40000000 of a test number would match ordinary numbers.
+/// The [`MIN_FRAGMENT`]-digit stretches of `number` with no digit over [`MAX_REPEAT`] places, as integers; a stretch such as 40000000 would match ordinary numbers.
 fn varied_stretches(number: &str) -> impl Iterator<Item = u32> {
     number
         .as_bytes()
@@ -204,8 +199,7 @@ fn holds_stretch(digits: &str, stretches: &[u32]) -> bool {
     })
 }
 
-/// Whether `a` and `b` differ by at most one substituted, inserted or deleted digit or one swap of
-/// adjacent digits.
+/// Whether `a` and `b` differ by at most one substituted, inserted or deleted digit or one adjacent swap.
 fn one_edit(a: &[u8], b: &[u8]) -> bool {
     let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     if long.len() - short.len() > 1 {

@@ -121,7 +121,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	}
 	var built map[string]timelineEntry
 	if !found {
-		// Records are immutable, so the long read of all of them runs before the box lock.
+		// records are immutable, so the long read of all of them runs before the box lock.
 		if built, err = l.readEntries(ctx, p, nil); err != nil {
 			return nil, nil, err
 		}
@@ -320,7 +320,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 	if opts.DryRun {
 		return nil
 	}
-	// The index goes first: a save must never skip uploading a chunk that the deletes remove.
+	// the index goes first: a save must never skip uploading a chunk that the deletes remove.
 	if len(garbage) > 0 {
 		next := chunkIndex{KeyID: idx.KeyID, Chunks: indexed, Generation: idx.Generation + 1, Commits: idx.Commits}
 		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.index(), next, version) }); err != nil {

@@ -254,8 +254,7 @@ pub fn group_id(name: &str) -> Option<u32> {
     (rc == 0 && !found.is_null()).then_some(group.gr_gid)
 }
 
-/// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path
-/// or symlink that leaves `dir` fails with `EXDEV`.
+/// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path or symlink that leaves `dir` fails with `EXDEV`.
 #[cfg(target_os = "linux")]
 pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
     let path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
@@ -281,8 +280,7 @@ pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an
-/// absolute path or any symlink fails with `EXDEV`.
+/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an absolute path or any symlink fails with `EXDEV`.
 #[cfg(target_os = "macos")]
 pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
     let rel = super::beneath(path)?;

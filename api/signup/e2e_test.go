@@ -793,6 +793,13 @@ func (e *env) openSignup(t *testing.T) *signup.Service {
 	return svc
 }
 
+func (e *env) browser(t *testing.T) *browser {
+	t.Helper()
+	client := &http.Client{Transport: e.srv.Client().Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client.Jar, _ = cookiejar.New(nil)
+	return &browser{e: e, client: client}
+}
+
 type browser struct {
 	e      *env
 	client *http.Client
@@ -858,13 +865,6 @@ func (b *browser) json(t *testing.T, method, path string, body, out any) {
 func (b *browser) call(t *testing.T, method, path string, body any) (int, string) {
 	t.Helper()
 	return send(t, b.client, method, b.e.srv.URL+console.Prefix+"api/"+path, "", body)
-}
-
-func (e *env) browser(t *testing.T) *browser {
-	t.Helper()
-	client := &http.Client{Transport: e.srv.Client().Transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	client.Jar, _ = cookiejar.New(nil)
-	return &browser{e: e, client: client}
 }
 
 func newFakeGitHub(t *testing.T) *httptest.Server {

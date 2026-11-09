@@ -62,20 +62,6 @@ type Origin struct {
 	Image string
 }
 
-type stored struct {
-	Entry
-	Object string `json:"object"`
-}
-
-type index struct {
-	Rev   uint64   `json:"rev"`
-	Flows []stored `json:"flows"`
-}
-
-func (idx *index) find(name string) int {
-	return slices.IndexFunc(idx.Flows, func(f stored) bool { return f.Name == name })
-}
-
 // Library keeps every user's flows in the state store, sealed under a key derived from the user's state key.
 type Library struct {
 	store store.Store
@@ -287,6 +273,20 @@ func Check(name string, content []byte) error {
 		return fmt.Errorf("%w: %s is not UTF-8 text", ErrInvalid, name)
 	}
 	return nil
+}
+
+type stored struct {
+	Entry
+	Object string `json:"object"`
+}
+
+type index struct {
+	Rev   uint64   `json:"rev"`
+	Flows []stored `json:"flows"`
+}
+
+func (idx *index) find(name string) int {
+	return slices.IndexFunc(idx.Flows, func(f stored) bool { return f.Name == name })
 }
 
 func indexKey(user string) string           { return user + "/flows/index" }
