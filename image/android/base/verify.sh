@@ -12,6 +12,9 @@ grep -q '^done &$' /usr/local/lib/cocoonbox/remoteview
 grep -qx 'wait -n "$server_pid" "$rfb_pid"' /usr/local/lib/cocoonbox/remoteview
 command -v adb dnscrypt-proxy redsocks mkfs.btrfs node git >/dev/null
 for f in desk gui_plan png; do test -s /opt/desk/lib/$f.mts; done
+for f in /opt/desk/lib/*.mts; do
+	while read -r dep; do test -s "/opt/desk/lib/$dep"; done < <(sed -n "s/.* from '\.\/\([a-z_]*\.mts\)'.*/\1/p" "$f")
+done
 test ! -e /etc/systemd/system/cocoonbox-toolhost.service
 grep -qx 'Environment=TOOLHOST_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/system/cocoonbox-agent.service
 grep -qx 'Environment=SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/system/cocoonbox-agent.service
