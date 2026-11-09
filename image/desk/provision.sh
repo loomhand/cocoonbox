@@ -99,7 +99,7 @@ route_chrome() {
 
 check() {
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
-	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
+	desk_lib_resolves "$ROOT/lib"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	[ "$(readlink -f /usr/local/bin/shuttle)" = "/opt/loomhand/shuttle/$SHUTTLE_VERSION/shuttle" ]
 	systemctl --user -M user@ -q is-enabled shuttle.service

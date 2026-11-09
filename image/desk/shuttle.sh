@@ -23,8 +23,18 @@ install_shuttle_runtime() {
 	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -
 	tmp=$(mktemp -d)
 	tar -xzf "$tarball" -C "$tmp" --no-same-owner shuttle/runtime
-	for f in desk gui_plan png; do install -D -m 0644 "$tmp/shuttle/runtime/$f.mts" "/opt/desk/lib/$f.mts"; done
+	install -d /opt/desk/lib
+	install -m 0644 "$tmp"/shuttle/runtime/*.mts /opt/desk/lib/
 	rm -rf "$tmp"
+}
+
+desk_lib_resolves() {
+	local f dep
+	for f in "$1"/*.mts; do
+		while read -r dep; do
+			[ -s "$1/$dep" ] || { echo "$f imports $dep, which $1 lacks" >&2; return 1; }
+		done < <(sed -n "s/.* from '\.\/\([a-z_]*\.mts\)'.*/\1/p" "$f")
+	done
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

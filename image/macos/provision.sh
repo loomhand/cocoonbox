@@ -102,7 +102,7 @@ shuttle() {
 	chown -R root:wheel "$SHUTTLE_APP"
 	rm -rf "$tmp"
 	install -d -m 0755 "$ROOT/lib"
-	for f in desk gui_plan png; do install -m 0644 "$SHUTTLE_APP/Contents/Resources/runtime/$f.mts" "$ROOT/lib/$f.mts"; done
+	install -m 0644 "$SHUTTLE_APP"/Contents/Resources/runtime/*.mts "$ROOT/lib/"
 	install -m 0644 "$SRC/rootfs/opt/desk/AGENTS.md" "$ROOT/AGENTS.md"
 	sed -i '' -e "/^<!-- routing -->\$/{r $SRC/../desk/routing.md" -e 'd' -e '}' "$ROOT/AGENTS.md"
 	: >"$ETC/shuttle.toml.tmp"
@@ -167,6 +167,9 @@ check() {
 	launchctl print "system/$DAEMON" | grep -q 'state = running'
 	/usr/local/bin/cocoonbox-agent version
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
+	for f in "$ROOT"/lib/*.mts; do
+		while read -r dep; do [ -s "$ROOT/lib/$dep" ]; done < <(sed -n "s/.* from '\.\/\([a-z_]*\.mts\)'.*/\1/p" "$f")
+	done
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	[ "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser)" = "$BOX_USER" ]
