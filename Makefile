@@ -2,12 +2,12 @@
 
 MACOS_TEST_ARGS ?=
 
-all: gate api agent ## Gates that run on Linux: clean gate, api, agent
+all: gate api agent ## Linux gates: clean gate, api, agent (CI also runs image on Linux)
 
 api: ## api: fmt check, lint, test, build
 	$(MAKE) -C api fmt-check lint test build
 
-agent: ## agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the Chrome tests)
+agent: ## agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the Chrome tests; the toolhost Node test runs only with NODE_BIN set)
 	cd agent && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
 
 macos: ## macOS app: build the app and run the swift-testing suite
@@ -22,7 +22,7 @@ image: ## Syntax-check the shell scripts, test cut.sh's dry run (Linux bash) and
 	bash image/test/cut-dry-run.sh
 	bash image/test/packages.sh
 
-gate: ## Clean gate over the tracked files and the dependencies; every proto field has a reader and a writer
+gate: ## Clean gate over the tracked files and the dependencies; every proto field name is read and written somewhere in the Go, Rust or Swift sources (by name, not per message)
 	scripts/clean-gate repo
 	scripts/clean-gate deps
 	scripts/proto-fields

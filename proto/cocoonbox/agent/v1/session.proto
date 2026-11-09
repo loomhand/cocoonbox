@@ -8,16 +8,16 @@ option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;ag
 
 service Session {
   rpc Hello(HelloRequest) returns (HelloResponse);
-  // Events streams live changes; reconnect with the last seen offset.
+  // Events streams live changes; reconnect with the last seen offset, also after DATA_LOSS (the
+  // client fell behind). An offset outside the replay window is OUT_OF_RANGE: resync with Transcript.
   rpc Events(EventsRequest) returns (stream Event);
   // Screen carries raw RFB bytes between the client and the box's VNC server.
   // The first client frame must be `open`; the stream ends when either side closes.
   rpc Screen(stream ScreenClientFrame) returns (stream ScreenServerFrame);
-  // ActiveOrigin returns the origin of the active tab of the box's Chrome.
+  // ActiveOrigin returns the origin of the active tab of the box's Chrome; FAILED_PRECONDITION when it fails.
   rpc ActiveOrigin(ActiveOriginRequest) returns (ActiveOriginResponse);
-  // FillCredential fills the sign-in form of the active tab when its origin
-  // equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
-  // only: it is no MCP tool, and its values are never logged or recorded.
+  // FillCredential fills the sign-in form of the active tab when its origin equals `origin` (scheme, host, port),
+  // else FAILED_PRECONDITION, as for a failed fill. App only, no MCP tool; its values are never logged or recorded.
   rpc FillCredential(FillCredentialRequest) returns (FillCredentialResponse);
   // Exec runs a command as the desktop user and carries its stdin, stdout and
   // stderr. The first client frame must be `start`. `eof`, or the client

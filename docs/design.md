@@ -185,7 +185,7 @@ A signature can't prove "request from box X" without a secret in X. The proof mu
 
 ## 13. Native agents without the app (M4.7)
 
-Proposed 2026-10-01, for review. The user's own local coding agent drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
+Proposed and built 2026-10-01 (the `cocoonbox` CLI, its stdio MCP bridge and the client plugins), `cocoonbox rsh` 2026-10-03. The user's own local coding agent drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
 
 Constraints:
 - Boundaries: the new pieces talk to the rest only through `proto/` gRPC and MCP via the edge. Nothing imports another component's code or reads its files.
@@ -1008,7 +1008,7 @@ A user asked for a routine at 09:00 while the Mac is closed. This is the alarm o
 
 ## 16. M5: Connect
 
-Proposed 2026-10-01, for review. It replaces an in-VM vault, which kept credentials at rest in the VM. The user links an external account (GitHub, Google, Notion, …) once in the app. After that, both kinds of agent can use it:
+Proposed 2026-10-01; built 2026-10-05 (`api/connect`), M5.2 included. The catalog has grown since; the current connectors and calls are in contracts.md (Connect). It replaces an in-VM vault, which kept credentials at rest in the VM. The user links an external account (GitHub, Google, Notion, …) once in the app. After that, both kinds of agent can use it:
 - the box agent (mode A);
 - the user's own local coding agent, through the bridge (mode B, §13).
 
@@ -1603,7 +1603,7 @@ Open (deferred to the backlog):
 
 ## 19. Several boxes per user
 
-Proposed 2026-10-01. Direction: an agent in a box drives only that box, and a local coding agent may drive any of the user's boxes, told apart on the MCP side.
+Proposed 2026-10-01; built 2026-10-03 (19.6 records what was built). Direction: an agent in a box drives only that box, and a local coding agent may drive any of the user's boxes, told apart on the MCP side.
 
 ### 19.1 Which agent drives which box
 
@@ -1691,7 +1691,7 @@ Acceptance: `deploy/accept/multibox.sh` on the bench host with a scratch user (1
 
 ## 20. Sign in to a website with a password saved on the Mac
 
-Proposed 2026-10-01. The user has a site's password in the Mac's Passwords (iCloud Keychain). The box's Chrome should sign in with it, and the password should never be written in the VM or seen by any model.
+Proposed and built 2026-10-01 (`Session.FillCredential`, the Passwords sheet); passkeys and the 1Password match are not built (20.3, 20.4). The user has a site's password in the Mac's Passwords (iCloud Keychain). The box's Chrome should sign in with it, and the password should never be written in the VM or seen by any model.
 
 boundaries.md invariant 2 allows exactly this shape: "inside the VM only in memory for one request". The session cookie that results is the existing exception, browser sessions, encrypted in the state layer.
 
@@ -1754,7 +1754,7 @@ Acceptance, on the dev box:
 
 ## 21. Residential or datacenter exit per box
 
-Proposed 2026-10-01. Some boxes should reach the internet through a residential exit, for sites that block or throttle datacenter addresses; the rest keep the node's datacenter exit. The choice exists only at the sandboxd layer. Inside every box the proxy is still 127.0.0.1, and nothing in the guest says which exit it has.
+Proposed 2026-10-01; built 2026-10-02 as the per-user switch of 21.1 (`SetEgress`, the host forwarder); the per-box choice and per-site rules are not built. Some boxes should reach the internet through a residential exit, for sites that block or throttle datacenter addresses; the rest keep the node's datacenter exit. The choice exists only at the sandboxd layer. Inside every box the proxy is still 127.0.0.1, and nothing in the guest says which exit it has.
 
 ### 21.1 Pieces
 
