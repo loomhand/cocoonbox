@@ -104,6 +104,7 @@ jobs:
             echo "agent-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-amd64 | cut -d' ' -f1)"
             echo "agent-arm64-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-arm64 | cut -d' ' -f1)"
             (SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "shuttle-version $SHUTTLE_VERSION" && echo "shuttle-sha256 $SHUTTLE_SHA256")
+            (. image/silkd.sh && echo "silkd-version $SILKD_VERSION" && echo "silkd-sha256 $SILKD_SHA256" && echo "silkd-static-sha256 $SILKD_STATIC_SHA256")
           } > "$RUNNER_TEMP/$recipe/PINS"
           cat "$RUNNER_TEMP/$recipe/PINS"
           tar -czf "dist-extra/$recipe.tar.gz" -C "$RUNNER_TEMP" "$recipe"

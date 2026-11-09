@@ -27,6 +27,8 @@ VM=cbcut-$FAMILY-$V
 TEMPLATE=$FAMILY:$V
 TARBALL=$S/build/cocoonbox-$FAMILY-$V.tar.gz
 SRC="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=image/silkd.sh
+. "$SRC/../silkd.sh"
 STEP=start
 
 step() {
@@ -42,6 +44,7 @@ guest() { "$COCOON" vm exec "$@"; }
 trap fail ERR
 [ -x "$AGENT" ] || { echo "agent binary $AGENT is not executable" >&2; exit 1; }
 [ ! -e "$TARBALL" ] || { echo "$TARBALL exists" >&2; exit 1; }
+[ -f "$SRC/../desk/vendor/$SILKD_TARBALL" ] || { echo "missing $SRC/../desk/vendor/$SILKD_TARBALL: fetch it with image/silkd.sh fetch image/desk/vendor" >&2; exit 1; }
 
 step "boot $BASE as $VM"
 "$COCOON" vm run --name "$VM" --cpu 4 --memory 8G --storage 40G --nics 0 --no-direct-io "$BASE"
@@ -58,7 +61,9 @@ guest "$VM" -- bash -c 'set -e; grep -q " localhost.localdomain" /etc/hosts || e
 step "stop"
 "$COCOON" vm stop "$VM"
 step "export $TARBALL"
-"$SRC/../export-rootfs.sh" "$VM" "$S/bin/silkd" "$TARBALL"
+unpack_silkd "$SRC/../desk/vendor" silkd-static "$TARBALL.silkd"
+"$SRC/../export-rootfs.sh" "$VM" "$TARBALL.silkd" "$TARBALL"
+rm "$TARBALL.silkd"
 "$COCOON" vm rm "$VM"
 step "import"
 "$COCOON" image import "$TEMPLATE" "$TARBALL"

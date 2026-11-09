@@ -1,6 +1,6 @@
 # Android box
 
-An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs Android (redroid) in docker, with the same silkd, `cocoonbox-agent serve` and toolhost as the desktop box: shuttle runs the toolhost as its service (`cocoonbox-agent toolhost-service`, spec `/etc/cocoonbox/tools.d/cocoonbox.json`), and serve reaches both at `/run/cocoonbox/desk.sock`.
+An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs Android (redroid) in docker, with silkd (its static build, `image/silkd.sh`), `cocoonbox-agent serve` and toolhost as the desktop box: shuttle runs the toolhost as its service (`cocoonbox-agent toolhost-service`, spec `/etc/cocoonbox/tools.d/cocoonbox.json`), and serve reaches both at `/run/cocoonbox/desk.sock`.
 
 ## Recipe
 
