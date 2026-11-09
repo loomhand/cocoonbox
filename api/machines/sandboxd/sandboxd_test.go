@@ -1322,6 +1322,22 @@ func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 	}
 }
 
+func TestALeaseThatTheNextRenewalMightMissRunsOut(t *testing.T) {
+	now, every := time.Now(), 20*time.Second
+	for _, tc := range []struct {
+		until time.Time
+		out   bool
+	}{
+		{now.Add(every), true},
+		{now.Add(every + time.Millisecond), true},
+		{now.Add(2 * every), false},
+	} {
+		if got := leaseRunsOut(now, tc.until, every); got != tc.out {
+			t.Errorf("leaseRunsOut with %v left = %t, want %t", tc.until.Sub(now), got, tc.out)
+		}
+	}
+}
+
 func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)

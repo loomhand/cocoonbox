@@ -660,7 +660,7 @@ func (b *Backend) renewOp(ctx context.Context, stop context.CancelFunc, id, op s
 			return
 		case err == nil:
 			until = next
-		case !time.Now().Add(b.renewEvery + b.renewEvery/2).Before(until):
+		case leaseRunsOut(time.Now(), until, b.renewEvery):
 			logger.Errorf(ctx, err, "stop %s, whose lease runs out unrenewed", op)
 			stop()
 			return
@@ -1437,4 +1437,8 @@ func wakeOn(waits map[string]chan struct{}, key string) {
 		close(ch)
 		delete(waits, key)
 	}
+}
+
+func leaseRunsOut(now, until time.Time, every time.Duration) bool {
+	return !now.Add(every + every/2).Before(until)
 }
