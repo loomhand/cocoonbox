@@ -139,12 +139,11 @@ func (s *Service) RestorePaths(ctx context.Context, req *controlv1.RestorePathsR
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
-// runRestorePaths copies paths of snapshot e into the running machine m and pins e until it ends.
+// runRestorePaths copies paths of snapshot e into the running machine m and pins e while it copies.
 func (s *Service) runRestorePaths(op *operation, user string, m machines.Machine, e timelineEntry, paths []boxPath) {
 	logger := log.WithFunc("boxes.Service.runRestorePaths").WithField("box", op.boxID)
 	p := statePath{user: user, box: op.boxID}
 	unpin, err := s.state.pin(op.ctx, p, e.ID)
-	defer unpin()
 	if err != nil {
 		logger.Error(op.ctx, err, "pin the snapshot")
 		op.fail("pin the snapshot failed")
@@ -157,6 +156,7 @@ func (s *Service) runRestorePaths(op *operation, user string, m machines.Machine
 	if err == nil {
 		done, err = s.state.restorePaths(s.agentContext(op.ctx, m), p, ep, e, paths, progressNotes(op, controlv1.Phase_PHASE_RESTORING_FILES, "restoring"))
 	}
+	unpin()
 	switch {
 	case status.Code(err) == codes.Unimplemented:
 		logger.Error(op.ctx, err, "restore paths")
