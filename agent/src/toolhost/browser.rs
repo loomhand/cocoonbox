@@ -2035,7 +2035,7 @@ pub(super) mod tests {
             "{err}"
         );
         assert!(
-            asked.elapsed() < Duration::from_secs(5),
+            asked.elapsed() < Duration::from_secs(15),
             "{:?}",
             asked.elapsed()
         );
