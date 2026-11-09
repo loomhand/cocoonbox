@@ -2,6 +2,8 @@ import Foundation
 
 // Command runs a program found on the given environment's PATH and collects stdout and stderr in full.
 public enum Command {
+    private static let killGrace = 1.0
+
     public struct Run {
         public var status: Int32
         public var out: Data
@@ -21,8 +23,11 @@ public enum Command {
         process.standardOutput = stdout
         process.standardError = discardingErrors ? FileHandle.nullDevice : stderr
         try process.run()
+        let processGroup = -process.processIdentifier
+        let terminate = DispatchWorkItem { kill(processGroup, SIGTERM) }, force = DispatchWorkItem { kill(processGroup, SIGKILL) }
         if let timeout {
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { if process.isRunning { process.terminate() } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: terminate)
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout + killGrace, execute: force)
         }
         let out = Sink(), err = Sink()
         let group = DispatchGroup()
@@ -38,6 +43,8 @@ public enum Command {
         }
         group.wait()
         process.waitUntilExit()
+        terminate.cancel()
+        force.cancel()
         return Run(status: process.terminationStatus, out: out.data, err: err.data)
     }
 
