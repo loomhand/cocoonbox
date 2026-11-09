@@ -1284,8 +1284,8 @@ func TestARotatedDoorKeyOverlapsTheOldOneUntilItsPushLands(t *testing.T) {
 	if err := env.row(t, "WITH u AS (UPDATE connect_door_keys SET created_at = now() - interval '2 hours' WHERE machine_id = 'cb-m1' RETURNING 1) SELECT count(*) FROM u").Scan(&aged); err != nil || aged != 1 {
 		t.Fatalf("age the key of cb-m1 = %d, %v", aged, err)
 	}
-	if stale, err := env.svc.StaleDoorKeys(t.Context(), time.Hour); err != nil || !maps.Equal(stale, map[string]string{"cb-m1": "inc1"}) {
-		t.Fatalf("StaleDoorKeys = %v, %v, want cb-m1 of inc1", stale, err)
+	if stale, err := env.svc.StaleDoorKeys(t.Context(), time.Hour); err != nil || !maps.Equal(stale, map[string]bool{"cb-m1": true}) {
+		t.Fatalf("StaleDoorKeys = %v, %v, want cb-m1", stale, err)
 	}
 	pushErr := errors.New("node down")
 	var failed string
@@ -1296,7 +1296,7 @@ func TestARotatedDoorKeyOverlapsTheOldOneUntilItsPushLands(t *testing.T) {
 		t.Errorf("old key after a failed push = %d, want 200", got)
 	}
 	var cur string
-	err = env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc1", func(key string) error {
+	err = env.svc.RotateDoorKey(t.Context(), "cb-m1", alice, "inc2", func(key string) error {
 		cur = key
 		if o, n := door(old), door(key); o != http.StatusOK || n != http.StatusOK {
 			t.Errorf("during the push: old key %d, new key %d, want both 200", o, n)

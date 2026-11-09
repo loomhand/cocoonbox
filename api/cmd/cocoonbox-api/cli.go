@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
@@ -253,12 +252,10 @@ func migrateAll(ctx context.Context, cfg *config.Config, args []string, stdout i
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	dsn, err := cfg.DSN()
 	if *dsnFile != "" {
-		var raw []byte
-		raw, err = os.ReadFile(*dsnFile)
-		dsn = strings.TrimSpace(string(raw))
+		cfg.Accounts.DSNFile = *dsnFile
 	}
+	dsn, err := cfg.DSN()
 	if err != nil {
 		return err
 	}

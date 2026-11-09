@@ -23,7 +23,7 @@ type Connect interface {
 	DoorKey(ctx context.Context, machine, owner, incarnation string) (string, error)
 	DropDoorKey(ctx context.Context, machine string) error
 	PruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error)
-	StaleDoorKeys(ctx context.Context, age time.Duration) (map[string]string, error)
+	StaleDoorKeys(ctx context.Context, age time.Duration) (map[string]bool, error)
 	RotateDoorKey(ctx context.Context, machine, owner, incarnation string, push func(key string) error) error
 	Credentials(ctx context.Context, owner string) (machines.Credentials, error)
 }
@@ -104,7 +104,7 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 		logger.Error(ctx, err, "list machines")
 		return
 	}
-	var stale map[string]string
+	var stale map[string]bool
 	if s.provision != nil {
 		if stale, err = s.connect.StaleDoorKeys(ctx, doorKeyAge); err != nil {
 			logger.Warnf(ctx, "list the stale door keys: %v", err)
@@ -124,7 +124,7 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 		}
 		for _, m := range owned {
 			push := s.setCredentials
-			if incarnation, ok := stale[m.ID]; ok && incarnation == m.Incarnation {
+			if stale[m.ID] {
 				push = s.rotateDoorKey
 			}
 			if err := push(ctx, m, users.PushConnect, creds); err != nil {
@@ -134,7 +134,7 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 	}
 }
 
-// rotateDoorKey pushes creds to m with a new door key under m's provisioning locks, so no provisioning of another incarnation is between.
+// rotateDoorKey pushes creds with a new door key under m's provisioning locks, so no provisioning runs between its re-read and the push.
 func (s *Service) rotateDoorKey(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
 	unlock := s.provision.locks.Lock(m.ID)
 	defer unlock()
@@ -153,10 +153,15 @@ func (s *Service) rotateDoorKey(ctx context.Context, m machines.Machine, kind st
 		withKey := creds
 		withKey.Secrets = maps.Clone(creds.Secrets)
 		withKey.Secrets[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
-		if err := s.recordPushes(ctx, m, users.PushDoor); err != nil {
+		withKey.Node = m.Node
+		kinds := []string{users.PushDoor}
+		if len(secretNames(creds.Secrets)) > 0 {
+			kinds = append(kinds, kind)
+		}
+		if err := s.recordPushes(ctx, m, kinds...); err != nil {
 			return err
 		}
-		return s.setCredentials(ctx, m, kind, withKey)
+		return s.machines.SetCredentials(ctx, m.ID, withKey)
 	})
 }
 

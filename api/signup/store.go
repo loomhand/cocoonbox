@@ -25,10 +25,10 @@ const (
 )
 
 var (
-	errNoInvite = errors.New("no usable invite")
-
 	// Migrations is the signup tables' schema.
 	Migrations = migrate.Set{FS: migrations, Table: "signup_schema_migrations", Lock: migrationLock}
+
+	errNoInvite = errors.New("no usable invite")
 
 	//go:embed migrations/*.sql
 	migrations embed.FS

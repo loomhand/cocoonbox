@@ -14,6 +14,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestProvisioningIssuesADoorKeyPerIncarnationAndPushesTheCredentials(t *testing.T) {
@@ -101,12 +102,12 @@ func TestRefreshReadsEachOwnerOnceForItsRunningMachines(t *testing.T) {
 	}
 }
 
-func TestRefreshRotatesOnlyAStaleDoorKeyOfTheCurrentIncarnation(t *testing.T) {
+func TestRefreshRotatesOnlyAStaleDoorKey(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
 	fake.put(machines.Machine{ID: aliceBox + "-2", Owner: alice, State: machines.StateRunning, Incarnation: "vm2"})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1"})
-	conn := &fakeConnect{stale: map[string]string{aliceBox: "vm1", aliceBox + "-2": "vm1"}}
+	conn := &fakeConnect{stale: map[string]bool{aliceBox: true}}
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableConnect(conn)
 
@@ -124,6 +125,31 @@ func TestRefreshRotatesOnlyAStaleDoorKeyOfTheCurrentIncarnation(t *testing.T) {
 	}
 	if rotated := conn.rotations(); !slices.Equal(rotated, []string{aliceBox}) {
 		t.Errorf("rotated = %v, want %s only", rotated, aliceBox)
+	}
+}
+
+func TestARotationRecordsAConnectPushOnlyForAnOwnerWithASecret(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1", Node: "n1"})
+	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "vm1", Node: "n1"})
+	conn := &fakeConnect{stale: map[string]bool{aliceBox: true, BoxID(bob): true}, noSecret: map[string]bool{bob: true}}
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	accounts := &fakeAccounts{}
+	svc.EnableAccounts(accounts)
+	svc.EnableConnect(conn)
+
+	svc.refreshCredentials(t.Context())
+	accounts.mu.Lock()
+	pushes := slices.Sorted(slices.Values(accounts.pushes))
+	accounts.mu.Unlock()
+	want := []string{
+		aliceBox + " " + alice + " n1 " + users.PushConnect,
+		aliceBox + " " + alice + " n1 " + users.PushDoor,
+		BoxID(bob) + " " + bob + " n1 " + users.PushDoor,
+	}
+	slices.Sort(want)
+	if !slices.Equal(pushes, want) {
+		t.Errorf("recorded pushes = %v, want %v", pushes, want)
 	}
 }
 
@@ -236,9 +262,10 @@ func waitCreds(t *testing.T, fake *fakeMachines, n int) []credCall {
 }
 
 type fakeConnect struct {
-	keyErr error
-	gate   chan struct{}
-	stale  map[string]string
+	keyErr   error
+	gate     chan struct{}
+	stale    map[string]bool
+	noSecret map[string]bool
 
 	mu      sync.Mutex
 	reads   []string
@@ -270,7 +297,7 @@ func (c *fakeConnect) PruneDoorKeys(_ context.Context, live []string, _ time.Tim
 	return 0, nil
 }
 
-func (c *fakeConnect) StaleDoorKeys(context.Context, time.Duration) (map[string]string, error) {
+func (c *fakeConnect) StaleDoorKeys(context.Context, time.Duration) (map[string]bool, error) {
 	return c.stale, nil
 }
 
@@ -292,6 +319,9 @@ func (c *fakeConnect) Credentials(ctx context.Context, owner string) (machines.C
 	c.mu.Lock()
 	c.reads = append(c.reads, owner)
 	c.mu.Unlock()
+	if c.noSecret[owner] {
+		return machines.Credentials{Secrets: map[string]*machines.Secret{"GH_GIT": nil}, Flags: map[string]string{"COCOONBOX_GH_GIT": ""}}, nil
+	}
 	return machines.Credentials{
 		Secrets: map[string]*machines.Secret{"GH_GIT": {Value: "basic-" + owner}},
 		Flags:   map[string]string{"COCOONBOX_GH_GIT": "1"},

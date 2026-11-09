@@ -38,13 +38,10 @@ for pair in gw:gw cocoonbox:cocoonbox-migrate; do
 	db=${pair%%:*} role=${pair#*:}
 	[ "$(q -c "SELECT 1 FROM pg_database WHERE datname = '$db'")" = 1 ] || q -c "CREATE DATABASE $db OWNER \"$role\""
 done
-q -c "ALTER DATABASE cocoonbox OWNER TO \"cocoonbox-migrate\""
-q -d cocoonbox -c "REASSIGN OWNED BY \"cocoonbox-api\" TO \"cocoonbox-migrate\""
-q -c "REVOKE ALL ON DATABASE cocoonbox FROM PUBLIC"
-q -c "GRANT CONNECT ON DATABASE cocoonbox TO \"cocoonbox-api\""
-q -d cocoonbox <<'SQL'
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO "cocoonbox-api";
+q -d cocoonbox -1 -v ON_ERROR_STOP=1 -f - <<'SQL'
+REASSIGN OWNED BY "cocoonbox-api" TO "cocoonbox-migrate";
+REVOKE ALL ON DATABASE cocoonbox FROM PUBLIC;
+GRANT CONNECT ON DATABASE cocoonbox TO "cocoonbox-api";
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO "cocoonbox-api";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "cocoonbox-api";
 ALTER DEFAULT PRIVILEGES FOR ROLE "cocoonbox-migrate" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "cocoonbox-api";

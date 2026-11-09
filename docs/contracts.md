@@ -604,7 +604,7 @@ The api's broker (`api/connect`) holds the user's grants on external accounts an
 
 **Box door** (mode A, design §16.3; the same handler with `door = box`): `http://10.203.0.1:18091/mcp`, served on `connect.box_listen` on the host bridge and not routed by Caddy.
 - The agent reaches it through the sandboxd egress proxy at `CONNECT_URL`. The pool rule `{host 10.203.0.1, ports [18091], secret CB_CONNECT_KEY}` sets `Authorization` from the claim's `guest: false` entry `CB_CONNECT_KEY = Bearer <door key>`, so the guest never holds the key.
-- The api issues a random door key for each incarnation of a machine when it provisions it (claim, wake, cold restart, Rebase target) and installs it with the gw key. It keeps only the key's SHA-256 (`connect_door_keys`), with the machine and its owner; a new key replaces the machine's older ones. A running machine also gets a new key once its key is an hour old; the old key works until the node holds the new one.
+- The api issues a random door key for each incarnation of a machine when it provisions it (claim, wake, cold restart, Rebase target) and installs it with the gw key. It keeps only the key's SHA-256 (`connect_door_keys`), with the machine and its owner; a new key replaces the machine's older ones. A running machine also gets a new key once its key is an hour old; the old key works until the push of the new one succeeds.
 - A request without a current key gets 401 with no body. Every call is the machine owner's, and its audit caller is `box:<machine id>`.
 
 An `ask` tool on the box door needs an approval:
