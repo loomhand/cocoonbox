@@ -40,6 +40,7 @@ const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
 const TAB_WAIT: Duration = Duration::from_secs(2);
 const DEVTOOLS_WAIT: Duration = Duration::from_secs(2);
+const PORT_WAIT: Duration = Duration::from_secs(5);
 const SPA_WAIT: Duration = Duration::from_secs(3);
 const SPA_POLL: Duration = Duration::from_millis(150);
 const XHR_STALE: Duration = Duration::from_millis(1500);
@@ -907,7 +908,7 @@ impl Browser {
 
     async fn running(&self) -> Result<(), String> {
         let mut swept = self.start.lock().await;
-        let launched = self.targets().await.is_err();
+        let launched = !self.up().await?;
         if launched {
             self.launch().await?;
             let mut tabs = self
@@ -947,7 +948,7 @@ impl Browser {
             .drain()
             .map(|(_, s)| s.window)
             .collect();
-        if self.targets().await.is_err() {
+        if !self.up().await? {
             let _ = tokio::fs::remove_file(&marker).await;
             return Ok("not running".to_owned());
         }
@@ -982,6 +983,23 @@ impl Browser {
 
     async fn targets(&self) -> Result<Vec<Target>, String> {
         self.devtools("list").await
+    }
+
+    async fn up(&self) -> Result<bool, String> {
+        let Err(e) = self.targets().await else {
+            return Ok(true);
+        };
+        let port = tokio::net::TcpStream::connect(("127.0.0.1", self.port));
+        if !matches!(tokio::time::timeout(PORT_WAIT, port).await, Ok(Ok(_))) {
+            return Ok(false);
+        }
+        match self.devtools::<Value>("version").await {
+            Ok(_) => Ok(true),
+            Err(_) => Err(format!(
+                "chrome holds port {} but does not answer: {e}",
+                self.port
+            )),
+        }
     }
 
     async fn devtools<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
@@ -2017,7 +2035,7 @@ pub(super) mod tests {
             "{err}"
         );
         assert!(
-            asked.elapsed() < Duration::from_secs(5),
+            asked.elapsed() < Duration::from_secs(15),
             "{:?}",
             asked.elapsed()
         );
@@ -2484,6 +2502,50 @@ pub(super) mod tests {
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         let got = tokio::time::timeout(TAB_WAIT * 2, b.page_field()).await;
         assert_eq!(got, Ok(Ok(())));
+    }
+
+    #[tokio::test]
+    async fn a_chrome_that_holds_its_port_without_answering_is_neither_launched_again_nor_recorded_stopped()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(RUNNING_MARKER);
+        std::fs::write(&marker, b"").unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((conn, _)) = listener.accept().await {
+                open.push(conn);
+            }
+        });
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        let closed = b.run("state", "browser_close", json!({})).await;
+        assert!(closed.unwrap_err().contains("does not answer"));
+        assert!(marker.exists());
+        let started = b.run("state", "browser_start", json!({})).await;
+        assert!(started.unwrap_err().contains("does not answer"));
+        held.abort();
+    }
+
+    #[tokio::test]
+    async fn a_chrome_whose_target_list_failed_once_but_answers_its_version_is_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = conn.read(&mut buf).await.unwrap_or(0);
+                let reply = if String::from_utf8_lossy(&buf[..n]).contains("/json/version") {
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
+                } else {
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                let _ = conn.write_all(reply.as_bytes()).await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        assert_eq!(b.up().await, Ok(true));
     }
 
     #[tokio::test]
@@ -3594,9 +3656,7 @@ pub(super) mod tests {
         before: (&str, &str),
         after: &[(&str, &str)],
     ) -> (u16, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
-        let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let port = socket.local_addr().unwrap().port();
+        let port = free_port();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = ws.local_addr().unwrap();
         let tab = |(id, url): (&str, &str)| json!({"id": id, "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{id}")});
@@ -3633,7 +3693,7 @@ pub(super) mod tests {
         });
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            let http = socket.listen(1024).unwrap();
+            let http = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
             let body = |v| {
                 let list = usize::from(created.load(std::sync::atomic::Ordering::SeqCst));
                 if v {
