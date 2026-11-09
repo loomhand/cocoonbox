@@ -469,7 +469,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "begin" => packer::begin(layout, &a).await?,
         "send" => {
             if a.flag("message") || a.flag("back") {
-                packer::message(layout, &a, stdin_text().await?).await?
+                packer::message(layout, &a, stdin_text(handover::MAX_BODY).await?).await?
             } else {
                 let stdin = std::io::stdin();
                 packer::send(layout, &a, stdin).await?
@@ -502,7 +502,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         }
         "end" => packer::end(layout, &a.repo()?).await?,
         "restart" => call(layout, &json!({"op": "restart", "repo": a.repo()?})).await?,
-        "post" => packer::post(layout, &a, stdin_text().await?).await?,
+        "post" => packer::post(layout, &a, stdin_text(handover::MAX_BODY).await?).await?,
         "env" => {
             let repo = a.repo_or_env()?;
             let report = if a.flag("no-wait") {
@@ -527,7 +527,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "event" => {
             let payload = match a.positional.first() {
                 Some(p) => serde_json::from_str(p),
-                None => serde_json::from_str(&stdin_text().await?),
+                None => serde_json::from_str(&stdin_text(handover::MAX_PROMPT * 2).await?),
             }
             .unwrap_or(Value::Null);
             let mut req = json!({
@@ -558,11 +558,11 @@ fn read_index_file(path: &Path) -> Result<Index, String> {
     }
 }
 
-async fn stdin_text() -> Result<String, Fail> {
-    tokio::task::spawn_blocking(|| {
+async fn stdin_text(max: usize) -> Result<String, Fail> {
+    tokio::task::spawn_blocking(move || {
         let mut raw = Vec::new();
         std::io::stdin()
-            .take(handover::MAX_BODY as u64 + 1)
+            .take(max as u64 + 1)
             .read_to_end(&mut raw)
             .map(|_| String::from_utf8_lossy(&raw).into_owned())
             .map_err(|e| Fail::Usage(format!("read stdin: {e}")))
