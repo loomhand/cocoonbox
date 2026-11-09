@@ -187,45 +187,84 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	if l.shared == nil || l.versioned == nil {
+		unlock, err := l.lockCommit(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
+		rec, keyID, h, err := l.prepare(ctx, auth, p, ep, consistency, progress)
+		if err != nil {
+			return nil, err
+		}
+		if err := l.finish(ctx, p, keyID, rec, image, parked, h); err != nil {
+			return nil, err
+		}
+		return rec, nil
+	}
+	unlockBox := l.locks.Lock(p.box)
+	rec, keyID, h, err := l.prepare(ctx, auth, p, ep, consistency, progress)
+	unlockBox()
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := l.lockCommit(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err := l.finish(ctx, p, keyID, rec, image, parked, h); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+// lockCommit takes the user's shared lock, the box and the user's gc lock, in the gc's order; the GC sweep takes the last exclusively, so no save is between its index read and its commit.
+func (l *stateLayer) lockCommit(ctx context.Context, p statePath) (func(), error) {
 	release, err := l.lockShared(ctx, p.user)
 	if err != nil {
 		return nil, err
 	}
-	defer release()
 	unlock := l.locks.Lock(p.box)
-	defer unlock()
-	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
 	user := l.userLock(p.user)
 	user.RLock()
-	defer user.RUnlock()
+	return func() {
+		user.RUnlock()
+		unlock()
+		release()
+	}, nil
+}
+
+func (l *stateLayer) prepare(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, string, head, error) {
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
-		return nil, fmt.Errorf("state key: %w", err)
+		return nil, "", head{}, fmt.Errorf("state key: %w", err)
 	}
 	h, err := l.head(ctx, p)
 	if err != nil {
-		return nil, err
+		return nil, "", head{}, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
 	rec, err := l.snapshot(ctx, auth, p, ep, stateKey, consistency, h.Latest, progress)
 	if h.Latest != "" && status.Code(err) == codes.InvalidArgument {
-		log.WithFunc("boxes.stateLayer.save").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
+		log.WithFunc("boxes.stateLayer.prepare").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
 		rec, err = l.snapshot(ctx, auth, p, ep, stateKey, consistency, "", progress)
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", head{}, err
 	}
 	rec.Parent = h.Latest
+	return rec, key.ID, h, nil
+}
+
+func (l *stateLayer) finish(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, image string, parked bool, h head) error {
 	now := time.Now()
 	rec.SavedAtMs = now.UnixMilli()
 	base, err := l.deltaBase(ctx, p, now)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if err := l.commit(ctx, p, key.ID, rec, base, head{Image: image, Parked: parked, version: h.version}); err != nil {
-		return nil, err
-	}
-	return rec, nil
+	return l.commit(ctx, p, keyID, rec, base, head{Image: image, Parked: parked, version: h.version})
 }
 
 func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {

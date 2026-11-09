@@ -3,6 +3,7 @@ package boxes
 import (
 	"context"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
-func TestSharedGCExcludesSavesUntilTimelineAndChunkDeletesFinish(t *testing.T) {
+func TestSharedGCExcludesSaveCommitsUntilTimelineAndChunkDeletesFinish(t *testing.T) {
 	for _, phase := range []string{"timeline", "chunks"} {
 		t.Run(phase, func(t *testing.T) {
 			st := newVersionedStore()
@@ -36,11 +37,14 @@ func TestSharedGCExcludesSavesUntilTimelineAndChunkDeletesFinish(t *testing.T) {
 					return
 				}
 				ran = true
-				plans := agent.plans()
+				before, herr := saver.shared.Head(t.Context(), alice, aliceBox)
 				ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 				defer cancel()
-				if _, err := save(ctx); err == nil || agent.plans() != plans {
-					t.Errorf("save during %s: %v; plans %d -> %d", phase, err, plans, agent.plans())
+				if _, err := save(ctx); err == nil {
+					t.Errorf("save during %s committed", phase)
+				}
+				if after, err := saver.shared.Head(t.Context(), alice, aliceBox); herr != nil || err != nil || after.Version != before.Version {
+					t.Errorf("head during %s = %+v, %v; want %+v unchanged", phase, after, err, before)
 				}
 			}
 			if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), everyBoxLive); err != nil {
@@ -65,5 +69,77 @@ func TestSharedGCExcludesSavesUntilTimelineAndChunkDeletesFinish(t *testing.T) {
 				t.Fatalf("restore the saved snapshot: %v", err)
 			}
 		})
+	}
+}
+
+func TestASharedSaveUploadsWhileTheStateLockIsHeldAndCommitsOnceItIsFree(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver := st.layer(agent)
+	saver.shared = clustertest.Open(t)
+	p := statePath{user: alice, box: aliceBox}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	held, err := saver.shared.LockLong(t.Context(), "state:"+alice)
+	if err != nil {
+		t.Fatalf("hold the state lock: %v", err)
+	}
+	release := sync.OnceFunc(held)
+	t.Cleanup(release)
+	uploaded := make(chan struct{})
+	agent.onUpload = func(machines.Endpoint) { close(uploaded) }
+	done := make(chan error, 1)
+	go func() {
+		_, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+		done <- err
+	}()
+	select {
+	case <-uploaded:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the save did not upload while another holder had the state lock")
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("the save committed under another holder's state lock: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("save after the lock was freed: %v", err)
+	}
+	if h, err := saver.head(t.Context(), p); err != nil || h.Latest == "" {
+		t.Errorf("head after the save = %+v, %v; want the new snapshot", h, err)
+	}
+}
+
+func TestASharedGCAndAnUploadingSaveOfOneProcessBothFinish(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	layer.shared = clustertest.Open(t)
+	p := statePath{user: alice, box: aliceBox}
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	saveLive(t, layer, p, "a")
+	agent.byBox = map[string][]string{"a": hexIDs("c2", "c3")}
+	collected := make(chan error, 1)
+	agent.onUpload = func(machines.Endpoint) {
+		agent.onUpload = nil
+		go func() {
+			_, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
+			collected <- err
+		}()
+		time.Sleep(50 * time.Millisecond)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if _, err := layer.save(ctx, noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("save beside a gc pass: %v", err)
+	}
+	select {
+	case err := <-collected:
+		if err != nil {
+			t.Fatalf("gc pass beside a save: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("the gc pass did not finish beside the save")
 	}
 }
