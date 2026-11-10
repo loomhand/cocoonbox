@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -261,7 +263,7 @@ func TestADeleteOfTheUsersStateWaitsForARestoreOfAnotherReplica(t *testing.T) {
 	layer.shared = shared
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
 	saveLive(t, layer, statePath{user: alice, box: aliceBox}, "a")
-	restoring, err := clustertest.OpenReplica(t, dsn).LockLongShared(t.Context(), "delete:"+alice)
+	restoring, err := clustertest.OpenReplica(t, dsn).LockLongAll(t.Context(), cluster.Advisory{Name: "delete:" + alice, Shared: true})
 	if err != nil {
 		t.Fatalf("hold the delete lock shared: %v", err)
 	}
@@ -279,6 +281,115 @@ func TestADeleteOfTheUsersStateWaitsForARestoreOfAnotherReplica(t *testing.T) {
 	}
 	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
 		t.Errorf("objects of the deleted user = %v, %v; want none", left, err)
+	}
+}
+
+func TestAWakeRestoreReadsItsDeltaWhileAnotherReplicaPrunesItsBase(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, restorer, collector := st.layer(agent), st.layer(agent), st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	saver.shared, restorer.shared = shared, shared
+	collector.shared = clustertest.OpenReplica(t, dsn)
+	saver.deltaFor = func(string) bool { return true }
+	p := statePath{user: alice, box: aliceBox}
+	live := func(string) bool { return true }
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	agent.files = manyFiles(64, 0)
+	saveLive(t, saver, p, "a")
+	if _, err := saver.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	agent.files = manyFiles(64, 1)
+	saveLive(t, saver, p, "a")
+	h, err := saver.head(t.Context(), p)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	var file recordFile
+	if err := getJSON(t.Context(), st, p.record(h.Latest), &file); err != nil || file.Base == "" {
+		t.Fatalf("head record base %q, %v; want a delta", file.Base, err)
+	}
+	base := file.Base
+	pruned := make(chan error, 1)
+	waiting := clustertest.AdvisoryWaiting(t, dsn)
+	var hooked atomic.Bool
+	st.before = func(action, key string) {
+		if action != "get" || key != p.record(base) || !hooked.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			_, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), live)
+			pruned <- err
+		}()
+		clustertest.WaitFor(t, "the prune ends or waits on the box lock", func() bool { return len(pruned) > 0 || waiting() })
+	}
+	if _, err := restorer.restore(t.Context(), p, machines.Endpoint{Key: "a"}, h.Latest, noProgress); err != nil {
+		t.Errorf("restore while another replica prunes the head's base: %v", err)
+	}
+	if err := <-pruned; err != nil {
+		t.Errorf("collect: %v", err)
+	}
+}
+
+func TestARestoreOfPathsKeepsTheManifestAnotherReplicaCompacts(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer, collector := st.layer(agent), st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	collector.shared = clustertest.OpenReplica(t, dsn)
+	layer.deltaFor = func(string) bool { return true }
+	p := statePath{user: alice, box: aliceBox}
+	live := func(string) bool { return true }
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	agent.files = manyFiles(64, 0)
+	saveLive(t, layer, p, "a")
+	if _, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	agent.files = manyFiles(64, 1)
+	saveLive(t, layer, p, "a")
+	h, err := layer.head(t.Context(), p)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	second := h.Latest
+	agent.files = manyFiles(64, 2)
+	saveLive(t, layer, p, "a")
+	e, err := layer.keptEntry(t.Context(), p, second)
+	if err != nil {
+		t.Fatalf("keptEntry: %v", err)
+	}
+	bp, err := parseBoxPath("/workspace/src/f-0001.go")
+	if err != nil {
+		t.Fatalf("parseBoxPath: %v", err)
+	}
+	restored := make(chan error, 1)
+	waiting := clustertest.AdvisoryWaiting(t, dsn)
+	var hooked atomic.Bool
+	st.before = func(action, key string) {
+		if action != "get" || key != p.manifest(second) || !hooked.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			unpin, err := layer.pin(t.Context(), p, second)
+			if err == nil {
+				_, err = layer.restorePaths(t.Context(), p, machines.Endpoint{Key: "a"}, e, []boxPath{bp}, noProgress)
+				unpin()
+			}
+			restored <- err
+		}()
+		clustertest.WaitFor(t, "the restore ends or waits on the box lock", func() bool { return len(restored) > 0 || waiting() })
+	}
+	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Errorf("collect: %v", err)
+	}
+	if err := <-restored; err != nil {
+		t.Errorf("restorePaths: %v", err)
+	}
+	if !st.has(p.manifest(second)) {
+		t.Error("the compaction removed the full manifest the restore materialized")
 	}
 }
 
