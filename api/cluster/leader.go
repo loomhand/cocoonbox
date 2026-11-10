@@ -49,12 +49,11 @@ func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.locks, name, false)
 }
 
-// LockLong is Lock for holds that last a save, and LockProvision for a machine's provisioning, each on connections no other lock uses.
+// LockLong is Lock for holds that last a save, LockLongShared its shared mode, and LockProvision for a machine's provisioning, each on connections no other lock uses.
 func (s *Store) LockLong(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.longLocks, name, false)
 }
 
-// LockLongShared holds name with other LockLongShared holders and excludes LockLong of it.
 func (s *Store) LockLongShared(ctx context.Context, name string) (func(), error) {
 	return lock(ctx, s.longLocks, name, true)
 }
