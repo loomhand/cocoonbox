@@ -63,15 +63,16 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 		m := byBox[box][0]
 		agent := s.agentBox(m.Owner, box)
 		after := s.idle.threshold(agent, m.Squeezed)
-		if after == 0 || len(byBox[box]) > 1 || !s.ready(m) && !m.HibernateFailed() || s.ops.activeFor(box) != nil ||
-			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box)) {
+		disabled := s.registry.Disabled(m.Owner)
+		if len(byBox[box]) > 1 || !s.ready(m) && !m.HibernateFailed() || s.ops.activeFor(box) != nil || !s.registry.HasBox(m.Owner, box) ||
+			!disabled && (after == 0 || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box))) {
 			continue
 		}
-		if !agent && !m.HibernateFailed() {
+		if !agent && !m.HibernateFailed() && !disabled {
 			s.sleepIdle(ctx, m, after)
 			continue
 		}
-		if !s.stillIdle(ctx, box, after) {
+		if !disabled && !s.stillIdle(ctx, box, after) {
 			continue
 		}
 		if _, err := s.Hibernate(auth.WithUser(ctx, m.Owner), &controlv1.BoxRef{BoxId: box}); err != nil {
@@ -94,6 +95,9 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 		logger.Warnf(ctx, "idle box sleeps unanswered after %s: %v", unansweredIdle*after, err)
 	case reason != "":
 		logger.Infof(ctx, "idle box stays up: %s", reason)
+		return
+	}
+	if s.ops.activeFor(box) != nil {
 		return
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), m.Owner, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)

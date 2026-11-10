@@ -157,6 +157,44 @@ func TestAnIdleBoxWhoseHibernateFailedHibernatesOnTheNextSweep(t *testing.T) {
 	waitState(t, env.fake, aliceBox, machines.StateHibernating)
 }
 
+func TestADisabledOwnersBoxWhoseHibernateFailedHibernatesWithUserIdleOff(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		disabled bool
+		want     machines.State
+	}{
+		{"a disabled owner", true, machines.StateHibernating},
+		{"an enabled owner", false, machines.StateFailed},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newStateEnv(t)
+			env.svc.EnableIdle(0, 0, 0)
+			env.svc.EnableActivity(&fakeActivity{})
+			env.svc.registry.(*fakeRegistry).disabled = map[string]bool{alice: tt.disabled}
+			env.fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
+
+			env.svc.hibernateIdle(t.Context())
+			if got := env.fake.state(aliceBox); got != tt.want {
+				t.Errorf("box of %s after an idle pass is %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnIdleSaveLeavesAnOperationThatBeganDuringItsProbe(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	var begun *operation
+	env.svc.EnableActivity(&fakeActivity{during: func() {
+		begun, _ = env.svc.ops.start(t.Context(), alice, aliceBox, controlv1.Phase_PHASE_RESTORING, 1, time.Minute)
+	}})
+	env.svc.hibernateIdle(t.Context())
+	clock.advance(userIdleAfter)
+	env.svc.hibernateIdle(t.Context())
+	if begun == nil || newestOperation(env.svc, aliceBox) != begun {
+		t.Fatalf("the idle save superseded the operation that began during its probe")
+	}
+}
+
 func TestAnEnsureOfARunningBoxDoesNotRestartItsIdleTime(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
@@ -208,12 +246,16 @@ func waitState(t *testing.T, fake *fakeMachines, id string, want machines.State)
 }
 
 type fakeActivity struct {
-	busy bool
-	err  error
-	hang string
+	busy   bool
+	err    error
+	hang   string
+	during func()
 }
 
 func (a *fakeActivity) Busy(ctx context.Context, box string, _ machines.Endpoint) (bool, error) {
+	if a.during != nil {
+		a.during()
+	}
 	if box == a.hang {
 		<-ctx.Done()
 		return false, ctx.Err()
