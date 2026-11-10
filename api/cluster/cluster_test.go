@@ -422,15 +422,15 @@ func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 func TestSharedLongLocksHoldTogetherAndHoldOffALongLock(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
 	b := clustertest.OpenReplica(t, dsn)
-	first, err := a.LockLongShared(t.Context(), "delete:u-1")
+	first, err := a.LockLongAll(t.Context(), cluster.Advisory{Name: "delete:u-1", Shared: true})
 	if err != nil {
-		t.Fatalf("LockLongShared: %v", err)
+		t.Fatalf("LockLongAll shared: %v", err)
 	}
 	held, cancelHeld := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancelHeld()
-	second, err := b.LockLongShared(held, "delete:u-1")
+	second, err := b.LockLongAll(held, cluster.Advisory{Name: "delete:u-1", Shared: true})
 	if err != nil {
-		t.Fatalf("a second LockLongShared while the first is held: %v", err)
+		t.Fatalf("a second shared holder while the first is held: %v", err)
 	}
 	short, cancelShort := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancelShort()
@@ -444,6 +444,30 @@ func TestSharedLongLocksHoldTogetherAndHoldOffALongLock(t *testing.T) {
 		t.Fatalf("LockLong after the shared holders released: %v", err)
 	}
 	release()
+}
+
+func TestMoreMultiLockHoldersThanLongConnectionsAllGetTheirLocks(t *testing.T) {
+	st := clustertest.Open(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	errs := make(chan error, 64)
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Go(func() {
+			release, err := st.LockLongAll(ctx, cluster.Advisory{Name: "delete:u-1", Shared: true}, cluster.Advisory{Name: fmt.Sprintf("box:u-1/cb-%d", i)})
+			if err != nil {
+				errs <- err
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+			release()
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("LockLongAll: %v", err)
+	}
 }
 
 func TestFlushKeysWaitsForItsKeysAndReportsTheirFailedWrites(t *testing.T) {

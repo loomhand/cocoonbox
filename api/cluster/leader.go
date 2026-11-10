@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,11 @@ const (
 
 // Work runs until its context ends.
 type Work func(ctx context.Context)
+
+type Advisory struct {
+	Name   string
+	Shared bool
+}
 
 // Lead runs lead while this process holds the leader lock, until ctx ends; lead's context ends when the lock is lost, and Lead waits for lead to return before it competes again.
 func (s *Store) Lead(ctx context.Context, lead Work) {
@@ -46,20 +52,20 @@ func (s *Store) Lead(ctx context.Context, lead Work) {
 
 // Lock holds the advisory lock of name in every process until the returned func runs.
 func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
-	return lock(ctx, s.locks, name, false)
+	return lock(ctx, s.locks, Advisory{Name: name})
 }
 
-// LockLong is Lock for holds that last a save, LockLongShared its shared mode, and LockProvision for a machine's provisioning, each on connections no other lock uses.
+// LockLong is Lock for holds that last a save, LockLongAll for several taken in order on one of its connections, and LockProvision for a machine's provisioning, each on connections no other lock uses.
 func (s *Store) LockLong(ctx context.Context, name string) (func(), error) {
-	return lock(ctx, s.longLocks, name, false)
+	return lock(ctx, s.longLocks, Advisory{Name: name})
 }
 
-func (s *Store) LockLongShared(ctx context.Context, name string) (func(), error) {
-	return lock(ctx, s.longLocks, name, true)
+func (s *Store) LockLongAll(ctx context.Context, locks ...Advisory) (func(), error) {
+	return lock(ctx, s.longLocks, locks...)
 }
 
 func (s *Store) LockProvision(ctx context.Context, name string) (func(), error) {
-	return lock(ctx, s.provisionLocks, name, false)
+	return lock(ctx, s.provisionLocks, Advisory{Name: name})
 }
 
 // leadOnce waits for the leader lock and runs lead until the lock is lost; it reports whether it held the lock.
@@ -110,34 +116,41 @@ func (s *Store) leadOnce(ctx context.Context, lead Work) (bool, error) {
 	return true, err
 }
 
-func lock(ctx context.Context, pool *pgxpool.Pool, name string, shared bool) (func(), error) {
+func lock(ctx context.Context, pool *pgxpool.Pool, locks ...Advisory) (func(), error) {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return nil, err
-	}
-	key, take, free := lockKey(name), "SELECT pg_advisory_lock($1)", "SELECT pg_advisory_unlock($1)"
-	if shared {
-		take, free = "SELECT pg_advisory_lock_shared($1)", "SELECT pg_advisory_unlock_shared($1)"
 	}
 	drop := func() {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
 		defer cancel()
 		_ = conn.Hijack().Close(closeCtx)
 	}
-	if _, err := conn.Exec(ctx, take, key); err != nil {
-		// a canceled wait may still have taken the lock, which only closing the session drops.
-		drop()
-		return nil, fmt.Errorf("lock %s: %w", name, err)
+	for _, a := range locks {
+		if _, err := conn.Exec(ctx, advisorySQL("lock", a.Shared), lockKey(a.Name)); err != nil {
+			// a canceled wait may still have taken the lock, which only closing the session drops.
+			drop()
+			return nil, fmt.Errorf("lock %s: %w", a.Name, err)
+		}
 	}
 	return func() {
 		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
 		defer cancel()
-		if _, err := conn.Exec(unlockCtx, free, key); err != nil {
-			drop()
-			return
+		for _, a := range slices.Backward(locks) {
+			if _, err := conn.Exec(unlockCtx, advisorySQL("unlock", a.Shared), lockKey(a.Name)); err != nil {
+				drop()
+				return
+			}
 		}
 		conn.Release()
 	}, nil
+}
+
+func advisorySQL(verb string, shared bool) string {
+	if shared {
+		return "SELECT pg_advisory_" + verb + "_shared($1)"
+	}
+	return "SELECT pg_advisory_" + verb + "($1)"
 }
 
 func lockKey(name string) int64 {

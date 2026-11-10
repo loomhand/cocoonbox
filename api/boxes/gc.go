@@ -125,6 +125,13 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 			return nil, nil, err
 		}
 	}
+	if l.shared != nil {
+		var release func()
+		if release, err = l.shared.LockLong(ctx, "box:"+p.boxDir()); err != nil {
+			return nil, nil, err
+		}
+		defer release()
+	}
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	held := l.userLock(p.user)

@@ -232,7 +232,7 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
 	}
-	release, err := l.lockDelete(ctx, p.user, true)
+	release, err := l.lockRestore(ctx, p)
 	if err != nil {
 		return done, err
 	}
