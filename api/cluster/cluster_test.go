@@ -419,6 +419,33 @@ func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	}
 }
 
+func TestSharedLongLocksHoldTogetherAndHoldOffALongLock(t *testing.T) {
+	a, dsn := clustertest.OpenDSN(t)
+	b := clustertest.OpenReplica(t, dsn)
+	first, err := a.LockLongShared(t.Context(), "delete:u-1")
+	if err != nil {
+		t.Fatalf("LockLongShared: %v", err)
+	}
+	held, cancelHeld := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancelHeld()
+	second, err := b.LockLongShared(held, "delete:u-1")
+	if err != nil {
+		t.Fatalf("a second LockLongShared while the first is held: %v", err)
+	}
+	short, cancelShort := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancelShort()
+	if _, err := b.LockLong(short, "delete:u-1"); err == nil {
+		t.Fatal("LockLong took the lock two shared holders hold")
+	}
+	first()
+	second()
+	release, err := b.LockLong(held, "delete:u-1")
+	if err != nil {
+		t.Fatalf("LockLong after the shared holders released: %v", err)
+	}
+	release()
+}
+
 func TestFlushKeysWaitsForItsKeysAndReportsTheirFailedWrites(t *testing.T) {
 	m := cluster.NewMirror()
 	go m.Run(t.Context())
