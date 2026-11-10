@@ -332,6 +332,66 @@ func TestAWakeRestoreReadsItsDeltaWhileAnotherReplicaPrunesItsBase(t *testing.T)
 	}
 }
 
+func TestARestoreOfPathsReadsItsDeltaWhileAnotherReplicaPrunesItsBase(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, restorer, collector := st.layer(agent), st.layer(agent), st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	saver.shared, restorer.shared = shared, shared
+	collector.shared = clustertest.OpenReplica(t, dsn)
+	saver.deltaFor = func(string) bool { return true }
+	p := statePath{user: alice, box: aliceBox}
+	live := func(string) bool { return true }
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	agent.files = manyFiles(64, 0)
+	saveLive(t, saver, p, "a")
+	if _, err := saver.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	agent.files = manyFiles(64, 1)
+	saveLive(t, saver, p, "a")
+	h, err := saver.head(t.Context(), p)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	var file recordFile
+	if err := getJSON(t.Context(), st, p.record(h.Latest), &file); err != nil || file.Base == "" {
+		t.Fatalf("head record base %q, %v; want a delta", file.Base, err)
+	}
+	e, err := restorer.keptEntry(t.Context(), p, h.Latest)
+	if err != nil {
+		t.Fatalf("keptEntry: %v", err)
+	}
+	bp, err := parseBoxPath("/workspace/src/f-0001.go")
+	if err != nil {
+		t.Fatalf("parseBoxPath: %v", err)
+	}
+	unpin, err := restorer.pin(t.Context(), p, e.ID)
+	if err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	defer unpin()
+	pruned := make(chan error, 1)
+	waiting := clustertest.AdvisoryWaiting(t, dsn)
+	var hooked atomic.Bool
+	st.before = func(action, key string) {
+		if action != "get" || key != p.record(file.Base) || !hooked.CompareAndSwap(false, true) {
+			return
+		}
+		go func() {
+			_, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), live)
+			pruned <- err
+		}()
+		clustertest.WaitFor(t, "the prune ends or waits on the box lock", func() bool { return len(pruned) > 0 || waiting() })
+	}
+	if _, err := restorer.restorePaths(t.Context(), p, machines.Endpoint{Key: "a"}, e, []boxPath{bp}, noProgress); err != nil {
+		t.Errorf("restorePaths while another replica prunes the snapshot's base: %v", err)
+	}
+	if err := <-pruned; err != nil {
+		t.Errorf("collect: %v", err)
+	}
+}
+
 func TestARestoreOfPathsKeepsTheManifestAnotherReplicaCompacts(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
