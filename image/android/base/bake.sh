@@ -6,7 +6,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ARCH=${ARCH:-amd64}
 SRC=${1:-}
-DIND=docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0
+DIND=docker:29.9.3-dind@sha256:08a98015fce594af7c382883bea080ea206de74402a95da9dc52b6428c8cd121
 UBUNTU=ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 DNS1=8.8.8.8
 DNS2=1.1.1.1
