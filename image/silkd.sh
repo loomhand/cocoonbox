@@ -1,10 +1,10 @@
 #!/bin/bash
 # Pins silkd as sandbox's guest images carry it (the silkd carrier image); sourced by the cut scripts, or run as
 # `silkd.sh fetch DIR` to pack the carrier's /silkd and /silkd-static into DIR (image/desk/vendor for a cut).
-SILKD_VERSION=0.1.28
-SILKD_IMAGE=ghcr.io/cocoonstack/sandbox/silkd:0.1.28-84b8a42@sha256:6098964d78540e0edd4f515df523c2300fcbc89646fa173dd361f5523a58851d
-SILKD_SHA256=4db624533749d9544292c27be91be2a7d701b2a9bb9f1503db9d531e7850d06d
-SILKD_STATIC_SHA256=02c4c2a09e354ce708c8f327e238bb747302bde5a5db5a428e211a2156ba1ea2
+SILKD_VERSION=0.1.31
+SILKD_IMAGE=ghcr.io/cocoonstack/sandbox/silkd:0.1.31-c4c1eb2@sha256:97862f7b61e7e719992014dd5aff4985504b0a664bb5b66185b950f8990dfaba
+SILKD_SHA256=2acdcb84d785b5e5c1f4ae0d8193a974870d3c90d98c88e21440df1b5ef1fb50
+SILKD_STATIC_SHA256=01c3e31a29651338d98b3239cb0cedcd0dba839783aa897f299448d8903d0e3c
 SILKD_TARBALL="silkd-${SILKD_VERSION}-linux-x64.tar.gz"
 
 # unpack_silkd DIR NAME OUT: writes NAME (silkd or silkd-static) of DIR's silkd tarball to OUT and checks it against its pin.
