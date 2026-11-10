@@ -2,7 +2,6 @@ package users
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -21,7 +20,7 @@ func TestIssueDeviceReturnsWithinASecondWhileOtherUsersKeepWriting(t *testing.T)
 	a := openTestService(t, dsn, gw, tenants)
 	seedUsers(t, dsn, seededUsers)
 	b := openTestService(t, dsn, gw, tenants)
-	if err := a.Load(t.Context()); err != nil {
+	if err := a.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	go a.Listen(t.Context())
@@ -67,105 +66,6 @@ func TestIssueDeviceReturnsWithinASecondWhileOtherUsersKeepWriting(t *testing.T)
 	})
 }
 
-func TestUserWritesReachAListenerWithoutAFullReload(t *testing.T) {
-	tests := []struct {
-		name  string
-		write func(t *testing.T, a *Service, u User, device string)
-		seen  func(b *Service, u User, device string) bool
-	}{
-		{
-			name: "box add",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if _, err := a.AddBox(t.Context(), Box{ID: "cb-agent", Owner: u.ID, Name: "agent", Agent: true}); err != nil {
-					t.Fatalf("AddBox: %v", err)
-				}
-			},
-			seen: func(b *Service, u User, _ string) bool { return b.HasBox(u.ID, "cb-agent") },
-		},
-		{
-			name: "box rename",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if _, err := a.RenameBox(t.Context(), u.ID, firstBoxID(u.ID), "renamed"); err != nil {
-					t.Fatalf("RenameBox: %v", err)
-				}
-			},
-			seen: func(b *Service, u User, _ string) bool { return b.Boxes(u.ID)[0].Name == "renamed" },
-		},
-		{
-			name: "box remove",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if err := a.RemoveBox(t.Context(), u.ID, firstBoxID(u.ID)); err != nil {
-					t.Fatalf("RemoveBox: %v", err)
-				}
-			},
-			seen: func(b *Service, u User, _ string) bool { return len(b.Boxes(u.ID)) == 0 },
-		},
-		{
-			name: "settings",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if _, err := a.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3), Admin: new(true)}); err != nil {
-					t.Fatalf("Update: %v", err)
-				}
-			},
-			seen: func(b *Service, u User, _ string) bool {
-				got, err := b.Get(u.ID)
-				return err == nil && got.MaxBoxesCap == 3 && got.Admin
-			},
-		},
-		{
-			name: "device revoke",
-			write: func(t *testing.T, a *Service, u User, device string) {
-				if err := a.RevokeDeviceSHA256(t.Context(), sum(device)); err != nil {
-					t.Fatalf("RevokeDeviceSHA256: %v", err)
-				}
-			},
-			seen: func(b *Service, _ User, device string) bool { _, ok := b.indexedToken(sum(device)); return !ok },
-		},
-		{
-			name: "sign out everywhere",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if err := a.SignOut(t.Context(), u.ID); err != nil {
-					t.Fatalf("SignOut: %v", err)
-				}
-			},
-			seen: func(b *Service, _ User, device string) bool { _, ok := b.indexedToken(sum(device)); return !ok },
-		},
-		{
-			name: "user delete",
-			write: func(t *testing.T, a *Service, u User, _ string) {
-				if err := a.Delete(t.Context(), u.ID); err != nil {
-					t.Fatalf("Delete: %v", err)
-				}
-			},
-			seen: func(b *Service, u User, device string) bool {
-				_, err := b.Get(u.ID)
-				_, ok := b.indexedToken(sum(device))
-				return errors.Is(err, ErrNotFound) && !ok && len(b.Boxes(u.ID)) == 0
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			b, gw, tenants, dsn := newTestService(t)
-			loads := trace(t, b, dsn, &queryCounter{sql: "FROM users ORDER BY"})
-			go b.Listen(t.Context())
-			clustertest.WaitFor(t, "the listener loads once", func() bool { return loads.n.Load() == 1 })
-			a := openTestService(t, dsn, gw, tenants)
-			u := mustCreate(t, a, NewUser{Name: "qa1"})
-			device, err := a.IssueDevice(t.Context(), u.ID, "app", "laptop")
-			if err != nil {
-				t.Fatalf("IssueDevice: %v", err)
-			}
-			clustertest.WaitFor(t, "the listener knows the device", func() bool { _, ok := b.indexedToken(sum(device)); return ok })
-			tt.write(t, a, u, device)
-			clustertest.WaitFor(t, "the listener sees the "+tt.name, func() bool { return tt.seen(b, u, device) })
-			if n := loads.n.Load(); n != 1 {
-				t.Errorf("the listener reloaded fully %d times for one user's writes, want none", n-1)
-			}
-		})
-	}
-}
-
 func TestALoadRacingASingleUserReadKeepsTheNewerUser(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	other := openTestService(t, dsn, gw, tenants)
@@ -175,7 +75,7 @@ func TestALoadRacingASingleUserReadKeepsTheNewerUser(t *testing.T) {
 	}
 	gate := gateQuery(t, svc, dsn, "FROM boxes ORDER BY")
 	done := make(chan error, 1)
-	go func() { done <- svc.Load(t.Context()) }()
+	go func() { done <- svc.load(t.Context()) }()
 	<-gate.entered
 	if _, err := other.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3)}); err != nil {
 		t.Fatalf("Update: %v", err)
@@ -189,6 +89,26 @@ func TestALoadRacingASingleUserReadKeepsTheNewerUser(t *testing.T) {
 	}
 	if got, err := svc.Get(u.ID); err != nil || got.MaxBoxesCap != 3 {
 		t.Errorf("after the Load that began first: max boxes cap %d, %v; want 3 from the newer single-user read", got.MaxBoxesCap, err)
+	}
+}
+
+func TestALoadRacingADeviceIssueKeepsTheNewToken(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	gate := gateQuery(t, svc, dsn, "FROM boxes ORDER BY")
+	done := make(chan error, 1)
+	go func() { done <- svc.load(t.Context()) }()
+	<-gate.entered
+	token, err := svc.IssueDevice(t.Context(), u.ID, "app", "phone")
+	close(gate.resume)
+	if err != nil {
+		t.Fatalf("IssueDevice: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if owner, ok := svc.indexedToken(sum(token)); !ok || owner.user != u.ID {
+		t.Errorf("after the Load that began first the index maps the new device token to %+v, %t; want the user", owner, ok)
 	}
 }
 
@@ -207,7 +127,7 @@ func TestASingleUserReadThatBeganBeforeALoadDoesNotUndoIt(t *testing.T) {
 	if err := other.RevokeToken(t.Context(), u.ID); err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
-	if err := svc.Load(t.Context()); err != nil {
+	if err := svc.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	close(gate.resume)

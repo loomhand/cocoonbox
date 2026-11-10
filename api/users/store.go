@@ -334,7 +334,9 @@ func (s *store) lockUser(ctx context.Context, id string) (func(), error) {
 }
 
 func (s *store) exists(ctx context.Context, id string) (bool, error) {
-	return s.holds(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id)
+	var exists bool
+	err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id).Scan(&exists)
+	return exists, err
 }
 
 func (s *store) tokenOwner(ctx context.Context, sha string) (string, error) {
@@ -345,12 +347,6 @@ func (s *store) tokenOwner(ctx context.Context, sha string) (string, error) {
 		return "", nil
 	}
 	return id, err
-}
-
-func (s *store) holds(ctx context.Context, query string, arg any) (bool, error) {
-	var holds bool
-	err := s.pool.QueryRow(ctx, query, arg).Scan(&holds)
-	return holds, err
 }
 
 func (s *store) allDevices(ctx context.Context) (map[string][]deviceToken, error) {
@@ -666,10 +662,8 @@ func (s *store) execNotified(ctx context.Context, payload, sql string, args ...a
 }
 
 func notifyIn(ctx context.Context, tx pgx.Tx, payloads ...string) error {
-	for _, payload := range payloads {
-		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
-			return fmt.Errorf("notify %s: %w", notifyChannel, err)
-		}
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, p) FROM unnest($2::text[]) WITH ORDINALITY AS t(p, n) ORDER BY n", notifyChannel, payloads); err != nil {
+		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
 	return nil
 }

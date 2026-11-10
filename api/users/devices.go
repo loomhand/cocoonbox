@@ -84,18 +84,14 @@ func (s *Service) RevokeDeviceSHA256(ctx context.Context, sum string) error {
 
 // dropDevice takes a revoked device token out of the index; the delete's own notify updates the other apis.
 func (s *Service) dropDevice(id, device, sum string) {
-	stripe := s.stripe(id)
-	stripe.Lock()
-	defer stripe.Unlock()
-	s.mu.Lock()
-	s.touch(id)
+	unlock := s.editUser(id)
 	delete(s.byToken, sum)
 	if r, ok := s.byID[id]; ok {
 		r.devices = slices.DeleteFunc(slices.Clone(r.devices), func(d deviceToken) bool { return d.id == device })
 		s.byID[id] = r
 	}
 	s.endCredential(sum)
-	s.mu.Unlock()
+	unlock()
 	s.deviceUse.Delete(device)
 }
 

@@ -149,7 +149,7 @@ func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
 	if err := svc.RevokeDevice(t.Context(), u.ID, devices[1].ID); err != nil || cliLife.Err() == nil || appLife.Err() != nil {
 		t.Errorf("RevokeDevice = %v, the revoked device's lifetime %v, the other's %v", err, cliLife.Err(), appLife.Err())
 	}
-	if err := elsewhere.Load(t.Context()); err != nil || cliElsewhere.Err() == nil {
+	if err := elsewhere.load(t.Context()); err != nil || cliElsewhere.Err() == nil {
 		t.Errorf("another api reloading the revoke = %v, its lifetime %v", err, cliElsewhere.Err())
 	}
 	svc.EndCredential(t.Context(), "oag_0123")

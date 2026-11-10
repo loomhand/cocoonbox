@@ -249,7 +249,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		boxes: map[string][]Box{}, touched: map[string]uint64{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
 		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
-	if err := s.Load(ctx); err != nil {
+	if err := s.load(ctx); err != nil {
 		st.close()
 		return nil, err
 	}
@@ -268,62 +268,6 @@ func (s *Service) Close() {
 	}
 	s.mu.Unlock()
 	s.store.close()
-}
-
-// Load replaces the in-memory index with a current snapshot of the tables.
-func (s *Service) Load(ctx context.Context) error {
-	s.mu.Lock()
-	s.seq++
-	start := s.seq
-	s.loading++
-	s.mu.Unlock()
-	byID, byToken, byOwner, err := s.readIndex(ctx)
-	s.mu.Lock()
-	s.loading--
-	if err != nil || s.loadStart > start {
-		s.settleTouched()
-		s.mu.Unlock()
-		return err
-	}
-	s.loadStart = start
-	s.keepNewer(start, byID, byToken, byOwner)
-	s.settleTouched()
-	var changed []string
-	for id, r := range byID {
-		if r.Disabled && !s.byID[id].Disabled {
-			s.cutOwner(id, false)
-		}
-	}
-	s.byID, s.byToken = byID, byToken
-	for owner := range byOwner {
-		if !slices.Equal(s.boxes[owner], byOwner[owner]) {
-			changed = append(changed, owner)
-		}
-	}
-	for owner := range s.boxes {
-		if _, ok := byOwner[owner]; !ok {
-			changed = append(changed, owner)
-		}
-	}
-	s.boxes = byOwner
-	for id := range s.lives {
-		if r, ok := byID[id]; !ok || r.Disabled {
-			s.end(id)
-		}
-	}
-	for credential := range s.creds {
-		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
-			s.endCredential(credential)
-		}
-	}
-	hooks := slices.Clone(s.onBoxes)
-	s.mu.Unlock()
-	for _, owner := range changed {
-		for _, fn := range hooks {
-			fn(owner)
-		}
-	}
-	return nil
 }
 
 func (s *Service) SyncUser(ctx context.Context, id string) error {
@@ -453,16 +397,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.remove(ctx, id); err != nil {
 		return err
 	}
-	stripe := s.stripe(id)
-	stripe.Lock()
-	defer stripe.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.editUser(id)()
 	if r, ok := s.byID[id]; ok {
 		dropTokens(s.byToken, r)
 		delete(s.byID, id)
 	}
-	s.touch(id)
 	delete(s.boxes, id)
 	s.cutOwner(id, true)
 	s.end(id)
@@ -608,11 +547,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 	if err := s.store.signOut(ctx, id); err != nil {
 		return err
 	}
-	stripe := s.stripe(id)
-	stripe.Lock()
-	defer stripe.Unlock()
-	s.mu.Lock()
-	s.touch(id)
+	unlock := s.editUser(id)
 	if r, ok := s.byID[id]; ok {
 		dropTokens(s.byToken, r)
 		for _, d := range r.devices {
@@ -624,7 +559,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 		s.byID[id] = r
 	}
 	s.end(id)
-	s.mu.Unlock()
+	unlock()
 	return nil
 }
 
@@ -926,21 +861,17 @@ func (s *Service) persist(ctx context.Context, nu NewUser, r record, tenantToken
 
 // endLocally ends the calls bound to credential in this api, for an ended credential of any api.
 func (s *Service) endLocally(credential string) {
-	if owner, ok := s.indexedToken(credential); ok && hexSHA256.MatchString(credential) {
-		stripe := s.stripe(owner.user)
-		stripe.Lock()
-		defer stripe.Unlock()
-	}
+	token := hexSHA256.MatchString(credential)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)
-	if hexSHA256.MatchString(credential) {
+	if token {
 		if owner, ok := s.byToken[credential]; ok {
 			s.touch(owner.user)
 		}
 		delete(s.byToken, credential)
 	}
-	if credential == "" || hexSHA256.MatchString(credential) {
+	if credential == "" || token {
 		return
 	}
 	now := time.Now()
@@ -957,7 +888,7 @@ func (s *Service) listen(ctx context.Context) error {
 	reload := true
 	for {
 		if reload {
-			if err := s.Load(ctx); err != nil {
+			if err := s.load(ctx); err != nil {
 				return err
 			}
 			if err := s.syncShares(ctx); err != nil {
@@ -989,6 +920,62 @@ func (s *Service) listen(ctx context.Context) error {
 	}
 }
 
+// load replaces the in-memory index with a current snapshot of the tables.
+func (s *Service) load(ctx context.Context) error {
+	s.mu.Lock()
+	s.seq++
+	start := s.seq
+	s.loading++
+	s.mu.Unlock()
+	byID, byToken, byOwner, err := s.readIndex(ctx)
+	s.mu.Lock()
+	s.loading--
+	if err != nil || s.loadStart > start {
+		s.settleTouched()
+		s.mu.Unlock()
+		return err
+	}
+	s.loadStart = start
+	s.keepNewer(start, byID, byToken, byOwner)
+	s.settleTouched()
+	var changed []string
+	for id, r := range byID {
+		if r.Disabled && !s.byID[id].Disabled {
+			s.cutOwner(id, false)
+		}
+	}
+	s.byID, s.byToken = byID, byToken
+	for owner := range byOwner {
+		if !slices.Equal(s.boxes[owner], byOwner[owner]) {
+			changed = append(changed, owner)
+		}
+	}
+	for owner := range s.boxes {
+		if _, ok := byOwner[owner]; !ok {
+			changed = append(changed, owner)
+		}
+	}
+	s.boxes = byOwner
+	for id := range s.lives {
+		if r, ok := byID[id]; !ok || r.Disabled {
+			s.end(id)
+		}
+	}
+	for credential := range s.creds {
+		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
+			s.endCredential(credential)
+		}
+	}
+	hooks := slices.Clone(s.onBoxes)
+	s.mu.Unlock()
+	for _, owner := range changed {
+		for _, fn := range hooks {
+			fn(owner)
+		}
+	}
+	return nil
+}
+
 func (s *Service) installUser(ctx context.Context, id string) ([]func(string), bool, error) {
 	stripe := s.stripe(id)
 	stripe.Lock()
@@ -1015,15 +1002,19 @@ func (s *Service) installUser(ctx context.Context, id string) ([]func(string), b
 		s.byID[id] = r
 		addTokens(s.byToken, r)
 	}
-	for _, sum := range append([]string{old.tokenSHA256}, deviceSums(old.devices)...) {
+	release := func(sum string) {
 		if _, ok := s.byToken[sum]; !ok {
 			s.endCredential(sum)
 		}
 	}
+	release(old.tokenSHA256)
+	for _, d := range old.devices {
+		release(d.sha256)
+	}
 	switch {
 	case gone && known:
 		s.cutOwner(id, true)
-	case !gone && r.Disabled && (!known || !old.Disabled):
+	case !gone && r.Disabled && !old.Disabled:
 		s.cutOwner(id, false)
 	}
 	if gone || r.Disabled {
@@ -1083,8 +1074,9 @@ func (s *Service) keepNewer(start uint64, byID map[string]record, byToken map[st
 	}
 	for id := range keep {
 		dropTokens(byToken, byID[id])
-		if r, ok := s.byID[id]; ok {
-			byID[id] = r
+		cur, ok := s.byID[id]
+		if ok {
+			byID[id] = cur
 		} else {
 			delete(byID, id)
 		}
@@ -1093,10 +1085,14 @@ func (s *Service) keepNewer(start uint64, byID map[string]record, byToken map[st
 		} else {
 			delete(byOwner, id)
 		}
-	}
-	for sum, owner := range s.byToken {
-		if keep[owner.user] {
-			byToken[sum] = owner
+		kept := func(sum string) {
+			if owner, ok := s.byToken[sum]; ok && owner.user == id {
+				byToken[sum] = owner
+			}
+		}
+		kept(cur.tokenSHA256)
+		for _, d := range cur.devices {
+			kept(d.sha256)
 		}
 	}
 }
@@ -1104,6 +1100,17 @@ func (s *Service) keepNewer(start uint64, byID map[string]record, byToken map[st
 func (s *Service) settleTouched() {
 	if s.loading == 0 {
 		clear(s.touched)
+	}
+}
+
+func (s *Service) editUser(id string) func() {
+	stripe := s.stripe(id)
+	stripe.Lock()
+	s.mu.Lock()
+	s.touch(id)
+	return func() {
+		s.mu.Unlock()
+		stripe.Unlock()
 	}
 }
 
@@ -1277,14 +1284,6 @@ func addTokens(byToken map[string]tokenOwner, r record) {
 	for _, d := range r.devices {
 		byToken[d.sha256] = tokenOwner{user: r.ID, device: d.id}
 	}
-}
-
-func deviceSums(devices []deviceToken) []string {
-	sums := make([]string, 0, len(devices))
-	for _, d := range devices {
-		sums = append(sums, d.sha256)
-	}
-	return sums
 }
 
 func userOf(payload string) (string, bool) {
