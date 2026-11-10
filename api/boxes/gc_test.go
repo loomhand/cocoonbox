@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -239,6 +240,57 @@ func TestGCPrunesWithTheTimelineOfASaveThatCommittedWhileItWaited(t *testing.T) 
 	}
 	if ids := env.timelineIDs(t, p); !slices.Equal(ids, []string{snapshotID(1), snapshotID(2)}) {
 		t.Errorf("timeline = %v", ids)
+	}
+}
+
+func TestADeleteOfTheUsersStateDuringAPruneLeavesNothing(t *testing.T) {
+	env := newStateEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
+	var once sync.Once
+	env.store.before = func(action, key string) {
+		if (action != "put" && action != "putif") || key != p.timeline() {
+			return
+		}
+		once.Do(func() {
+			deleted := make(chan error, 1)
+			go func() { deleted <- env.svc.DeleteState(t.Context(), alice) }()
+			select {
+			case err := <-deleted:
+				if err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
+	clustertest.WaitFor(t, "no object of the deleted user", func() bool {
+		left, err := env.store.List(t.Context(), alice+"/")
+		return err == nil && len(left) == 0
+	})
+}
+
+func TestAPruneWritesNothingForAUserDeletedBeforeItsBoxLock(t *testing.T) {
+	env := newStateEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
+	if err := env.store.Delete(t.Context(), []string{p.timeline()}); err != nil {
+		t.Fatalf("drop the timeline: %v", err)
+	}
+	var once sync.Once
+	env.store.before = func(action, key string) {
+		if action == "list" && key == p.records() {
+			once.Do(func() {
+				if err := env.svc.DeleteState(t.Context(), alice); err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			})
+		}
+	}
+	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
+	if left, err := env.store.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
 	}
 }
 

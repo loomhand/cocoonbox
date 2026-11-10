@@ -128,6 +128,9 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	}
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
+	held := l.userLock(p.user)
+	held.RLock()
+	defer held.RUnlock()
 	var version string
 	if found {
 		tl = timeline{}
@@ -145,7 +148,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 		return nil, nil, err
 	}
 	listing, err := l.store.List(ctx, p.boxDir())
-	if err != nil {
+	if err != nil || len(listing) == 0 {
 		return nil, nil, err
 	}
 	keep, err := l.pinned(ctx, p)
@@ -267,7 +270,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 	unlock := l.locks.Lock(p.index())
 	defer unlock()
 	var idx chunkIndex
-	version, _, err := l.readVersion(ctx, p.index(), &idx)
+	version, found, err := l.readVersion(ctx, p.index(), &idx)
 	if err != nil {
 		return err
 	}
@@ -321,7 +324,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 		return nil
 	}
 	// the index goes first: a save must never skip uploading a chunk that the deletes remove.
-	if len(garbage) > 0 {
+	if found && len(garbage) > 0 {
 		next := chunkIndex{KeyID: idx.KeyID, Chunks: indexed, Generation: idx.Generation + 1, Commits: idx.Commits}
 		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.index(), next, version) }); err != nil {
 			return err

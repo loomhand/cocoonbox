@@ -42,7 +42,15 @@ func (l *stateLayer) expire(ctx context.Context, p statePath, opts GCOptions, no
 	if errors.Is(err, store.ErrNotFound) {
 		d.DeletedAtMs, err = now.UnixMilli(), nil
 		if !opts.DryRun {
-			err = l.retry(ctx, func() error { return putJSON(ctx, l.store, p.deleted(), d) })
+			unlock := l.locks.Lock(p.box)
+			held := l.userLock(p.user)
+			held.RLock()
+			var left []store.Object
+			if left, err = l.store.List(ctx, p.boxDir()); err == nil && len(left) > 0 {
+				err = l.retry(ctx, func() error { return putJSON(ctx, l.store, p.deleted(), d) })
+			}
+			held.RUnlock()
+			unlock()
 		}
 	}
 	if err != nil {
