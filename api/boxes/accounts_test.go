@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -97,16 +98,29 @@ func TestADisabledOwnerStartsNoMachine(t *testing.T) {
 }
 
 func TestAStartReadsTheAccountItselfNotTheCache(t *testing.T) {
-	fake := newFakeMachines()
-	registry := newFakeRegistry()
-	registry.stored = map[string]bool{alice: true}
-	svc := newService(fake, testDefaults, registry)
+	for _, tt := range []struct {
+		name   string
+		stored bool
+		err    error
+		want   codes.Code
+	}{
+		{"another replica disabled the owner", true, nil, codes.FailedPrecondition},
+		{"the account read fails", false, errors.New("dial tcp db.internal:5432: connection refused"), codes.Unavailable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeMachines()
+			registry := newFakeRegistry()
+			registry.stored, registry.accountErr = map[string]bool{alice: tt.stored}, tt.err
+			svc := newService(fake, testDefaults, registry)
 
-	if _, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("Ensure of an owner another replica disabled = %v, want FailedPrecondition", err)
-	}
-	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
-		t.Errorf("machines of the disabled owner = %v, want none", ms)
+			_, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{})
+			if status.Code(err) != tt.want || strings.Contains(status.Convert(err).Message(), "db.internal") {
+				t.Fatalf("Ensure = %v, want %v without the driver's text", err, tt.want)
+			}
+			if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
+				t.Errorf("machines = %v, want none", ms)
+			}
+		})
 	}
 }
 

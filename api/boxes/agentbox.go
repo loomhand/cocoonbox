@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -51,11 +52,17 @@ func (s *Service) admitStart(ctx context.Context, user string) (func(), error) {
 		unlock()
 		return nil, err
 	}
-	if disabled, err := s.registry.AccountDisabled(ctx, user); err != nil || disabled {
+	disabled, err := s.registry.AccountDisabled(ctx, user)
+	switch {
+	case err != nil:
 		unlock()
-		if err != nil {
-			return nil, err
+		if ctx.Err() != nil {
+			return nil, status.FromContextError(ctx.Err()).Err()
 		}
+		log.WithFunc("boxes.Service.admitStart").WithField("user", user).Error(ctx, err, "read the account")
+		return nil, status.Error(codes.Unavailable, "read the account failed")
+	case disabled:
+		unlock()
 		return nil, status.Error(codes.FailedPrecondition, "the account is disabled")
 	}
 	return unlock, nil
