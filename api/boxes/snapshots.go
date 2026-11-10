@@ -227,7 +227,7 @@ func (l *stateLayer) browse(ctx context.Context, p statePath, id string) (map[st
 // restorePaths copies paths of snapshot e, which the caller pins, into the agent at ep; it presigns only the chunks of those paths that the snapshot's record lists.
 func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.Endpoint, e timelineEntry, paths []boxPath, progress dialer.ProgressFunc) (restoredPaths, error) {
 	var done restoredPaths
-	// the caller's pin keeps e from a prune that starts later; the box lock orders this check after a prune this process runs.
+	// the caller's pin keeps e from a prune that starts later; the box lock orders this check after a prune that runs.
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
@@ -243,6 +243,10 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	if err == nil {
 		err = l.materialize(ctx, p, key, e.ID)
 	}
+	var rec *snapshotRecord
+	if err == nil {
+		rec, err = l.readRecord(ctx, p, e.ID, nil)
+	}
 	held.RUnlock()
 	unlock()
 	release()
@@ -254,10 +258,6 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 		return done, err
 	}
 	files, ids, err := m.selectPaths(paths)
-	if err != nil {
-		return done, err
-	}
-	rec, err := l.readRecord(ctx, p, e.ID, nil)
 	if err != nil {
 		return done, err
 	}
