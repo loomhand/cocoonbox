@@ -394,11 +394,12 @@ States:
 
 | Condition | `State` |
 |---|---|
-| a claim or wake call in flight; restarts moved and the agent has not answered on 7443 since | `Starting` |
+| a claim or wake call in flight; restarts moved or a wake began, and the agent has not answered on 7443 since | `Starting` |
 | a hibernate call in flight | `Hibernating` |
 | a hibernate call that failed, over a `hibernated` or `archived` row | `Hibernated` |
 | a hibernate call that failed, over a `failed` row | `Failed`, with the row's `failed` as `Reason` |
-| a claim, wake or hibernate call that failed | `Failed`, with the error as `Reason`; a failed hibernate reads `hibernate failed`, counts against the running limit and is retried |
+| a claim or hibernate call that failed | `Failed`, with the error as `Reason`; a failed hibernate reads `hibernate failed`, counts against the running limit and is retried |
+| a wake call that failed | the row decides, as in the rows below: `Hibernated` over a `hibernated` or `archived` row, `Failed` with the row's `failed`, else `Starting` until the agent answers |
 | `hibernated` or `archived` | `Hibernated` |
 | `failed` | `Failed`, with the row's `failed` as `Reason` |
 | otherwise | `Running` |
