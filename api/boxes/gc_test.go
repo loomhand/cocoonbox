@@ -271,6 +271,29 @@ func TestADeleteOfTheUsersStateDuringAPruneLeavesNothing(t *testing.T) {
 	})
 }
 
+func TestAPruneWritesNothingForAUserDeletedBeforeItsBoxLock(t *testing.T) {
+	env := newStateEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
+	if err := env.store.Delete(t.Context(), []string{p.timeline()}); err != nil {
+		t.Fatalf("drop the timeline: %v", err)
+	}
+	var once sync.Once
+	env.store.before = func(action, key string) {
+		if action == "list" && key == p.records() {
+			once.Do(func() {
+				if err := env.svc.DeleteState(t.Context(), alice); err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			})
+		}
+	}
+	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
+	if left, err := env.store.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
+	}
+}
+
 func TestGCDeletesChunksWhileNoSaveRuns(t *testing.T) {
 	env := newStateEnv(t)
 	p := statePath{user: alice, box: aliceBox}

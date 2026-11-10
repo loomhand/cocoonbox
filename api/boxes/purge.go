@@ -45,7 +45,10 @@ func (l *stateLayer) expire(ctx context.Context, p statePath, opts GCOptions, no
 			unlock := l.locks.Lock(p.box)
 			held := l.userLock(p.user)
 			held.RLock()
-			err = l.retry(ctx, func() error { return putJSON(ctx, l.store, p.deleted(), d) })
+			var left []store.Object
+			if left, err = l.store.List(ctx, p.boxDir()); err == nil && len(left) > 0 {
+				err = l.retry(ctx, func() error { return putJSON(ctx, l.store, p.deleted(), d) })
+			}
 			held.RUnlock()
 			unlock()
 		}

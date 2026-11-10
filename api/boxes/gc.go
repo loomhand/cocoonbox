@@ -148,7 +148,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 		return nil, nil, err
 	}
 	listing, err := l.store.List(ctx, p.boxDir())
-	if err != nil {
+	if err != nil || len(listing) == 0 {
 		return nil, nil, err
 	}
 	keep, err := l.pinned(ctx, p)
