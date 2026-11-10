@@ -10,8 +10,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 $Vendor = Join-Path $PSScriptRoot 'vendor'
 $Pinned = @(
-    @{ Name = 'shuttle-v0.1.45-windows-x64.zip'; Sha = 'c74cea73a200c4c0d46246fc13b4da2e634d874c5ddf129bf7286fe0c31481c3'
-        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.45/shuttle-v0.1.45-windows-x64.zip' },
+    @{ Name = 'shuttle-v0.1.46-windows-x64.zip'; Sha = 'd46d1301fe71b10753dd7f8641200bd906b9f64df49f8f78a8ecec774ae8d2f8'
+        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.46/shuttle-v0.1.46-windows-x64.zip' },
     @{ Name = 'VirtualDisplayDriver-x86.Driver.Only.zip'; Sha = 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a'
         Url = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip' },
     @{ Name = 'nefcon_v1.21.0.zip'; Sha = '4c8e68f6b663598d77b7c3f76459b16fad00994e53ea8af0bd106a805dd5c18b'
