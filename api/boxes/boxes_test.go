@@ -575,6 +575,7 @@ type fakeMachines struct {
 	held        map[string]map[string]string
 	drops       int
 	keepMissing bool
+	strictAddr  bool
 }
 
 func newFakeMachines() *fakeMachines {
@@ -678,6 +679,12 @@ func (f *fakeMachines) Changes(string) <-chan struct{} {
 func (f *fakeMachines) Address(_ context.Context, id string) (machines.Endpoint, error) {
 	if f.addrErr != nil {
 		return machines.Endpoint{}, f.addrErr
+	}
+	f.mu.Lock()
+	state, strict := f.machines[id].State, f.strictAddr
+	f.mu.Unlock()
+	if strict && state != machines.StateRunning {
+		return machines.Endpoint{}, &machines.NotRunningError{State: state}
 	}
 	return machines.TCPEndpoint(cmp.Or(f.addr, id+":7443")), nil
 }

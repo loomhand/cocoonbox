@@ -675,6 +675,46 @@ func TestAHibernateThatFailedOnALiveClaimRunsAgain(t *testing.T) {
 	}
 }
 
+func TestAHibernateRefusedForLowDiskIsAFailedHibernate(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateFails, fake.hibernateCode = 1, http.StatusTooManyRequests
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	if failed := waitState(t, b, boxID, h.Revision, machines.StateFailed); !failed.HibernateFailed() {
+		t.Errorf("the machine after a hibernate the node refused for disk = %+v, want HibernateFailed", failed)
+	}
+}
+
+func TestAFailedHibernateOfASandboxThatFailedReadsTheSandboxFailure(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateFails = 1
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateFailed)
+	fake.mutate(func(sb *fakeSandbox) { sb.row.Failed = "restart budget exhausted" })
+	got, _ := b.Get(t.Context(), boxID)
+	if got.State != machines.StateFailed || got.Reason != "restart budget exhausted" || got.HibernateFailed() {
+		t.Fatalf("the machine after its sandbox failed = %+v, want the sandbox's failure", got)
+	}
+	if again, err := b.Hibernate(t.Context(), boxID); err != nil || again.State != machines.StateFailed || fake.count("hibernate") != 1 {
+		t.Errorf("Hibernate = %+v, %v after %d hibernates, want nothing started", again, err, fake.count("hibernate"))
+	}
+}
+
 func TestAHibernateThatLandedDespiteAnErrorReadsHibernated(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -1969,6 +2009,7 @@ type fakeSandboxd struct {
 	getStatus      int
 	refusals       int
 	hibernateFails int
+	hibernateCode  int
 	hibernateLands int
 	hold           chan struct{}
 	agent          string
@@ -2136,7 +2177,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 		case "hibernate":
 			if f.hibernateFails > 0 {
 				f.hibernateFails--
-				writeError(w, http.StatusInternalServerError, "hibernate failed")
+				writeError(w, cmp.Or(f.hibernateCode, http.StatusInternalServerError), "hibernate failed")
 				return
 			}
 			sb.row.Hibernated = true

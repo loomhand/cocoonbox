@@ -67,7 +67,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box)) {
 			continue
 		}
-		if !agent {
+		if !agent && !m.HibernateFailed() {
 			s.sleepIdle(ctx, m, after)
 			continue
 		}
@@ -78,7 +78,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 			logger.Warnf(ctx, "hibernate idle agent box %s: %v", box, err)
 			continue
 		}
-		logger.Infof(ctx, "hibernating agent box %s of user %s, idle for %s", box, m.Owner, after)
+		logger.Infof(ctx, "hibernating idle box %s of user %s, idle for %s", box, m.Owner, after)
 	}
 }
 

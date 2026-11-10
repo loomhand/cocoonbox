@@ -148,6 +148,7 @@ func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
 
 func TestAnIdleBoxWhoseHibernateFailedHibernatesOnTheNextSweep(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
+	env.fake.strictAddr = true
 	env.svc.hibernateIdle(t.Context())
 	env.fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
 	env.svc.hibernateIdle(t.Context())
