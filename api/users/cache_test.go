@@ -43,6 +43,7 @@ func TestIssueDeviceReturnsWithinASecondWhileOtherUsersKeepWriting(t *testing.T)
 	}
 	defer func() { stop(); wg.Wait() }()
 	clustertest.WaitFor(t, "the other api writes", func() bool { return renames.Load() > 20 })
+	var tokens []string
 	for range 3 {
 		start := time.Now()
 		token, err := a.IssueDevice(t.Context(), u.ID, "app", "phone")
@@ -52,8 +53,18 @@ func TestIssueDeviceReturnsWithinASecondWhileOtherUsersKeepWriting(t *testing.T)
 		if owner, ok := a.ByTokenSHA256(t.Context(), sum(token)); !ok || owner != u.ID {
 			t.Fatalf("the issuing api resolves the new token to %q, %t", owner, ok)
 		}
-		clustertest.WaitFor(t, "the other api resolves the new token", func() bool { _, ok := b.indexedToken(sum(token)); return ok })
+		tokens = append(tokens, token)
 	}
+	stop()
+	wg.Wait()
+	clustertest.WaitFor(t, "the other api resolves every new token", func() bool {
+		for _, token := range tokens {
+			if _, ok := b.indexedToken(sum(token)); !ok {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 func TestUserWritesReachAListenerWithoutAFullReload(t *testing.T) {
