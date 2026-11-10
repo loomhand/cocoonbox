@@ -229,7 +229,6 @@ func TestALateCreationNotifyStillCutsTheSharesOfADisabledOwner(t *testing.T) {
 	go svc.Listen(context.WithValue(t.Context(), listenerKey{}, true))
 	clustertest.WaitFor(t, "the listener loads", func() bool { return gate.loads.Load() > 0 })
 	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
-	<-gate.entered
 	share, err := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: svc.Boxes(owner.ID)[0].ID})
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
@@ -238,6 +237,11 @@ func TestALateCreationNotifyStillCutsTheSharesOfADisabledOwner(t *testing.T) {
 	if !ok {
 		t.Fatal("the share does not admit a viewer before the disable")
 	}
+	gate.armed.Store(true)
+	if err := pgx.BeginFunc(t.Context(), svc.store.pool, func(tx pgx.Tx) error { return notifyIn(t.Context(), tx, createdPayload+owner.ID) }); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	<-gate.entered
 	if _, err := openTestService(t, dsn, gw, tenants).Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
@@ -509,6 +513,7 @@ type listenerKey struct{}
 type creationNotifyGate struct {
 	entered chan struct{}
 	resume  chan struct{}
+	armed   atomic.Bool
 	blocked atomic.Bool
 	loads   atomic.Int64
 }
@@ -520,7 +525,7 @@ func (g *creationNotifyGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d
 	if strings.Contains(data.SQL, "FROM users ORDER BY") {
 		g.loads.Add(1)
 	}
-	if strings.Contains(data.SQL, "FROM users WHERE id =") && g.blocked.CompareAndSwap(false, true) {
+	if g.armed.Load() && strings.Contains(data.SQL, "FROM users WHERE id =") && g.blocked.CompareAndSwap(false, true) {
 		close(g.entered)
 		<-g.resume
 	}
