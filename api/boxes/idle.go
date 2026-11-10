@@ -97,10 +97,7 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 		logger.Infof(ctx, "idle box stays up: %s", reason)
 		return
 	}
-	if s.ops.activeFor(box) != nil {
-		return
-	}
-	op, started := s.ops.start(context.WithoutCancel(ctx), m.Owner, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
+	op, started := s.ops.begin(context.WithoutCancel(ctx), &operation{user: m.Owner, boxID: box, phase: controlv1.Phase_PHASE_SAVING, gen: m.Revision, yield: true}, stateTimeout)
 	if !started {
 		return
 	}

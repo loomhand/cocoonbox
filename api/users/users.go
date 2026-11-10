@@ -771,6 +771,10 @@ func (s *Service) Disabled(id string) bool {
 	return err == nil && r.Disabled
 }
 
+func (s *Service) AccountDisabled(ctx context.Context, id string) (bool, error) {
+	return s.store.disabled(ctx, id)
+}
+
 // MaxRunning returns how many of user id's boxes may run at once, 0 when the user takes the api's default.
 func (s *Service) MaxRunning(id string) int {
 	r, err := s.record(id)

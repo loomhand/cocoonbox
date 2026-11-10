@@ -434,15 +434,17 @@ func newService(backend machines.Machines, defaults Defaults, registry Registry)
 
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
 type fakeRegistry struct {
-	mu        sync.Mutex
-	boxes     map[string][]users.Box
-	max       int
-	running   map[string]int
-	policies  map[string]users.Policy
-	changed   func(owner string)
-	flavor    machines.Flavor
-	flavorErr error
-	disabled  map[string]bool
+	mu         sync.Mutex
+	boxes      map[string][]users.Box
+	max        int
+	running    map[string]int
+	policies   map[string]users.Policy
+	changed    func(owner string)
+	flavor     machines.Flavor
+	flavorErr  error
+	disabled   map[string]bool
+	stored     map[string]bool
+	accountErr error
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -462,6 +464,12 @@ func (r *fakeRegistry) Disabled(owner string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.disabled[owner]
+}
+
+func (r *fakeRegistry) AccountDisabled(_ context.Context, owner string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disabled[owner] || r.stored[owner], r.accountErr
 }
 
 func (r *fakeRegistry) HasBox(owner, id string) bool {

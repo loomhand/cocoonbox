@@ -232,6 +232,10 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
 	}
+	release, err := l.lockShared(ctx, p.user)
+	if err != nil {
+		return done, err
+	}
 	unlock := l.locks.Lock(p.box)
 	held := l.userLock(p.user)
 	held.RLock()
@@ -241,6 +245,7 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	}
 	held.RUnlock()
 	unlock()
+	release()
 	if err != nil {
 		return done, err
 	}

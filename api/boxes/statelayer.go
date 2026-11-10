@@ -376,6 +376,12 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 
 // restore writes snapshot id of p's box into the agent at ep.
 func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	release, err := l.lockShared(ctx, p.user)
+	if err != nil {
+		return nil, err
+	}
+	release = sync.OnceFunc(release)
+	defer release()
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	if !objectID.MatchString(id) {
@@ -393,6 +399,7 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 	held.RLock()
 	err = l.materialize(ctx, p, key, id)
 	held.RUnlock()
+	release()
 	if err != nil {
 		return nil, err
 	}

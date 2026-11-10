@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -93,6 +94,42 @@ func TestADisabledOwnerStartsNoMachine(t *testing.T) {
 	}
 	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
 		t.Errorf("machines of the disabled owner = %v, want none", ms)
+	}
+}
+
+func TestAStartReadsTheAccountItselfNotTheCache(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		stored bool
+		err    error
+		want   codes.Code
+	}{
+		{"another replica disabled the owner", true, nil, codes.FailedPrecondition},
+		{"the account read fails", false, errors.New("dial tcp db.internal:5432: connection refused"), codes.Unavailable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeMachines()
+			registry := newFakeRegistry()
+			registry.stored, registry.accountErr = map[string]bool{alice: tt.stored}, tt.err
+			svc := newService(fake, testDefaults, registry)
+
+			_, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{})
+			if status.Code(err) != tt.want || strings.Contains(status.Convert(err).Message(), "db.internal") {
+				t.Fatalf("Ensure = %v, want %v without the driver's text", err, tt.want)
+			}
+			if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
+				t.Errorf("machines = %v, want none", ms)
+			}
+		})
+	}
+}
+
+func TestAnIdleSaveYieldsToAnyRunningOperation(t *testing.T) {
+	ops := newOperations()
+	restoring, _ := ops.start(t.Context(), alice, aliceBox, controlv1.Phase_PHASE_RESTORING_FILES, 1, time.Minute)
+	got, started := ops.begin(t.Context(), &operation{user: alice, boxID: aliceBox, phase: controlv1.Phase_PHASE_SAVING, gen: 1, yield: true}, time.Minute)
+	if started || got != restoring || ops.activeFor(aliceBox) != restoring {
+		t.Fatalf("idle save began = %t with %+v active, want the restore left running", started, ops.activeFor(aliceBox))
 	}
 }
 

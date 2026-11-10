@@ -87,6 +87,15 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	return pgx.CollectRows(rows, scanRecord)
 }
 
+func (s *store) disabled(ctx context.Context, id string) (bool, error) {
+	var disabled bool
+	err := s.pool.QueryRow(ctx, "SELECT disabled FROM users WHERE id = $1", id).Scan(&disabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true, nil
+	}
+	return disabled, err
+}
+
 func (s *store) one(ctx context.Context, id string) (record, []Box, error) {
 	rows, _ := s.pool.Query(ctx, "SELECT "+recordColumns+" FROM users WHERE id = $1", id)
 	r, err := pgx.CollectExactlyOneRow(rows, scanRecord)
