@@ -220,7 +220,8 @@ func (s *Service) sleepAfter(ctx context.Context, w users.WakeSchedule, now time
 		return w
 	case s.reachedSince(w.Box, w.LastWakeAt):
 		logger.Info(ctx, "a client reached the box since its scheduled wake; leaving it up")
-	case now.Before(w.SleepAt) || cur.State == machines.StateStarting || (cur.State == machines.StateRunning && s.ops.activeFor(w.Box) != nil):
+	case now.Before(w.SleepAt) || cur.State == machines.StateStarting || cur.State == machines.StateHibernating ||
+		(cur.State == machines.StateRunning && s.ops.activeFor(w.Box) != nil):
 		return w
 	case cur.State != machines.StateRunning && !cur.HibernateFailed():
 		logger.Infof(ctx, "box is %s; the scheduled wake is over", stateWords[cur.State])
@@ -230,6 +231,7 @@ func (s *Service) sleepAfter(ctx context.Context, w users.WakeSchedule, now time
 			return w
 		}
 		logger.Info(ctx, "hibernating box after its scheduled wake")
+		return w
 	}
 	w.SleepAt = time.Time{}
 	return w

@@ -307,6 +307,10 @@ func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, 
 		return nil, errors.New("plan: agent sent no plan")
 	}
 	stored, generation, indexed, err := l.index(ctx, p, key.GetKeyId())
+	if err == nil && !indexed {
+		err = l.retry(ctx, func() error { return l.openIndex(ctx, p, key.GetKeyId()) })
+		indexed = true
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +520,15 @@ func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, 
 		idx.KeyID, idx.Chunks = keyID, slices.Sorted(maps.Keys(stored))
 		idx.Commits++
 		return true, nil
+	})
+}
+
+func (l *stateLayer) openIndex(ctx context.Context, p statePath, keyID string) error {
+	unlock := l.locks.Lock(p.index())
+	defer unlock()
+	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, found bool) (bool, error) {
+		idx.KeyID = keyID
+		return !found, nil
 	})
 }
 

@@ -110,8 +110,63 @@ func TestAlarmWakesAHibernatedBoxAndHibernatesItAfterAwakeFor(t *testing.T) {
 	if e.fake.state(aliceBox) != machines.StateHibernating {
 		t.Fatalf("box is %v after awake_for, want hibernating", e.fake.state(aliceBox))
 	}
+	e.alarm(t, nine.Add(16*time.Minute))
+	if w := e.store.get(aliceBox); w.SleepAt.IsZero() {
+		t.Fatal("the sleep time is gone while the box still hibernates")
+	}
+	e.fake.setState(aliceBox, machines.StateHibernated)
+	e.alarm(t, nine.Add(17*time.Minute))
 	if w := e.store.get(aliceBox); !w.SleepAt.IsZero() {
-		t.Errorf("sleep at %s after the hibernate, want none", w.SleepAt)
+		t.Errorf("sleep at %s after the box hibernated, want none", w.SleepAt)
+	}
+}
+
+func TestAnAlarmRetriesAHibernateThatFailedAfterItWasAccepted(t *testing.T) {
+	e := newWakeEnv(t)
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
+	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
+	e.alarm(t, nine.Add(-wakeLead))
+	e.running(t)
+	e.alarm(t, nine.Add(15*time.Minute))
+	if e.fake.state(aliceBox) != machines.StateHibernating {
+		t.Fatalf("box is %v after awake_for, want hibernating", e.fake.state(aliceBox))
+	}
+	e.fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
+
+	e.alarm(t, nine.Add(16*time.Minute))
+	if e.fake.state(aliceBox) != machines.StateHibernating {
+		t.Fatalf("box is %v after its hibernate failed, want hibernating again", e.fake.state(aliceBox))
+	}
+}
+
+func TestTheNextDaysScheduleHibernatesABoxWhoseHibernateFailedUnseen(t *testing.T) {
+	e := newWakeEnv(t)
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
+	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
+	e.alarm(t, nine.Add(-wakeLead))
+	e.running(t)
+	e.alarm(t, nine.Add(15*time.Minute))
+	e.fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
+
+	e.alarm(t, nine.Add(24*time.Hour-wakeLead))
+	e.alarm(t, nine.Add(24*time.Hour+15*time.Minute))
+	if e.fake.state(aliceBox) != machines.StateHibernating {
+		t.Fatalf("box is %v after the next day's awake_for, want hibernating", e.fake.state(aliceBox))
+	}
+}
+
+func TestTheNextWakeFiresForABoxThatHibernatedBeforeTheAlarmSawIt(t *testing.T) {
+	e := newWakeEnv(t)
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
+	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
+	e.alarm(t, nine.Add(-wakeLead))
+	e.running(t)
+	e.alarm(t, nine.Add(15*time.Minute))
+	e.fake.setState(aliceBox, machines.StateHibernated)
+
+	e.alarm(t, nine.Add(24*time.Hour-wakeLead))
+	if e.fake.state(aliceBox) != machines.StateStarting {
+		t.Fatalf("box is %v at the next day's wake, want starting", e.fake.state(aliceBox))
 	}
 }
 
@@ -167,6 +222,10 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 			e.alarm(t, nine.Add(15*time.Minute))
 			if got := e.fake.state(aliceBox); got != tt.want {
 				t.Fatalf("box is %v after awake_for, want %v", got, tt.want)
+			}
+			if tt.want == machines.StateHibernating {
+				e.fake.setState(aliceBox, machines.StateHibernated)
+				e.alarm(t, nine.Add(16*time.Minute))
 			}
 			if w := e.store.get(aliceBox); !w.SleepAt.IsZero() {
 				t.Errorf("sleep at %s, want none", w.SleepAt)
