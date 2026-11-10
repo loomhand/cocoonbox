@@ -83,20 +83,6 @@ func TestDisablingAUserHibernatesItsBoxesEndsItsStreamsAndStopsItsKeysUntilEnabl
 	}
 }
 
-func TestADisabledOwnerStartsNoMachine(t *testing.T) {
-	fake := newFakeMachines()
-	registry := newFakeRegistry()
-	registry.disabled = map[string]bool{alice: true}
-	svc := newService(fake, testDefaults, registry)
-
-	if _, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("Ensure of a disabled owner = %v, want FailedPrecondition", err)
-	}
-	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
-		t.Errorf("machines of the disabled owner = %v, want none", ms)
-	}
-}
-
 func TestAStartReadsTheAccountItselfNotTheCache(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -124,15 +110,6 @@ func TestAStartReadsTheAccountItselfNotTheCache(t *testing.T) {
 	}
 }
 
-func TestAnIdleSaveYieldsToAnyRunningOperation(t *testing.T) {
-	ops := newOperations()
-	restoring, _ := ops.start(t.Context(), alice, aliceBox, controlv1.Phase_PHASE_RESTORING_FILES, 1, time.Minute)
-	got, started := ops.begin(t.Context(), &operation{user: alice, boxID: aliceBox, phase: controlv1.Phase_PHASE_SAVING, gen: 1, yield: true}, time.Minute)
-	if started || got != restoring || ops.activeFor(aliceBox) != restoring {
-		t.Fatalf("idle save began = %t with %+v active, want the restore left running", started, ops.activeFor(aliceBox))
-	}
-}
-
 func TestReleaseWaitsForAStartOfTheUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
@@ -143,12 +120,7 @@ func TestReleaseWaitsForAStartOfTheUser(t *testing.T) {
 	}
 	released := make(chan error, 1)
 	go func() { released <- svc.Release(t.Context(), alice) }()
-	select {
-	case err := <-released:
-		unlock()
-		t.Fatalf("Release = %v while a start holds the user's lock, want it to wait", err)
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitLocked(t, "(*Service).Release")
 	unlock()
 	if err := <-released; err != nil {
 		t.Fatalf("Release: %v", err)

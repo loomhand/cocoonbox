@@ -5,7 +5,6 @@ import (
 	"maps"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
@@ -64,12 +63,12 @@ func TestAWakePushesTheKeys(t *testing.T) {
 	}
 }
 
-func TestAKeyPushWaitsForAnotherProcesssProvisioningOfTheMachine(t *testing.T) {
+func TestAKeyPushWaitsWhileAnotherProcessProvisionsTheMachine(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
-	shared := clustertest.Open(t)
+	shared, dsn := clustertest.OpenDSN(t)
 	svc.EnableShared(t.Context(), shared)
 	held, err := shared.LockProvision(t.Context(), "provision:"+aliceBox)
 	if err != nil {
@@ -80,10 +79,9 @@ func TestAKeyPushWaitsForAnotherProcesssProvisioningOfTheMachine(t *testing.T) {
 
 	pushed := make(chan error, 1)
 	go func() { pushed <- svc.syncVault(t.Context(), aliceBox) }()
-	select {
-	case err := <-pushed:
-		t.Fatalf("syncVault = %v while another process provisions the machine, want it to wait", err)
-	case <-time.After(100 * time.Millisecond):
+	clustertest.WaitFor(t, "the key push waits for the provisioning lock", clustertest.AdvisoryWaiting(t, dsn))
+	if pushesTo(fake, aliceBox) != 0 {
+		t.Fatal("syncVault pushed while another process provisions the machine")
 	}
 	release()
 	if err := <-pushed; err != nil || pushesTo(fake, aliceBox) != 1 {

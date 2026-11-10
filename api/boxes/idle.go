@@ -79,7 +79,14 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 			logger.Warnf(ctx, "hibernate idle box %s: %v", box, err)
 			continue
 		}
-		logger.Infof(ctx, "hibernating idle box %s of user %s, idle for %s", box, m.Owner, after)
+		why := fmt.Sprintf("idle for %s", after)
+		switch {
+		case disabled:
+			why = "its owner is disabled"
+		case m.HibernateFailed():
+			why = "retrying its failed hibernate"
+		}
+		logger.Infof(ctx, "hibernating box %s of user %s: %s", box, m.Owner, why)
 	}
 }
 

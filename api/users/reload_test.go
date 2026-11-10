@@ -194,6 +194,13 @@ func TestAccountDisabledReadsAnotherReplicasDisable(t *testing.T) {
 	}
 }
 
+func TestAccountDisabledTakesAMissingUserAsDisabled(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	if disabled, err := svc.AccountDisabled(t.Context(), "u-absent"); err != nil || !disabled {
+		t.Errorf("AccountDisabled of a missing user = %t, %v; want true", disabled, err)
+	}
+}
+
 func TestAFullLoadInstallsWhileNewUsersKeepArriving(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	elsewhere := mustCreate(t, openTestService(t, dsn, gw, tenants), NewUser{Name: "qa1"})

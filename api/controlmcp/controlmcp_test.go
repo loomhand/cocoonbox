@@ -24,6 +24,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/boxes"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
+	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
 const (
@@ -419,6 +420,13 @@ func TestHibernateRetriesAFailedBox(t *testing.T) {
 	resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_hibernate"}}`)
 	if !slices.ContainsFunc(fake.recorded(), func(c fakeCall) bool { return c.method == "Hibernate" }) {
 		t.Fatalf("box_hibernate of a failed box = %+v, want a Hibernate call", resp)
+	}
+}
+
+func TestAFailedBoxHoldsAGrantsRunningCap(t *testing.T) {
+	failed := []*controlv1.Box{{Id: "cb-1", State: controlv1.BoxState_BOX_STATE_FAILED}}
+	if err := checkRunning(&oauth.Grant{MaxRunning: 1}, failed); err == nil {
+		t.Error("checkRunning with a failed box at a cap of 1 = nil, want a refusal")
 	}
 }
 
