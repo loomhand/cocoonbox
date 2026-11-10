@@ -862,6 +862,11 @@ func (s *Service) persist(ctx context.Context, nu NewUser, r record, tenantToken
 // endLocally ends the calls bound to credential in this api, for an ended credential of any api.
 func (s *Service) endLocally(credential string) {
 	token := hexSHA256.MatchString(credential)
+	if owner, ok := s.indexedToken(credential); ok && token {
+		stripe := s.stripe(owner.user)
+		stripe.Lock()
+		defer stripe.Unlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)

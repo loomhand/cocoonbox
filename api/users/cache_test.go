@@ -3,6 +3,8 @@ package users
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -109,6 +111,33 @@ func TestALoadRacingADeviceIssueKeepsTheNewToken(t *testing.T) {
 	}
 	if owner, ok := svc.indexedToken(sum(token)); !ok || owner.user != u.ID {
 		t.Errorf("after the Load that began first the index maps the new device token to %+v, %t; want the user", owner, ok)
+	}
+}
+
+func TestAnEndedTokenStaysEndedWhileAStaleSingleUserReadInstalls(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	token, err := svc.RegenerateToken(t.Context(), u.ID)
+	if err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
+	gate := gateQuery(t, svc, dsn, "FROM user_tokens WHERE user_id = $1 ORDER BY")
+	synced := make(chan error, 1)
+	go func() { synced <- svc.SyncUser(t.Context(), u.ID) }()
+	<-gate.entered
+	ended := make(chan struct{})
+	go func() {
+		svc.EndCredential(t.Context(), sum(token))
+		close(ended)
+	}()
+	clustertest.WaitFor(t, "the end runs or waits for the read", func() bool { return closed(ended) || waitingOnLock("(*Service).endLocally") })
+	close(gate.resume)
+	if err := <-synced; err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	<-ended
+	if _, ok := svc.indexedToken(sum(token)); ok {
+		t.Error("a single-user read that began before the end brought the ended token back")
 	}
 }
 
@@ -251,4 +280,14 @@ func seedUsers(t *testing.T, dsn string, n int) {
 			t.Fatalf("seed: %v", err)
 		}
 	}
+}
+
+func waitingOnLock(in string) bool {
+	buf := make([]byte, 1<<20)
+	for g := range strings.SplitSeq(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+		if strings.Contains(g, "[sync.Mutex.Lock") && strings.Contains(g, in) {
+			return true
+		}
+	}
+	return false
 }
