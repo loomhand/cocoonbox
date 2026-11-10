@@ -176,6 +176,34 @@ func TestASaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothing(t 
 	}
 }
 
+func TestAFirstSaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothing(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	other := st.layer(agent)
+	other.shared = clustertest.OpenReplica(t, dsn)
+	svc := &Service{state: other}
+	p := statePath{user: alice, box: aliceBox}
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	deleted := make(chan error, 1)
+	agent.onUpload = func(machines.Endpoint) {
+		agent.onUpload = nil
+		deleted <- svc.DeleteState(t.Context(), alice)
+	}
+	_, err := layer.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	if err := <-deleted; err != nil {
+		t.Fatalf("DeleteState during the upload: %v", err)
+	}
+	if !errors.Is(err, errStateDeleted) {
+		t.Errorf("first save across DeleteState = %v; want errStateDeleted", err)
+	}
+	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
+	}
+}
+
 func TestSavesWaitingForTheirCommitKeepTheirSaveSlots(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)

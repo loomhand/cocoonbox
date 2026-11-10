@@ -878,11 +878,14 @@ func TestEnsureWithoutSavedStateCreatesAnEmptyBox(t *testing.T) {
 func TestCommitRetriesAFailedStoreWrite(t *testing.T) {
 	env := newStateEnv(t)
 	env.svc.state.retryDelay = time.Millisecond
-	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
 	index := alice + "/index.json"
+	env.agent.chunks = []string{hexID("c1")}
+	env.save(t)
+	before := env.store.putCount(index)
+	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
 	env.store.failNext(index, 1)
 	env.save(t)
-	if n := env.store.putCount(index); n != 2 {
+	if n := env.store.putCount(index) - before; n != 2 {
 		t.Errorf("index written %d times, want a failure and a retry", n)
 	}
 	if idx := string(env.store.objects[index]); !strings.Contains(idx, hexID("c1")) || !strings.Contains(idx, hexID("c2")) {
