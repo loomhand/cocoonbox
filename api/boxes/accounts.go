@@ -47,7 +47,7 @@ func (s *Service) HibernateAll(ctx context.Context, user string) error {
 	}
 	var errs []error
 	for box, m := range current {
-		if m.State != machines.StateRunning && m.State != machines.StateFailed || !s.registry.HasBox(user, box) || s.parking(box) || s.deleting(box) {
+		if m.State != machines.StateRunning && !m.HibernateFailed() || !s.registry.HasBox(user, box) || s.parking(box) || s.deleting(box) {
 			continue
 		}
 		if _, err := s.Hibernate(auth.WithUser(ctx, user), &controlv1.BoxRef{BoxId: box}); err != nil {

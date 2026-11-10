@@ -54,7 +54,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	for _, m := range ms {
 		box := boxOfMachine(m.ID)
 		byBox[box] = append(byBox[box], m)
-		running[box] = running[box] || m.State == machines.StateRunning
+		running[box] = running[box] || m.State == machines.StateRunning || m.HibernateFailed()
 	}
 	now := s.idle.now()
 	s.idle.keep(running)
@@ -63,7 +63,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 		m := byBox[box][0]
 		agent := s.agentBox(m.Owner, box)
 		after := s.idle.threshold(agent, m.Squeezed)
-		if after == 0 || len(byBox[box]) > 1 || m.State != machines.StateRunning || !s.ready(m) || s.ops.activeFor(box) != nil ||
+		if after == 0 || len(byBox[box]) > 1 || !s.ready(m) && !m.HibernateFailed() || s.ops.activeFor(box) != nil ||
 			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box)) {
 			continue
 		}

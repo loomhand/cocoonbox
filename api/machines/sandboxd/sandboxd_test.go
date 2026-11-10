@@ -662,7 +662,9 @@ func TestAHibernateThatFailedOnALiveClaimRunsAgain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hibernate = %v", err)
 	}
-	waitState(t, b, boxID, h.Revision, machines.StateFailed)
+	if failed := waitState(t, b, boxID, h.Revision, machines.StateFailed); !failed.HibernateFailed() {
+		t.Fatalf("the machine after a failed hibernate = %+v, want HibernateFailed", failed)
+	}
 	h, err = b.Hibernate(t.Context(), boxID)
 	if err != nil || h.State != machines.StateHibernating {
 		t.Fatalf("Hibernate after a failed hibernate = %+v, %v, want hibernating", h, err)

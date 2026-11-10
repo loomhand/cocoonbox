@@ -621,6 +621,8 @@ func (b *Backend) run(id, op string, revision int64, fn task) {
 			// The process stops; the claim row tells the next reader how far the op came.
 		case errors.Is(err, machines.ErrCapacity):
 			opErr = machines.ErrCapacity.Error()
+		case err != nil && op == opHibernate:
+			opErr = machines.ReasonHibernateFailed
 		case err != nil:
 			opErr = op + " failed"
 		}

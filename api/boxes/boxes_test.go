@@ -288,7 +288,7 @@ func TestSupersededOperationFails(t *testing.T) {
 
 func TestHibernateAllHibernatesABoxWhoseHibernateFailed(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateFailed, Detail: "hibernate failed", Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateFailed, Reason: machines.ReasonHibernateFailed, Revision: 1})
 	svc := newService(fake, testDefaults, newFakeRegistry())
 
 	if err := svc.HibernateAll(t.Context(), alice); err != nil {
@@ -296,6 +296,19 @@ func TestHibernateAllHibernatesABoxWhoseHibernateFailed(t *testing.T) {
 	}
 	if m, _ := fake.Get(t.Context(), aliceBox); m.State != machines.StateHibernating {
 		t.Errorf("the box after HibernateAll is %v, want hibernating", m.State)
+	}
+}
+
+func TestHibernateAllLeavesABoxWhoseClaimFailed(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateFailed, Reason: machines.ErrCapacity.Error(), Revision: 1})
+	svc := newService(fake, testDefaults, newFakeRegistry())
+
+	if err := svc.HibernateAll(t.Context(), alice); err != nil {
+		t.Fatalf("HibernateAll = %v", err)
+	}
+	if m, _ := fake.Get(t.Context(), aliceBox); m.State != machines.StateFailed {
+		t.Errorf("the box after HibernateAll is %v, want it left failed", m.State)
 	}
 }
 
@@ -898,6 +911,14 @@ func (f *fakeMachines) specCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.specs)
+}
+
+func (f *fakeMachines) setFailed(id, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.machines[id]
+	m.State, m.Reason = machines.StateFailed, reason
+	f.machines[id] = m
 }
 
 func (f *fakeMachines) setState(id string, state machines.State) {
