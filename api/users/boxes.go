@@ -62,9 +62,12 @@ func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 	if err := s.store.insertBox(ctx, b); err != nil {
 		return Box{}, err
 	}
+	stripe := s.stripe(b.Owner)
+	stripe.Lock()
 	s.mu.Lock()
 	s.putBox(b)
 	s.mu.Unlock()
+	stripe.Unlock()
 	if !b.Agent {
 		return b, nil
 	}
@@ -85,6 +88,9 @@ func (s *Service) RenameBox(ctx context.Context, owner, id, name string) (Box, e
 	if err := s.store.renameBox(ctx, owner, id, name); err != nil {
 		return Box{}, err
 	}
+	stripe := s.stripe(owner)
+	stripe.Lock()
+	defer stripe.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := slices.IndexFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
@@ -105,6 +111,9 @@ func (s *Service) SetBoxFlavor(ctx context.Context, owner, id string, flavor mac
 	if err := s.store.setBoxFlavor(ctx, owner, id, flavor); err != nil {
 		return err
 	}
+	stripe := s.stripe(owner)
+	stripe.Lock()
+	defer stripe.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i := slices.IndexFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
@@ -128,8 +137,10 @@ func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 	if err := s.store.removeBox(ctx, owner, id); err != nil {
 		return err
 	}
+	stripe := s.stripe(owner)
+	stripe.Lock()
 	s.mu.Lock()
-	s.boxGen++
+	s.touch(owner)
 	s.boxes[owner] = slices.DeleteFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
 	var shares []string
 	for _, rec := range s.shares {
@@ -138,6 +149,7 @@ func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 		}
 	}
 	s.mu.Unlock()
+	stripe.Unlock()
 	for _, share := range shares {
 		s.endShare(ctx, share)
 	}
@@ -179,9 +191,9 @@ func (s *Service) agentBoxes(owner string) int {
 	return n
 }
 
-// putBox stores b in the index in place of its previous version; the caller holds s.mu.
+// putBox stores b in the index in place of its previous version; the caller holds b.Owner's stripe and s.mu.
 func (s *Service) putBox(b Box) {
-	s.boxGen++
+	s.touch(b.Owner)
 	list := append(slices.DeleteFunc(s.boxes[b.Owner], func(x Box) bool { return x.ID == b.ID }), b)
 	slices.SortFunc(list, compareBoxes)
 	s.boxes[b.Owner] = list

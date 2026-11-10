@@ -83,7 +83,7 @@ func TestAnUpdateCannotRestoreATokenRevokedWhileItWaited(t *testing.T) {
 func TestAnIssuedDeviceCannotOutliveASignOutWhileItWaited(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "alice"})
-	gate := gateQuery(t, svc, dsn, "FROM users ORDER BY")
+	gate := gateQuery(t, svc, dsn, "FROM user_tokens WHERE user_id = $1 ORDER BY")
 	done := make(chan error, 1)
 	var token string
 	go func() {
@@ -92,9 +92,14 @@ func TestAnIssuedDeviceCannotOutliveASignOutWhileItWaited(t *testing.T) {
 		done <- err
 	}()
 	<-gate.entered
-	err := svc.SignOut(t.Context(), u.ID)
+	signedOut := make(chan error, 1)
+	go func() { signedOut <- svc.SignOut(t.Context(), u.ID) }()
+	clustertest.WaitFor(t, "the sign-out commits", func() bool {
+		var n int
+		return userstest.Query(t, dsn, "SELECT count(*) FROM user_tokens WHERE user_id = $1", u.ID).Scan(&n) == nil && n == 0
+	})
 	close(gate.resume)
-	if err != nil {
+	if err := <-signedOut; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -154,7 +159,7 @@ func TestACreateRacingAFullLoadKeepsTheNewUser(t *testing.T) {
 	}
 }
 
-func TestAListenerFullyReloadsTokenChangesAndDisables(t *testing.T) {
+func TestAListenerTakesInTokenChangesAndDisables(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
 	other := openTestService(t, dsn, gw, tenants)

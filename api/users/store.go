@@ -21,6 +21,8 @@ const (
 	migrationLock  = 0x63627573 // "cbus"
 	notifyChannel  = "cocoonbox_users"
 	createdPayload = "user:"
+	userPayload    = "u:"
+	sharesPayload  = "shares"
 	unlockTimeout  = 5 * time.Second
 
 	uniqueViolation = "23505"
@@ -100,22 +102,27 @@ func (s *store) disabled(ctx context.Context, id string) (bool, error) {
 }
 
 func (s *store) one(ctx context.Context, id string) (record, []Box, error) {
-	rows, _ := s.pool.Query(ctx, "SELECT "+recordColumns+" FROM users WHERE id = $1", id)
-	r, err := pgx.CollectExactlyOneRow(rows, scanRecord)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return record{}, nil, ErrNotFound
-	}
-	if err == nil {
-		rows, _ = s.pool.Query(ctx, "SELECT id, sha256 FROM user_tokens WHERE user_id = $1 ORDER BY created_at, id", id)
-		r.devices, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (d deviceToken, err error) {
+	var r record
+	var boxes []Box
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		rows, _ := tx.Query(ctx, "SELECT "+recordColumns+" FROM users WHERE id = $1", id)
+		var err error
+		if r, err = pgx.CollectExactlyOneRow(rows, scanRecord); err != nil {
+			return err
+		}
+		rows, _ = tx.Query(ctx, "SELECT id, sha256 FROM user_tokens WHERE user_id = $1 ORDER BY created_at, id", id)
+		if r.devices, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (d deviceToken, err error) {
 			err = row.Scan(&d.id, &d.sha256)
 			return d, err
-		})
-	}
-	var boxes []Box
-	if err == nil {
-		rows, _ = s.pool.Query(ctx, "SELECT "+boxColumns+" FROM boxes WHERE owner = $1 ORDER BY created_at, id", id)
+		}); err != nil {
+			return err
+		}
+		rows, _ = tx.Query(ctx, "SELECT "+boxColumns+" FROM boxes WHERE owner = $1 ORDER BY created_at, id", id)
 		boxes, err = pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return record{}, nil, ErrNotFound
 	}
 	if err != nil {
 		return record{}, nil, fmt.Errorf("read user %s: %w", id, err)
@@ -177,7 +184,7 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 			b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt, b.VCPUs, b.MemoryMiB, b.DiskGiB); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+b.Owner)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: a box is already named %q", ErrExists, b.Name)
@@ -197,7 +204,7 @@ func (s *store) renameBox(ctx context.Context, owner, id, name string) error {
 		case tag.RowsAffected() == 0:
 			return ErrNotFound
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+owner)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: a box is already named %q", ErrExists, name)
@@ -217,7 +224,7 @@ func (s *store) setBoxFlavor(ctx context.Context, owner, id string, f machines.F
 		case tag.RowsAffected() == 0:
 			return ErrNotFound
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+owner)
 	})
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("set box flavor: %w", err)
@@ -238,12 +245,12 @@ func (s *store) removeBox(ctx context.Context, owner, id string) error {
 		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
 			return fmt.Errorf("revoke the box's share: %w", err)
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+owner, sharesPayload)
 	})
 }
 
 func (s *store) remove(ctx context.Context, id string) error {
-	return s.execNotified(ctx, "DELETE FROM users WHERE id = $1", id)
+	return s.execNotified(ctx, userPayload+id, "DELETE FROM users WHERE id = $1", id)
 }
 
 func (s *store) update(ctx context.Context, r record, set Settings) error {
@@ -289,7 +296,7 @@ func (s *store) update(ctx context.Context, r record, set Settings) error {
 	if len(cols) == 0 {
 		return nil
 	}
-	return s.execNotified(ctx, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
+	return s.execNotified(ctx, userPayload+r.ID, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
 }
 
 func (s *store) setPassword(ctx context.Context, id, hash string) error {
@@ -297,7 +304,7 @@ func (s *store) setPassword(ctx context.Context, id, hash string) error {
 }
 
 func (s *store) setToken(ctx context.Context, id, sha string) error {
-	err := s.execNotified(ctx, "UPDATE users SET token_sha256 = $2 WHERE id = $1", id, sha)
+	err := s.execNotified(ctx, userPayload+id, "UPDATE users SET token_sha256 = $2 WHERE id = $1", id, sha)
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return ErrExists
 	}
@@ -305,7 +312,7 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 }
 
 func (s *store) clearToken(ctx context.Context, id string) error {
-	return s.execNotified(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
+	return s.execNotified(ctx, userPayload+id, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
 }
 
 // lockUser holds an advisory lock on user id in every api until the returned func runs, in a transaction on the lock pool so waiters cannot exhaust the pool the holder needs.
@@ -330,9 +337,14 @@ func (s *store) exists(ctx context.Context, id string) (bool, error) {
 	return s.holds(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id)
 }
 
-func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
-	return s.holds(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)
-		OR EXISTS (SELECT 1 FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.sha256 = $1 AND NOT u.disabled)`, sha)
+func (s *store) tokenOwner(ctx context.Context, sha string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id FROM users WHERE token_sha256 = $1 AND NOT disabled
+		UNION ALL SELECT u.id FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.sha256 = $1 AND NOT u.disabled LIMIT 1`, sha).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *store) holds(ctx context.Context, query string, arg any) (bool, error) {
@@ -360,7 +372,7 @@ func (s *store) allDevices(ctx context.Context) (map[string][]deviceToken, error
 }
 
 func (s *store) insertDevice(ctx context.Context, user string, d deviceToken, client, label string) error {
-	return s.execNotified(ctx, "INSERT INTO user_tokens (id, user_id, sha256, client, label) VALUES ($1, $2, $3, $4, $5)", d.id, user, d.sha256, client, label)
+	return s.execNotified(ctx, userPayload+user, "INSERT INTO user_tokens (id, user_id, sha256, client, label) VALUES ($1, $2, $3, $4, $5)", d.id, user, d.sha256, client, label)
 }
 
 func (s *store) devices(ctx context.Context, user string) ([]Device, error) {
@@ -382,7 +394,7 @@ func (s *store) removeDevice(ctx context.Context, user, id string) (string, erro
 		if err := tx.QueryRow(ctx, "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2 RETURNING sha256", id, user).Scan(&sum); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+user)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
@@ -400,7 +412,7 @@ func (s *store) removeDeviceBySHA256(ctx context.Context, sum string) (string, s
 		if err := tx.QueryRow(ctx, "DELETE FROM user_tokens WHERE sha256 = $1 RETURNING user_id, id", sum).Scan(&user, &id); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+user)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", nil
@@ -418,7 +430,7 @@ func (s *store) signOut(ctx context.Context, user string) error {
 				return fmt.Errorf("sign out: %w", err)
 			}
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, userPayload+user)
 	})
 }
 
@@ -472,7 +484,7 @@ func (s *store) insertShare(ctx context.Context, rec *shareRecord, sealed []byte
 			rec.id, rec.box, rec.owner, rec.secretSHA256, sealed, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, sharesPayload)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: the box is already shared", ErrExists)
@@ -628,7 +640,7 @@ func (s *store) execShare(ctx context.Context, sql string, args ...any) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, sharesPayload)
 	})
 }
 
@@ -640,12 +652,12 @@ func (s *store) exec(ctx context.Context, sql string, args ...any) error {
 }
 
 // execNotified runs sql and the users notify in one transaction, so other apis hear of the write exactly when it commits.
-func (s *store) execNotified(ctx context.Context, sql string, args ...any) error {
+func (s *store) execNotified(ctx context.Context, payload, sql string, args ...any) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, sql, args...); err != nil {
 			return err
 		}
-		return notifyIn(ctx, tx, "")
+		return notifyIn(ctx, tx, payload)
 	})
 	if err != nil {
 		return fmt.Errorf("%s: %w", strings.ToLower(strings.Fields(sql)[0]), err)
@@ -653,9 +665,11 @@ func (s *store) execNotified(ctx context.Context, sql string, args ...any) error
 	return nil
 }
 
-func notifyIn(ctx context.Context, tx pgx.Tx, payload string) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
-		return fmt.Errorf("notify %s: %w", notifyChannel, err)
+func notifyIn(ctx context.Context, tx pgx.Tx, payloads ...string) error {
+	for _, payload := range payloads {
+		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", notifyChannel, payload); err != nil {
+			return fmt.Errorf("notify %s: %w", notifyChannel, err)
+		}
 	}
 	return nil
 }
