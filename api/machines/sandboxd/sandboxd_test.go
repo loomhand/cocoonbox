@@ -675,6 +675,27 @@ func TestAHibernateThatFailedOnALiveClaimRunsAgain(t *testing.T) {
 	}
 }
 
+func TestAHibernateThatLandedDespiteAnErrorReadsHibernated(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateLands = 1
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	if again, err := b.Hibernate(t.Context(), boxID); err != nil || again.State != machines.StateHibernated {
+		t.Errorf("Hibernate of the hibernated machine = %+v, %v, want it left hibernated", again, err)
+	}
+	if got := fake.count("hibernate"); got != 1 {
+		t.Errorf("hibernates = %d, want 1", got)
+	}
+}
+
 func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -1948,6 +1969,7 @@ type fakeSandboxd struct {
 	getStatus      int
 	refusals       int
 	hibernateFails int
+	hibernateLands int
 	hold           chan struct{}
 	agent          string
 	tenants        map[string]tenantRequest
@@ -2118,6 +2140,11 @@ func (f *fakeSandboxd) handler() http.Handler {
 				return
 			}
 			sb.row.Hibernated = true
+			if f.hibernateLands > 0 {
+				f.hibernateLands--
+				writeError(w, http.StatusInternalServerError, "hibernate answer lost")
+				return
+			}
 		case "release":
 			delete(f.sandboxes, sb.row.ID)
 		case "renew":
