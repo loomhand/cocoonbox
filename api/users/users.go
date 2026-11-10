@@ -766,6 +766,11 @@ func (s *Service) Policy(id string) Policy {
 	return r.Policy
 }
 
+func (s *Service) Disabled(id string) bool {
+	r, err := s.record(id)
+	return err == nil && r.Disabled
+}
+
 // MaxRunning returns how many of user id's boxes may run at once, 0 when the user takes the api's default.
 func (s *Service) MaxRunning(id string) int {
 	r, err := s.record(id)

@@ -442,6 +442,7 @@ type fakeRegistry struct {
 	changed   func(owner string)
 	flavor    machines.Flavor
 	flavorErr error
+	disabled  map[string]bool
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -455,6 +456,12 @@ func (r *fakeRegistry) Boxes(owner string) []users.Box {
 		r.boxes[owner] = []users.Box{{ID: BoxID(owner), Owner: owner, Name: users.FirstBoxName, Flavor: defaultFlavor}}
 	}
 	return slices.Clone(r.boxes[owner])
+}
+
+func (r *fakeRegistry) Disabled(owner string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disabled[owner]
 }
 
 func (r *fakeRegistry) HasBox(owner, id string) bool {

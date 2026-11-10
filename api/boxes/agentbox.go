@@ -4,6 +4,9 @@ import (
 	"context"
 	"slices"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -47,6 +50,10 @@ func (s *Service) admitStart(ctx context.Context, user string) (func(), error) {
 	if err = CheckStart(ctx); err != nil {
 		unlock()
 		return nil, err
+	}
+	if s.registry.Disabled(user) {
+		unlock()
+		return nil, status.Error(codes.FailedPrecondition, "the account is disabled")
 	}
 	return unlock, nil
 }

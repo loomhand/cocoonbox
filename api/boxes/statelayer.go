@@ -389,7 +389,11 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
 	}
-	if err = l.materialize(ctx, p, key, id); err != nil {
+	held := l.userLock(p.user)
+	held.RLock()
+	err = l.materialize(ctx, p, key, id)
+	held.RUnlock()
+	if err != nil {
 		return nil, err
 	}
 	manifest, err := l.store.PresignGet(ctx, p.manifest(id))

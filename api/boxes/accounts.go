@@ -28,6 +28,11 @@ func (s *Service) EnableAccounts(accounts Accounts) {
 
 // Release deletes every machine of user; the box's saved state stays in the store.
 func (s *Service) Release(ctx context.Context, user string) error {
+	unlock, err := s.lockStarts(ctx, user)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	ms, err := s.machines.List(ctx, user)
 	if err != nil {
 		return err

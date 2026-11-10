@@ -95,19 +95,28 @@ func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, n
 		return r, err
 	}
 	kept, dropped, purged := map[string][]string{}, map[string]map[string]bool{}, map[string]bool{}
-	for _, box := range boxes {
-		p := statePath{user: user, box: box}
-		if !live(box) {
-			if purged[box], err = l.expire(ctx, p, opts, now, &r); err != nil {
-				return r, fmt.Errorf("purge box %s: %w", box, err)
+	err = func() error {
+		held := l.userLock(user)
+		held.RLock()
+		defer held.RUnlock()
+		for _, box := range boxes {
+			p := statePath{user: user, box: box}
+			if !live(box) {
+				if purged[box], err = l.expire(ctx, p, opts, now, &r); err != nil {
+					return fmt.Errorf("purge box %s: %w", box, err)
+				}
+				if purged[box] {
+					continue
+				}
 			}
-			if purged[box] {
-				continue
+			if kept[box], dropped[box], err = l.prune(ctx, p, opts, now, &r); err != nil {
+				return fmt.Errorf("prune box %s: %w", box, err)
 			}
 		}
-		if kept[box], dropped[box], err = l.prune(ctx, p, opts, now, &r); err != nil {
-			return r, fmt.Errorf("prune box %s: %w", box, err)
-		}
+		return nil
+	}()
+	if err != nil {
+		return r, err
 	}
 	r.boxes = len(kept)
 	return r, l.sweep(ctx, user, opts, now, kept, dropped, purged, &r)
@@ -267,7 +276,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 	unlock := l.locks.Lock(p.index())
 	defer unlock()
 	var idx chunkIndex
-	version, _, err := l.readVersion(ctx, p.index(), &idx)
+	version, found, err := l.readVersion(ctx, p.index(), &idx)
 	if err != nil {
 		return err
 	}
@@ -321,7 +330,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 		return nil
 	}
 	// the index goes first: a save must never skip uploading a chunk that the deletes remove.
-	if len(garbage) > 0 {
+	if found && len(garbage) > 0 {
 		next := chunkIndex{KeyID: idx.KeyID, Chunks: indexed, Generation: idx.Generation + 1, Commits: idx.Commits}
 		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.index(), next, version) }); err != nil {
 			return err

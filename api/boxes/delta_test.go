@@ -119,6 +119,49 @@ func TestGCCompactsDeltaManifestsAndRebuildsThemExactly(t *testing.T) {
 	}
 }
 
+func TestADeleteOfTheUsersStateDuringARestoreLeavesNothing(t *testing.T) {
+	env := newDeltaEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.agent.files = manyFiles(64, 0)
+	env.save(t)
+	env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
+	env.agent.files = manyFiles(64, 1)
+	env.save(t)
+	second := env.headID(t)
+	env.agent.files = manyFiles(64, 2)
+	env.save(t)
+	env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
+	if env.store.has(p.manifest(second)) {
+		t.Fatal("the second snapshot's manifest was not compacted")
+	}
+	var once sync.Once
+	env.store.before = func(action, key string) {
+		if action != "put" || key != p.manifest(second) {
+			return
+		}
+		once.Do(func() {
+			deleted := make(chan error, 1)
+			go func() { deleted <- env.svc.DeleteState(t.Context(), alice) }()
+			select {
+			case err := <-deleted:
+				if err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+	op, err := env.svc.RestorePaths(env.ctx, &controlv1.RestorePathsRequest{BoxId: aliceBox, SnapshotId: second, Paths: []string{"/workspace/src/f-0001.go"}})
+	if err != nil {
+		t.Fatalf("RestorePaths: %v", err)
+	}
+	env.finalEvent(t, op)
+	clustertest.WaitFor(t, "no object of the deleted user", func() bool {
+		left, err := env.store.List(t.Context(), alice+"/")
+		return err == nil && len(left) == 0
+	})
+}
+
 func TestGCKeepsFullManifestWhenDeltaExceedsRestoreLimit(t *testing.T) {
 	defer func(limit int64) { manifestLimit = limit }(manifestLimit)
 	manifestLimit = 4 * mib

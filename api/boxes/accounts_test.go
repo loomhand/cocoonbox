@@ -82,6 +82,45 @@ func TestDisablingAUserHibernatesItsBoxesEndsItsStreamsAndStopsItsKeysUntilEnabl
 	}
 }
 
+func TestADisabledOwnerStartsNoMachine(t *testing.T) {
+	fake := newFakeMachines()
+	registry := newFakeRegistry()
+	registry.disabled = map[string]bool{alice: true}
+	svc := newService(fake, testDefaults, registry)
+
+	if _, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Ensure of a disabled owner = %v, want FailedPrecondition", err)
+	}
+	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
+		t.Errorf("machines of the disabled owner = %v, want none", ms)
+	}
+}
+
+func TestReleaseWaitsForAStartOfTheUser(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	unlock, err := svc.lockStarts(t.Context(), alice)
+	if err != nil {
+		t.Fatalf("lockStarts: %v", err)
+	}
+	released := make(chan error, 1)
+	go func() { released <- svc.Release(t.Context(), alice) }()
+	select {
+	case err := <-released:
+		unlock()
+		t.Fatalf("Release = %v while a start holds the user's lock, want it to wait", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	unlock()
+	if err := <-released; err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
+		t.Errorf("machines after Release = %v, want none", ms)
+	}
+}
+
 type disableEnv struct {
 	svc     *Service
 	fake    *fakeMachines

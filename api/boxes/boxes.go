@@ -116,6 +116,7 @@ type Registry interface {
 	// MaxRunning is the owner's own running limit, 0 for MaxRunning of the defaults.
 	MaxRunning(owner string) int
 	Policy(owner string) users.Policy
+	Disabled(owner string) bool
 	OnBoxes(fn func(owner string))
 }
 
