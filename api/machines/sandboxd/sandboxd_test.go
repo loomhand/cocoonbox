@@ -736,6 +736,67 @@ func TestAHibernateThatLandedDespiteAnErrorReadsHibernated(t *testing.T) {
 	}
 }
 
+func TestAFailedWakeOfAHibernatedSandboxReadsHibernatedAndWakesAgain(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	fake.mu.Lock()
+	fake.wakeFails = 1
+	fake.mu.Unlock()
+
+	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure of a hibernated box = %v, %v, want a wake", action, err)
+	}
+	if got := waitState(t, b, boxID, w.Revision, machines.StateHibernated); got.Reason != "" {
+		t.Errorf("the machine after a failed wake = %+v, want hibernated without a reason", got)
+	}
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.opErr != wakeFailed {
+		t.Errorf("stored op error = %q, %v, want %q", e.opErr, err, wakeFailed)
+	}
+	w, action, err = b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure after a failed wake = %v, %v, want a wake", action, err)
+	}
+	waitState(t, b, boxID, w.Revision, machines.StateRunning)
+	if got := fake.count("wake"); got != 2 {
+		t.Errorf("wakes = %d, want 2", got)
+	}
+}
+
+func TestAWakeThatLandedDespiteAnErrorRunsOnceTheRowIsLive(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	fake.mu.Lock()
+	fake.wakeLands = 1
+	fake.mu.Unlock()
+
+	w, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if got := waitState(t, b, boxID, w.Revision, machines.StateRunning); got.Reason != "" {
+		t.Errorf("the machine whose wake landed = %+v, want running", got)
+	}
+	if e, err := b.stored(t.Context(), boxID); err != nil || e.opErr != wakeFailed {
+		t.Errorf("stored op error = %q, %v, want %q", e.opErr, err, wakeFailed)
+	}
+	if got := fake.count("wake"); got != 1 {
+		t.Errorf("wakes = %d, want 1", got)
+	}
+}
+
 func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -2011,6 +2072,8 @@ type fakeSandboxd struct {
 	hibernateFails int
 	hibernateCode  int
 	hibernateLands int
+	wakeFails      int
+	wakeLands      int
 	hold           chan struct{}
 	agent          string
 	tenants        map[string]tenantRequest
@@ -2173,7 +2236,17 @@ func (f *fakeSandboxd) handler() http.Handler {
 		f.calls[r.PathValue("verb")]++
 		switch r.PathValue("verb") {
 		case "wake":
+			if f.wakeFails > 0 {
+				f.wakeFails--
+				writeError(w, http.StatusInternalServerError, "wake failed")
+				return
+			}
 			sb.row.Hibernated, sb.row.Archived, sb.row.Failed = false, false, ""
+			if f.wakeLands > 0 {
+				f.wakeLands--
+				writeError(w, http.StatusInternalServerError, "wake answer lost")
+				return
+			}
 		case "hibernate":
 			if f.hibernateFails > 0 {
 				f.hibernateFails--

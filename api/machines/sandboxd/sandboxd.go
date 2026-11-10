@@ -208,6 +208,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		}
 		if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
 			sandbox, addr, wakes = e.row.ID, e.ownerAddr, e.wakes+1
+			e.ready = false
 			e.begin(opWake, now, b.leaseFor)
 			action = machines.ActionWoken
 			return e, true
@@ -746,7 +747,7 @@ func (b *Backend) wake(ctx context.Context, id, from, sandbox string, wakes int)
 		if e == nil {
 			return e, false
 		}
-		e.wakes, e.ready = wakes, false
+		e.wakes = wakes
 		return e, true
 	}); err != nil {
 		return err

@@ -21,6 +21,8 @@ const (
 	opClaim     = "claim"
 	opWake      = "wake"
 	opHibernate = "hibernate"
+
+	wakeFailed = opWake + " failed"
 )
 
 var tiers = []struct {
@@ -100,7 +102,7 @@ func (e *entry) state() (machines.State, string) {
 		return machines.StateHibernated, ""
 	case e.opErr == machines.ReasonHibernateFailed && e.row != nil && e.row.Failed != "":
 		return machines.StateFailed, e.row.Failed
-	case e.opErr != "":
+	case e.opErr != "" && e.opErr != wakeFailed:
 		return machines.StateFailed, e.opErr
 	case e.row == nil:
 		return machines.StateStarting, ""
