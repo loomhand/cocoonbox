@@ -14,12 +14,12 @@ $Pinned = @(
         Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.47/shuttle-v0.1.47-windows-x64.zip' },
     @{ Name = 'VirtualDisplayDriver-x86.Driver.Only.zip'; Sha = 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a'
         Url = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip' },
-    @{ Name = 'nefcon_v1.21.0.zip'; Sha = '4c8e68f6b663598d77b7c3f76459b16fad00994e53ea8af0bd106a805dd5c18b'
-        Url = 'https://github.com/nefarius/nefcon/releases/download/v1.21.0/nefcon_v1.21.0.zip' },
+    @{ Name = 'nefcon_v1.21.1.zip'; Sha = '28292f4b1417484db6ad23c47ffc18ea99d3de3bdb3bbbe60c8ed11703a3780a'
+        Url = 'https://github.com/nefarius/nefcon/releases/download/v1.21.1/nefcon_v1.21.1.zip' },
     @{ Name = 'tightvnc-2.8.90-gpl-setup-64bit.msi'; Sha = '9693cb4cdc2e7e482e8e3f5890415b57ef87de3369fa5c337db516218a1170ce'
         Url = 'https://www.tightvnc.com/download/2.8.90/tightvnc-2.8.90-gpl-setup-64bit.msi' },
-    @{ Name = 'Git-2.56.0.2-64-bit.exe'; Sha = '52188f917b378f00c70ec136bcf090005f30d44fbc4eba0bce759cc6592d60f6'
-        Url = 'https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/Git-2.56.0.2-64-bit.exe' }
+    @{ Name = 'Git-2.56.0.4-64-bit.exe'; Sha = '4961a4a8cc778d8b6e00a5819e5fe4d078b754555aff7aedc2d77a5d74c2de80'
+        Url = 'https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.4/Git-2.56.0.4-64-bit.exe' }
 )
 # Google publishes no checksum for its enterprise MSI; its Authenticode signature by Google LLC is checked instead.
 $Chrome = @{ Name = 'googlechromestandaloneenterprise64.msi'; Url = 'https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi' }
@@ -121,7 +121,7 @@ function Display {
     Copy-Item -Force $settings.FullName "$Display\vdd_settings.xml"
     if (-not (Get-PnpDevice -FriendlyName 'Virtual Display Driver' -ErrorAction SilentlyContinue)) {
         $nefcon = 'C:\ProgramData\nefcon'
-        if (-not (Test-Path $nefcon)) { Expand-Archive -Force (Join-Path $Vendor 'nefcon_v1.21.0.zip') $nefcon }
+        if (-not (Test-Path $nefcon)) { Expand-Archive -Force (Join-Path $Vendor 'nefcon_v1.21.1.zip') $nefcon }
         $exe = Get-ChildItem -Recurse -Filter nefconw.exe $nefcon | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
         & $exe.FullName --create-device-node --hardware-id 'Root\MttVDD' --class-name Display --class-guid '4d36e968-e325-11ce-bfc1-08002be10318' | Out-Null
         & $exe.FullName --install-driver --inf-path $inf.FullName | Out-Null
@@ -149,9 +149,9 @@ function Vnc {
 }
 
 function Git {
-    Log 'Git for Windows 2.56.0.2, for the shell'
+    Log 'Git for Windows 2.56.0.4, for the shell'
     if (-not (Test-Path 'C:\Program Files\Git\bin\bash.exe')) {
-        $p = Start-Process (Join-Path $Vendor 'Git-2.56.0.2-64-bit.exe') -Wait -PassThru -ArgumentList '/VERYSILENT /NORESTART /NOCANCEL /SP- /SUPPRESSMSGBOXES'
+        $p = Start-Process (Join-Path $Vendor 'Git-2.56.0.4-64-bit.exe') -Wait -PassThru -ArgumentList '/VERYSILENT /NORESTART /NOCANCEL /SP- /SUPPRESSMSGBOXES'
         if ($p.ExitCode -ne 0) { throw "git setup exit $($p.ExitCode)" }
     }
 }

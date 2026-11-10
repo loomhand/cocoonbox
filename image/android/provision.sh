@@ -2,7 +2,7 @@
 # Provisions the Android box base (docker, scrcpy-rfb, ashmem, shuttle and its desk runtime) as root, in the base build (base/Dockerfile).
 set -euo pipefail
 
-DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
+DOCKER_VERSION=5:29.9.3-1~ubuntu.24.04~noble
 PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy redsocks git xz-utils btrfs-progs polkitd)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
 NODE_VERSION=24.22.2
