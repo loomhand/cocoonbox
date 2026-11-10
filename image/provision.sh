@@ -3,12 +3,12 @@
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 set -euo pipefail
 
-MISE_VERSION=2026.10.0
-MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
+MISE_VERSION=2026.11.6
+MISE_SHA256=d6ebb6f5601bdf5a8d1d56028b24fe575f45075b989941ccc920f95161c5fa28
 MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
 MISE_URL="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/${MISE_TARBALL}"
-NODE_VERSION=24.21.0
-NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+NODE_VERSION=24.22.2
+NODE_SHA256=48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75
 NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb

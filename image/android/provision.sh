@@ -5,16 +5,16 @@ set -euo pipefail
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
 PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy redsocks git xz-utils btrfs-progs polkitd)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
-NODE_VERSION=24.21.0
+NODE_VERSION=24.22.2
 ARCH=$(dpkg --print-architecture)
 case $ARCH in
 amd64)
-	NODE_ARCH=x64 NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+	NODE_ARCH=x64 NODE_SHA256=48cc0e21e048790e54c0cf5749c2725005313d652651c40b7a21feb9697aaf75
 	SCRCPY_RFB="scrcpy-rfb-linux-amd64 c54fef8d5fd6b95e2cd595a54d89b7f34e85de0ab3137e4965936c3850ddb28f"
 	SU1000="su1000-linux-amd64 d1e3681254937afa319fcd43702ac53a2290c01b9e3b1fa750195a66e149d2ed"
 	;;
 arm64)
-	NODE_ARCH=arm64 NODE_SHA256=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+	NODE_ARCH=arm64 NODE_SHA256=eb187837a2230d4047161ac0be008584e16b46f726e9c9490ee35dc6b17d9ba8
 	SCRCPY_RFB="scrcpy-rfb-linux-arm64 dab2f1fe80935ad98ed5f0d3b77dc6a693d2feb6e1533e4cf909cde204f8706d"
 	SU1000="su1000-linux-arm64 72ca7905078089d4328a40267575ba258036ca20304844e3272ffff927a48c66"
 	;;
