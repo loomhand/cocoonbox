@@ -96,6 +96,8 @@ func (e *entry) state() (machines.State, string) {
 		return machines.StateStarting, ""
 	case op == opHibernate:
 		return machines.StateHibernating, ""
+	case e.opErr == machines.ReasonHibernateFailed && e.row != nil && (e.row.Hibernated || e.row.Archived):
+		return machines.StateHibernated, ""
 	case e.opErr != "":
 		return machines.StateFailed, e.opErr
 	case e.row == nil:
@@ -109,6 +111,10 @@ func (e *entry) state() (machines.State, string) {
 	default:
 		return machines.StateRunning, ""
 	}
+}
+
+func (e *entry) failedOnLiveClaim() bool {
+	return e.opErr != "" && e.row != nil && !e.row.Hibernated && !e.row.Archived && e.row.Failed == ""
 }
 
 // sandbox is the id of e's claim, "" for none or a nil e.

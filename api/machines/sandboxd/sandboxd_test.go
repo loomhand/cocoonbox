@@ -650,6 +650,52 @@ func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	}
 }
 
+func TestAHibernateThatFailedOnALiveClaimRunsAgain(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateFails = 1
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	if failed := waitState(t, b, boxID, h.Revision, machines.StateFailed); !failed.HibernateFailed() {
+		t.Fatalf("the machine after a failed hibernate = %+v, want HibernateFailed", failed)
+	}
+	h, err = b.Hibernate(t.Context(), boxID)
+	if err != nil || h.State != machines.StateHibernating {
+		t.Fatalf("Hibernate after a failed hibernate = %+v, %v, want hibernating", h, err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	if got := fake.count("hibernate"); got != 2 {
+		t.Errorf("hibernates = %d, want 2", got)
+	}
+}
+
+func TestAHibernateThatLandedDespiteAnErrorReadsHibernated(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.mu.Lock()
+	fake.hibernateLands = 1
+	fake.mu.Unlock()
+
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate = %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	if again, err := b.Hibernate(t.Context(), boxID); err != nil || again.State != machines.StateHibernated {
+		t.Errorf("Hibernate of the hibernated machine = %+v, %v, want it left hibernated", again, err)
+	}
+	if got := fake.count("hibernate"); got != 1 {
+		t.Errorf("hibernates = %d, want 1", got)
+	}
+}
+
 func TestAClaimTakesTheSpecFlavorsSizeAndAWakeKeepsTheClaimedOne(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -1922,6 +1968,8 @@ type fakeSandboxd struct {
 	patchStatus    int
 	getStatus      int
 	refusals       int
+	hibernateFails int
+	hibernateLands int
 	hold           chan struct{}
 	agent          string
 	tenants        map[string]tenantRequest
@@ -2086,7 +2134,17 @@ func (f *fakeSandboxd) handler() http.Handler {
 		case "wake":
 			sb.row.Hibernated, sb.row.Archived, sb.row.Failed = false, false, ""
 		case "hibernate":
+			if f.hibernateFails > 0 {
+				f.hibernateFails--
+				writeError(w, http.StatusInternalServerError, "hibernate failed")
+				return
+			}
 			sb.row.Hibernated = true
+			if f.hibernateLands > 0 {
+				f.hibernateLands--
+				writeError(w, http.StatusInternalServerError, "hibernate answer lost")
+				return
+			}
 		case "release":
 			delete(f.sandboxes, sb.row.ID)
 		case "renew":

@@ -264,7 +264,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 			return e, false
 		}
 		state, _ := e.state()
-		if state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
+		if state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) || e.failedOnLiveClaim() {
 			sandbox, addr, started = e.row.ID, e.ownerAddr, true
 			e.begin(opHibernate, now, b.leaseFor)
 			return e, true
@@ -621,6 +621,8 @@ func (b *Backend) run(id, op string, revision int64, fn task) {
 			// The process stops; the claim row tells the next reader how far the op came.
 		case errors.Is(err, machines.ErrCapacity):
 			opErr = machines.ErrCapacity.Error()
+		case err != nil && op == opHibernate:
+			opErr = machines.ReasonHibernateFailed
 		case err != nil:
 			opErr = op + " failed"
 		}

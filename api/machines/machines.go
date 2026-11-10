@@ -21,6 +21,8 @@ const (
 	ActionCreated Action = 1
 	ActionWoken   Action = 2
 
+	ReasonHibernateFailed = "hibernate failed"
+
 	tcpDialTimeout = 5 * time.Second
 )
 
@@ -83,6 +85,10 @@ type Machine struct {
 	EnvMissing bool
 	// Node names the backend node that holds the machine.
 	Node string
+}
+
+func (m Machine) HibernateFailed() bool {
+	return m.State == StateFailed && m.Reason == ReasonHibernateFailed
 }
 
 // Identity tells a box agent which box and wake it serves and which edge key signs its credentials; the guest takes Name as its hostname.
