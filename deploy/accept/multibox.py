@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Acceptance of several boxes per user (design §19.5) against a deployed api, run on the deployment host.
 
-A scratch user (CB_USER, default mb1) exists with max boxes 2 and exactly one box, main; its console password comes
-from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses the real
-users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the
-state store's credentials, which it only reads.
+A scratch user (CB_USER, default mb1) exists with max boxes 2, a running limit of 1 and exactly one box, main; its
+console password comes from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret,
+and refuses the real users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd
+root token and the state store's credentials, which it only reads.
 A failed run can leave the box test; delete it in the console before the next run.
 """
 
