@@ -205,7 +205,7 @@ func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if err := svc.Load(t.Context()); err != nil {
+	if err := svc.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	token, err := svc.Tenant(id)
@@ -382,7 +382,7 @@ func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
 	if _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); ok {
 		t.Error("a revoked token still resolves")
 	}
-	if err := elsewhere.Load(t.Context()); err != nil {
+	if err := elsewhere.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if _, ok := elsewhere.ByTokenSHA256(t.Context(), sum(token)); ok {
@@ -424,7 +424,7 @@ func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 	if devices, err := svc.Devices(t.Context(), u.ID); err != nil || len(devices) != 0 {
 		t.Errorf("Devices after SignOut = %+v, %v", devices, err)
 	}
-	if err := elsewhere.Load(t.Context()); err != nil {
+	if err := elsewhere.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if _, ok := elsewhere.ByTokenSHA256(t.Context(), sum(device)); ok {
@@ -668,7 +668,7 @@ func TestSetBoxFlavorReachesTheOtherApisAndRefusesAnUnknownBox(t *testing.T) {
 	if got := svc.Boxes(u.ID)[0].Flavor; got != newFlavor {
 		t.Errorf("flavor here = %+v, want %+v", got, newFlavor)
 	}
-	if err := other.Load(t.Context()); err != nil || other.Boxes(u.ID)[0].Flavor != newFlavor {
+	if err := other.load(t.Context()); err != nil || other.Boxes(u.ID)[0].Flavor != newFlavor {
 		t.Errorf("another api reloading = %v, flavor %+v; want %+v", err, other.Boxes(u.ID)[0].Flavor, newFlavor)
 	}
 	if err := svc.SetBoxFlavor(t.Context(), u.ID, "cb-000000000009", newFlavor); !errors.Is(err, ErrNotFound) {
@@ -725,7 +725,7 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	if !gw.Disabled[u.ID] || life.Err() == nil || lifetime(svc, u.ID, "").Err() == nil {
 		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.Disabled[u.ID], life.Err(), lifetime(svc, u.ID, "").Err())
 	}
-	if err := other.Load(t.Context()); err != nil || elsewhere.Err() == nil {
+	if err := other.load(t.Context()); err != nil || elsewhere.Err() == nil {
 		t.Errorf("another api reloading the disable = %v, its lifetime %v", err, elsewhere.Err())
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {

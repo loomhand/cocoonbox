@@ -45,7 +45,7 @@ func (s *Service) IssueDevice(ctx context.Context, id, client, label string) (st
 	if err := s.store.insertDevice(ctx, id, d, client, label); err != nil {
 		return "", err
 	}
-	if err := s.Load(ctx); err != nil {
+	if err := s.SyncUser(ctx, id); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -82,17 +82,16 @@ func (s *Service) RevokeDeviceSHA256(ctx context.Context, sum string) error {
 	return nil
 }
 
-// dropDevice takes a revoked device token out of the index; the delete's own notify reloads the other apis.
+// dropDevice takes a revoked device token out of the index; the delete's own notify updates the other apis.
 func (s *Service) dropDevice(id, device, sum string) {
-	s.mu.Lock()
-	s.indexGen++
+	unlock := s.editUser(id)
 	delete(s.byToken, sum)
 	if r, ok := s.byID[id]; ok {
 		r.devices = slices.DeleteFunc(slices.Clone(r.devices), func(d deviceToken) bool { return d.id == device })
 		s.byID[id] = r
 	}
 	s.endCredential(sum)
-	s.mu.Unlock()
+	unlock()
 	s.deviceUse.Delete(device)
 }
 

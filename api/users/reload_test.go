@@ -30,11 +30,11 @@ func TestLoadCannotRestoreRevokedTokens(t *testing.T) {
 			}
 			gate := gateQuery(t, svc, dsn, "FROM user_tokens ORDER BY")
 			done := make(chan error, 1)
-			go func() { done <- svc.Load(t.Context()) }()
+			go func() { done <- svc.load(t.Context()) }()
 			<-gate.entered
 			err = writer.RevokeToken(t.Context(), u.ID)
 			if err == nil && remote {
-				err = svc.Load(t.Context())
+				err = svc.load(t.Context())
 			}
 			close(gate.resume)
 			if err != nil {
@@ -83,7 +83,7 @@ func TestAnUpdateCannotRestoreATokenRevokedWhileItWaited(t *testing.T) {
 func TestAnIssuedDeviceCannotOutliveASignOutWhileItWaited(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "alice"})
-	gate := gateQuery(t, svc, dsn, "FROM users ORDER BY")
+	gate := gateQuery(t, svc, dsn, "FROM user_tokens WHERE user_id = $1 ORDER BY")
 	done := make(chan error, 1)
 	var token string
 	go func() {
@@ -92,9 +92,14 @@ func TestAnIssuedDeviceCannotOutliveASignOutWhileItWaited(t *testing.T) {
 		done <- err
 	}()
 	<-gate.entered
-	err := svc.SignOut(t.Context(), u.ID)
+	signedOut := make(chan error, 1)
+	go func() { signedOut <- svc.SignOut(t.Context(), u.ID) }()
+	clustertest.WaitFor(t, "the sign-out commits", func() bool {
+		var n int
+		return userstest.Query(t, dsn, "SELECT count(*) FROM user_tokens WHERE user_id = $1", u.ID).Scan(&n) == nil && n == 0
+	})
 	close(gate.resume)
-	if err != nil {
+	if err := <-signedOut; err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -139,7 +144,7 @@ func TestACreateRacingAFullLoadKeepsTheNewUser(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
 	gate := gateQuery(t, svc, dsn, "FROM boxes ORDER BY")
 	done := make(chan error, 1)
-	go func() { done <- svc.Load(t.Context()) }()
+	go func() { done <- svc.load(t.Context()) }()
 	<-gate.entered
 	u, err := svc.Ensure(t.Context(), "firebase", outsideID)
 	close(gate.resume)
@@ -154,7 +159,7 @@ func TestACreateRacingAFullLoadKeepsTheNewUser(t *testing.T) {
 	}
 }
 
-func TestAListenerFullyReloadsTokenChangesAndDisables(t *testing.T) {
+func TestAListenerTakesInTokenChangesAndDisables(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
 	other := openTestService(t, dsn, gw, tenants)
@@ -180,7 +185,7 @@ func TestAccountDisabledReadsAnotherReplicasDisable(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	other := openTestService(t, dsn, gw, tenants)
 	u := mustCreate(t, other, NewUser{Name: "qa1"})
-	if err := svc.Load(t.Context()); err != nil {
+	if err := svc.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if _, err := other.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
@@ -205,7 +210,7 @@ func TestAFullLoadInstallsWhileNewUsersKeepArriving(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	elsewhere := mustCreate(t, openTestService(t, dsn, gw, tenants), NewUser{Name: "qa1"})
 	signups := trace(t, svc, dsn, &signupDuringLoad{svc: svc})
-	if err := svc.Load(t.Context()); err != nil {
+	if err := svc.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if n := signups.loads.Load(); n != 1 || len(signups.ids) != 1 {
@@ -224,7 +229,6 @@ func TestALateCreationNotifyStillCutsTheSharesOfADisabledOwner(t *testing.T) {
 	go svc.Listen(context.WithValue(t.Context(), listenerKey{}, true))
 	clustertest.WaitFor(t, "the listener loads", func() bool { return gate.loads.Load() > 0 })
 	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
-	<-gate.entered
 	share, err := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: svc.Boxes(owner.ID)[0].ID})
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
@@ -233,12 +237,17 @@ func TestALateCreationNotifyStillCutsTheSharesOfADisabledOwner(t *testing.T) {
 	if !ok {
 		t.Fatal("the share does not admit a viewer before the disable")
 	}
+	gate.armed.Store(true)
+	if err := pgx.BeginFunc(t.Context(), svc.store.pool, func(tx pgx.Tx) error { return notifyIn(t.Context(), tx, createdPayload+owner.ID) }); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+	<-gate.entered
 	if _, err := openTestService(t, dsn, gw, tenants).Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	close(gate.resume)
 	clustertest.WaitFor(t, "the listener knows the disable", func() bool { u, err := svc.Get(owner.ID); return err == nil && u.Disabled })
-	if err := svc.Load(t.Context()); err != nil {
+	if err := svc.load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if err := svc.syncShares(t.Context()); err != nil {
@@ -273,7 +282,7 @@ func TestAFullLoadDoesNotBringBackAUserDeletedWhileItRead(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	allDone := make(chan error, 1)
-	go func() { allDone <- svc.Load(t.Context()) }()
+	go func() { allDone <- svc.load(t.Context()) }()
 	<-all.entered
 	close(one.resume)
 	if err := <-oneDone; err != nil {
@@ -338,6 +347,29 @@ func TestEveryUsersWriteReachesAListenerWhenNoNotifyCanFollowIt(t *testing.T) {
 			seen: func(b *Service, u User, _ signIns, _ string) bool {
 				boxes := b.Boxes(u.ID)
 				return len(boxes) == 1 && boxes[0].Name == "renamed"
+			},
+		},
+		{
+			name: "box remove",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if err := a.RemoveBox(t.Context(), u.ID, firstBoxID(u.ID)); err != nil {
+					t.Fatalf("RemoveBox: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, u User, _ signIns, _ string) bool { return len(b.Boxes(u.ID)) == 0 },
+		},
+		{
+			name: "settings",
+			write: func(t *testing.T, a *Service, u User, _ signIns) string {
+				if _, err := a.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3), Admin: new(true)}); err != nil {
+					t.Fatalf("Update: %v", err)
+				}
+				return ""
+			},
+			seen: func(b *Service, u User, _ signIns, _ string) bool {
+				got, err := b.Get(u.ID)
+				return err == nil && got.MaxBoxesCap == 3 && got.Admin
 			},
 		},
 		{
@@ -432,7 +464,9 @@ func TestEveryUsersWriteReachesAListenerWhenNoNotifyCanFollowIt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, gw, tenants, dsn := newTestService(t)
+			loads := trace(t, b, dsn, &queryCounter{sql: "FROM users ORDER BY"})
 			go b.Listen(t.Context())
+			clustertest.WaitFor(t, "the listener loads once", func() bool { return loads.n.Load() == 1 })
 			a := openTestService(t, dsn, gw, tenants)
 			u := mustCreate(t, a, NewUser{Name: "qa1"})
 			token, err := a.RegenerateToken(t.Context(), u.ID)
@@ -452,6 +486,9 @@ func TestEveryUsersWriteReachesAListenerWhenNoNotifyCanFollowIt(t *testing.T) {
 			trace(t, a, dsn, userstest.LateNotifyFails{})
 			got := tt.write(t, a, u, in)
 			clustertest.WaitFor(t, "the listener sees the "+tt.name, func() bool { return tt.seen(b, u, in, got) })
+			if n := loads.n.Load(); n != 1 {
+				t.Errorf("the listener reloaded fully %d times for one user's writes, want none", n-1)
+			}
 		})
 	}
 }
@@ -504,6 +541,7 @@ type listenerKey struct{}
 type creationNotifyGate struct {
 	entered chan struct{}
 	resume  chan struct{}
+	armed   atomic.Bool
 	blocked atomic.Bool
 	loads   atomic.Int64
 }
@@ -515,7 +553,7 @@ func (g *creationNotifyGate) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d
 	if strings.Contains(data.SQL, "FROM users ORDER BY") {
 		g.loads.Add(1)
 	}
-	if strings.Contains(data.SQL, "FROM users WHERE id =") && g.blocked.CompareAndSwap(false, true) {
+	if g.armed.Load() && strings.Contains(data.SQL, "FROM users WHERE id =") && g.blocked.CompareAndSwap(false, true) {
 		close(g.entered)
 		<-g.resume
 	}

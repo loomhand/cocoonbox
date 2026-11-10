@@ -509,7 +509,7 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 
 func (s *Server) checkStart(ctx context.Context, g *oauth.Grant, id string) error {
 	if s.accounts != nil {
-		if err := s.accounts.Load(ctx); err != nil {
+		if err := s.accounts.SyncUser(ctx, g.User); err != nil {
 			return status.Error(codes.Unavailable, "reading the user's boxes failed")
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"maps"
 	"regexp"
 	"slices"
@@ -41,6 +42,7 @@ const (
 	tokenMissInterval = 100 * time.Millisecond
 	tenantInterval    = 10 * time.Minute
 	tenantFanout      = 8
+	userStripes       = 256
 	listenRetry       = 2 * time.Second
 	endedGrace        = 10 * time.Minute
 
@@ -199,15 +201,17 @@ type Service struct {
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash    []byte
 	passwordCost int
+	stripes      [userStripes]sync.Mutex
 
 	mu           sync.RWMutex
 	byID         map[string]record
 	byToken      map[string]tokenOwner
-	indexGen     int
-	spliced      []string
+	seq          uint64
+	touched      map[string]uint64
+	loading      int
+	loadStart    uint64
 	deviceUse    sync.Map
 	boxes        map[string][]Box
-	boxGen       int
 	shares       map[string]*shareRecord
 	shareSecrets map[string]string
 	// shareGen counts this api's share changes, so a sync read before one does not undo it.
@@ -242,10 +246,10 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, boxFlavor: opts.BoxFlavor, dummyHash: dummy, passwordCost: cost,
-		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
+		boxes: map[string][]Box{}, touched: map[string]uint64{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
 		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
-	if err := s.Load(ctx); err != nil {
+	if err := s.load(ctx); err != nil {
 		st.close()
 		return nil, err
 	}
@@ -266,103 +270,21 @@ func (s *Service) Close() {
 	s.store.close()
 }
 
-// Load replaces the in-memory index with a current snapshot of the tables.
-func (s *Service) Load(ctx context.Context) error {
-read:
-	for {
-		s.mu.RLock()
-		gen, indexGen, spliced := s.boxGen, s.indexGen, len(s.spliced)
-		s.mu.RUnlock()
-		records, err := s.store.all(ctx)
-		if err != nil {
-			return err
-		}
-		devices, err := s.store.allDevices(ctx)
-		if err != nil {
-			return err
-		}
-		boxes, err := s.store.allBoxes(ctx)
-		if err != nil {
-			return err
-		}
-		byOwner := map[string][]Box{}
-		for _, b := range boxes {
-			byOwner[b.Owner] = append(byOwner[b.Owner], b)
-		}
-		byID := make(map[string]record, len(records))
-		byToken := make(map[string]tokenOwner, len(records))
-		for _, r := range records {
-			r.devices = devices[r.ID]
-			byID[r.ID] = r
-			addTokens(byToken, r)
-		}
-		gone := map[string]bool{}
-		for {
-			s.mu.Lock()
-			if s.indexGen != indexGen || s.boxGen != gen {
-				s.mu.Unlock()
-				continue read
-			}
-			check := slices.DeleteFunc(slices.Clone(s.spliced[spliced:]), func(id string) bool { _, ok := byID[id]; return ok || gone[id] })
-			if len(check) == 0 {
-				break
-			}
-			s.mu.Unlock()
-			for _, id := range check {
-				r, boxes, err := s.store.one(ctx, id)
-				switch {
-				case errors.Is(err, ErrNotFound):
-					gone[id] = true
-				case err != nil:
-					return err
-				default:
-					byID[id], byOwner[id] = r, boxes
-					addTokens(byToken, r)
-				}
-			}
-		}
-		var changed []string
-		s.indexGen++
-		s.spliced = nil
-		for id, r := range byID {
-			if r.Disabled && !s.byID[id].Disabled {
-				s.cutOwner(id, false)
-			}
-		}
-		s.byID, s.byToken = byID, byToken
-		for owner := range byOwner {
-			if !slices.Equal(s.boxes[owner], byOwner[owner]) {
-				changed = append(changed, owner)
-			}
-		}
-		for owner := range s.boxes {
-			if _, ok := byOwner[owner]; !ok {
-				changed = append(changed, owner)
-			}
-		}
-		s.boxes = byOwner
-		for id := range s.lives {
-			if r, ok := byID[id]; !ok || r.Disabled {
-				s.end(id)
-			}
-		}
-		for credential := range s.creds {
-			if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
-				s.endCredential(credential)
-			}
-		}
-		hooks := slices.Clone(s.onBoxes)
-		s.mu.Unlock()
-		for _, owner := range changed {
-			for _, fn := range hooks {
-				fn(owner)
-			}
-		}
-		return nil
+func (s *Service) SyncUser(ctx context.Context, id string) error {
+	hooks, cut, err := s.installUser(ctx, id)
+	if err != nil {
+		return err
 	}
+	for _, fn := range hooks {
+		fn(id)
+	}
+	if cut {
+		return s.endGoneGrants(ctx)
+	}
+	return nil
 }
 
-// Listen reloads the index and shares on each users notify but a created user's, which it reads alone, and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
+// Listen reads the one user or the shares a users notify names, reloads the index and shares on any other notify and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
 func (s *Service) Listen(ctx context.Context) {
 	for {
 		err := s.listen(ctx)
@@ -402,7 +324,7 @@ func (s *Service) RunTenants(ctx context.Context) {
 func (s *Service) ByTokenSHA256(ctx context.Context, sum string) (string, bool) {
 	owner, ok := s.indexedToken(sum)
 	if !ok && s.allowMiss() {
-		if serves, err := s.store.tokenServes(ctx, sum); err == nil && serves && s.Load(ctx) == nil {
+		if user, err := s.store.tokenOwner(ctx, sum); err == nil && user != "" && s.SyncUser(ctx, user) == nil {
 			owner, ok = s.indexedToken(sum)
 		}
 	}
@@ -475,14 +397,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.remove(ctx, id); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.editUser(id)()
 	if r, ok := s.byID[id]; ok {
 		dropTokens(s.byToken, r)
 		delete(s.byID, id)
 	}
-	s.indexGen++
-	s.boxGen++
 	delete(s.boxes, id)
 	s.cutOwner(id, true)
 	s.end(id)
@@ -551,7 +470,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, err
 		}
 	}
-	if err := s.Load(ctx); err != nil {
+	if err := s.SyncUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	if r.Residential != old.Residential {
@@ -595,7 +514,7 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	if r.tokenSHA256 != sum {
 		s.EndCredential(ctx, r.tokenSHA256)
 	}
-	return s.Load(ctx)
+	return s.SyncUser(ctx, id)
 }
 
 // RegenerateToken gives user id a new API token, returned once; the old one stops working at once.
@@ -617,7 +536,7 @@ func (s *Service) RevokeToken(ctx context.Context, id string) error {
 		return err
 	}
 	s.EndCredential(ctx, r.tokenSHA256)
-	return s.Load(ctx)
+	return s.SyncUser(ctx, id)
 }
 
 // SignOut ends every sign-in of user id at once: its console sessions, personal token and device tokens, and every call open on them.
@@ -628,8 +547,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 	if err := s.store.signOut(ctx, id); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	s.indexGen++
+	unlock := s.editUser(id)
 	if r, ok := s.byID[id]; ok {
 		dropTokens(s.byToken, r)
 		for _, d := range r.devices {
@@ -641,7 +559,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 		s.byID[id] = r
 	}
 	s.end(id)
-	s.mu.Unlock()
+	unlock()
 	return nil
 }
 
@@ -661,7 +579,7 @@ func (s *Service) Login(ctx context.Context, name, password string) (User, error
 	if u, err := s.Get(id); !errors.Is(err, ErrNotFound) {
 		return u, err
 	}
-	if err := s.Load(ctx); err != nil {
+	if err := s.SyncUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	return s.Get(id)
@@ -855,7 +773,7 @@ func (s *Service) createOnce(ctx context.Context, idp, id string) (User, error) 
 	case !exists:
 		return s.create(ctx, NewUser{ID: id, Name: id, IDP: idp})
 	}
-	if err = s.loadUser(ctx, id); err != nil {
+	if err = s.SyncUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	u, err := s.Get(id)
@@ -890,7 +808,7 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil))
 	}
-	if err := s.loadUser(ctx, id); err != nil {
+	if err := s.SyncUser(ctx, id); err != nil {
 		return User{}, err
 	}
 	return s.Get(id)
@@ -943,14 +861,22 @@ func (s *Service) persist(ctx context.Context, nu NewUser, r record, tenantToken
 
 // endLocally ends the calls bound to credential in this api, for an ended credential of any api.
 func (s *Service) endLocally(credential string) {
+	token := hexSHA256.MatchString(credential)
+	if owner, ok := s.indexedToken(credential); ok && token {
+		stripe := s.stripe(owner.user)
+		stripe.Lock()
+		defer stripe.Unlock()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)
-	if hexSHA256.MatchString(credential) {
+	if token {
+		if owner, ok := s.byToken[credential]; ok {
+			s.touch(owner.user)
+		}
 		delete(s.byToken, credential)
-		s.indexGen++
 	}
-	if credential == "" || hexSHA256.MatchString(credential) {
+	if credential == "" || token {
 		return
 	}
 	now := time.Now()
@@ -967,7 +893,7 @@ func (s *Service) listen(ctx context.Context) error {
 	reload := true
 	for {
 		if reload {
-			if err := s.Load(ctx); err != nil {
+			if err := s.load(ctx); err != nil {
 				return err
 			}
 			if err := s.syncShares(ctx); err != nil {
@@ -981,58 +907,229 @@ func (s *Service) listen(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		id, created := strings.CutPrefix(n.Payload, createdPayload)
-		reload = n.Channel != EndedChannel && !created
+		reload = false
+		user, single := userOf(n.Payload)
 		switch {
 		case n.Channel == EndedChannel:
 			s.endLocally(n.Payload)
-		case created:
-			if err := s.loadUser(ctx, id); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-func (s *Service) loadUser(ctx context.Context, id string) error {
-	for {
-		s.mu.RLock()
-		gen, indexGen := s.boxGen, s.indexGen
-		s.mu.RUnlock()
-		r, boxes, err := s.store.one(ctx, id)
-		if errors.Is(err, ErrNotFound) {
-			return nil
+		case n.Payload == sharesPayload:
+			err = s.syncShares(ctx)
+		case single:
+			err = s.SyncUser(ctx, user)
+		default:
+			reload = true
 		}
 		if err != nil {
 			return err
 		}
-		s.mu.Lock()
-		if s.indexGen != indexGen || s.boxGen != gen {
-			s.mu.Unlock()
-			continue
+	}
+}
+
+// load replaces the in-memory index with a current snapshot of the tables.
+func (s *Service) load(ctx context.Context) error {
+	s.mu.Lock()
+	s.seq++
+	start := s.seq
+	s.loading++
+	s.mu.Unlock()
+	byID, byToken, byOwner, err := s.readIndex(ctx)
+	s.mu.Lock()
+	s.loading--
+	if err != nil || s.loadStart > start {
+		s.settleTouched()
+		s.mu.Unlock()
+		return err
+	}
+	s.loadStart = start
+	s.keepNewer(start, byID, byToken, byOwner)
+	s.settleTouched()
+	var changed []string
+	for id, r := range byID {
+		if r.Disabled && !s.byID[id].Disabled {
+			s.cutOwner(id, false)
 		}
-		if old, known := s.byID[id]; known || r.Disabled {
-			same := known && old.Disabled == r.Disabled && old.tokenSHA256 == r.tokenSHA256 && slices.Equal(old.devices, r.devices) && slices.Equal(s.boxes[id], boxes)
-			s.mu.Unlock()
-			if same {
-				return nil
-			}
-			return s.Load(ctx)
+	}
+	s.byID, s.byToken = byID, byToken
+	for owner := range byOwner {
+		if !slices.Equal(s.boxes[owner], byOwner[owner]) {
+			changed = append(changed, owner)
 		}
-		s.spliced = append(s.spliced, id)
+	}
+	for owner := range s.boxes {
+		if _, ok := byOwner[owner]; !ok {
+			changed = append(changed, owner)
+		}
+	}
+	s.boxes = byOwner
+	for id := range s.lives {
+		if r, ok := byID[id]; !ok || r.Disabled {
+			s.end(id)
+		}
+	}
+	for credential := range s.creds {
+		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
+			s.endCredential(credential)
+		}
+	}
+	hooks := slices.Clone(s.onBoxes)
+	s.mu.Unlock()
+	for _, owner := range changed {
+		for _, fn := range hooks {
+			fn(owner)
+		}
+	}
+	return nil
+}
+
+func (s *Service) installUser(ctx context.Context, id string) ([]func(string), bool, error) {
+	stripe := s.stripe(id)
+	stripe.Lock()
+	defer stripe.Unlock()
+	s.mu.Lock()
+	s.seq++
+	begin := s.seq
+	s.mu.Unlock()
+	r, boxes, err := s.store.one(ctx, id)
+	gone := errors.Is(err, ErrNotFound)
+	if err != nil && !gone {
+		return nil, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loadStart > begin {
+		return nil, false, nil
+	}
+	old, known := s.byID[id]
+	dropTokens(s.byToken, old)
+	if gone {
+		delete(s.byID, id)
+	} else {
 		s.byID[id] = r
 		addTokens(s.byToken, r)
-		changed := !slices.Equal(s.boxes[id], boxes)
-		s.boxes[id] = boxes
-		hooks := slices.Clone(s.onBoxes)
-		s.mu.Unlock()
-		if changed {
-			for _, fn := range hooks {
-				fn(id)
+	}
+	release := func(sum string) {
+		if _, ok := s.byToken[sum]; !ok {
+			s.endCredential(sum)
+		}
+	}
+	release(old.tokenSHA256)
+	for _, d := range old.devices {
+		release(d.sha256)
+	}
+	switch {
+	case gone && known:
+		s.cutOwner(id, true)
+	case !gone && r.Disabled && !old.Disabled:
+		s.cutOwner(id, false)
+	}
+	if gone || r.Disabled {
+		s.end(id)
+	}
+	var hooks []func(string)
+	if !slices.Equal(s.boxes[id], boxes) {
+		if len(boxes) == 0 {
+			delete(s.boxes, id)
+		} else {
+			s.boxes[id] = boxes
+		}
+		hooks = slices.Clone(s.onBoxes)
+	}
+	if s.loading > 0 {
+		s.touched[id] = begin
+	}
+	return hooks, known && (gone || r.Disabled && !old.Disabled), nil
+}
+
+func (s *Service) readIndex(ctx context.Context) (map[string]record, map[string]tokenOwner, map[string][]Box, error) {
+	records, err := s.store.all(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	devices, err := s.store.allDevices(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	boxes, err := s.store.allBoxes(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	byOwner := map[string][]Box{}
+	for _, b := range boxes {
+		byOwner[b.Owner] = append(byOwner[b.Owner], b)
+	}
+	byID := make(map[string]record, len(records))
+	byToken := make(map[string]tokenOwner, len(records))
+	for _, r := range records {
+		r.devices = devices[r.ID]
+		byID[r.ID] = r
+		addTokens(byToken, r)
+	}
+	return byID, byToken, byOwner, nil
+}
+
+func (s *Service) keepNewer(start uint64, byID map[string]record, byToken map[string]tokenOwner, byOwner map[string][]Box) {
+	keep := map[string]bool{}
+	for id, at := range s.touched {
+		if at > start {
+			keep[id] = true
+		}
+	}
+	if len(keep) == 0 {
+		return
+	}
+	for id := range keep {
+		dropTokens(byToken, byID[id])
+		cur, ok := s.byID[id]
+		if ok {
+			byID[id] = cur
+		} else {
+			delete(byID, id)
+		}
+		if b, ok := s.boxes[id]; ok {
+			byOwner[id] = b
+		} else {
+			delete(byOwner, id)
+		}
+		kept := func(sum string) {
+			if owner, ok := s.byToken[sum]; ok && owner.user == id {
+				byToken[sum] = owner
 			}
 		}
-		return nil
+		kept(cur.tokenSHA256)
+		for _, d := range cur.devices {
+			kept(d.sha256)
+		}
 	}
+}
+
+func (s *Service) settleTouched() {
+	if s.loading == 0 {
+		clear(s.touched)
+	}
+}
+
+func (s *Service) editUser(id string) func() {
+	stripe := s.stripe(id)
+	stripe.Lock()
+	s.mu.Lock()
+	s.touch(id)
+	return func() {
+		s.mu.Unlock()
+		stripe.Unlock()
+	}
+}
+
+func (s *Service) touch(id string) {
+	s.seq++
+	if s.loading > 0 {
+		s.touched[id] = s.seq
+	}
+}
+
+func (s *Service) stripe(id string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(id))
+	return &s.stripes[h.Sum32()%userStripes]
 }
 
 func (s *Service) endGoneGrants(ctx context.Context) error {
@@ -1192,6 +1289,13 @@ func addTokens(byToken map[string]tokenOwner, r record) {
 	for _, d := range r.devices {
 		byToken[d.sha256] = tokenOwner{user: r.ID, device: d.id}
 	}
+}
+
+func userOf(payload string) (string, bool) {
+	if id, ok := strings.CutPrefix(payload, userPayload); ok {
+		return id, true
+	}
+	return strings.CutPrefix(payload, createdPayload)
 }
 
 func dropTokens(byToken map[string]tokenOwner, r record) {
