@@ -95,28 +95,19 @@ func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, n
 		return r, err
 	}
 	kept, dropped, purged := map[string][]string{}, map[string]map[string]bool{}, map[string]bool{}
-	err = func() error {
-		held := l.userLock(user)
-		held.RLock()
-		defer held.RUnlock()
-		for _, box := range boxes {
-			p := statePath{user: user, box: box}
-			if !live(box) {
-				if purged[box], err = l.expire(ctx, p, opts, now, &r); err != nil {
-					return fmt.Errorf("purge box %s: %w", box, err)
-				}
-				if purged[box] {
-					continue
-				}
+	for _, box := range boxes {
+		p := statePath{user: user, box: box}
+		if !live(box) {
+			if purged[box], err = l.expire(ctx, p, opts, now, &r); err != nil {
+				return r, fmt.Errorf("purge box %s: %w", box, err)
 			}
-			if kept[box], dropped[box], err = l.prune(ctx, p, opts, now, &r); err != nil {
-				return fmt.Errorf("prune box %s: %w", box, err)
+			if purged[box] {
+				continue
 			}
 		}
-		return nil
-	}()
-	if err != nil {
-		return r, err
+		if kept[box], dropped[box], err = l.prune(ctx, p, opts, now, &r); err != nil {
+			return r, fmt.Errorf("prune box %s: %w", box, err)
+		}
 	}
 	r.boxes = len(kept)
 	return r, l.sweep(ctx, user, opts, now, kept, dropped, purged, &r)
@@ -137,6 +128,9 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	}
 	unlock := l.locks.Lock(p.box)
 	defer unlock()
+	held := l.userLock(p.user)
+	held.RLock()
+	defer held.RUnlock()
 	var version string
 	if found {
 		tl = timeline{}
