@@ -19,6 +19,11 @@ func (s *Service) DeleteState(ctx context.Context, user string) error {
 	if s.state == nil {
 		return nil
 	}
+	deleting, err := s.state.lockDelete(ctx, user, false)
+	if err != nil {
+		return err
+	}
+	defer deleting()
 	release, err := s.state.lockShared(ctx, user)
 	if err != nil {
 		return err

@@ -376,7 +376,7 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 
 // restore writes snapshot id of p's box into the agent at ep.
 func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	release, err := l.lockShared(ctx, p.user)
+	release, err := l.lockDelete(ctx, p.user, true)
 	if err != nil {
 		return nil, err
 	}
@@ -773,6 +773,16 @@ func (l *stateLayer) lockShared(ctx context.Context, user string) (func(), error
 		return func() {}, nil
 	}
 	return l.shared.LockLong(ctx, "state:"+user)
+}
+
+func (l *stateLayer) lockDelete(ctx context.Context, user string, shared bool) (func(), error) {
+	switch {
+	case l.shared == nil:
+		return func() {}, nil
+	case shared:
+		return l.shared.LockLongShared(ctx, "delete:"+user)
+	}
+	return l.shared.LockLong(ctx, "delete:"+user)
 }
 
 // batches splits missing into runs of at most pageSize chunks and maxBatchBytes; nothing missing gives one empty batch for the manifest.

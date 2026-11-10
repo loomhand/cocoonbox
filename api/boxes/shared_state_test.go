@@ -215,28 +215,7 @@ func TestARestoreWritesNoManifestAfterAnotherReplicaDeletesTheUsersState(t *test
 	other.shared = clustertest.OpenReplica(t, dsn)
 	svc := &Service{state: other}
 	p := statePath{user: alice, box: aliceBox}
-	live := func(string) bool { return true }
-	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	agent.files = manyFiles(64, 0)
-	saveLive(t, layer, p, "a")
-	if _, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-	agent.files = manyFiles(64, 1)
-	saveLive(t, layer, p, "a")
-	h, err := layer.head(t.Context(), p)
-	if err != nil {
-		t.Fatalf("head: %v", err)
-	}
-	second := h.Latest
-	agent.files = manyFiles(64, 2)
-	saveLive(t, layer, p, "a")
-	if _, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
-		t.Fatalf("collect: %v", err)
-	}
-	if st.has(p.manifest(second)) {
-		t.Fatal("the second snapshot's manifest was not compacted")
-	}
+	second := compactedSecond(t, st, agent, layer, p)
 	var once sync.Once
 	st.before = func(action, key string) {
 		if action != "put" || key != p.manifest(second) {
@@ -259,6 +238,58 @@ func TestARestoreWritesNoManifestAfterAnotherReplicaDeletesTheUsersState(t *test
 		left, err := st.List(t.Context(), alice+"/")
 		return err == nil && len(left) == 0
 	})
+}
+
+func TestARestoreDoesNotWaitForAGCPassOfTheUsersState(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	layer.shared = clustertest.Open(t)
+	layer.deltaFor = func(string) bool { return true }
+	p := statePath{user: alice, box: aliceBox}
+	second := compactedSecond(t, st, agent, layer, p)
+	collecting, err := layer.shared.LockLong(t.Context(), "state:"+alice)
+	if err != nil {
+		t.Fatalf("hold the state lock: %v", err)
+	}
+	t.Cleanup(collecting)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := layer.restore(ctx, p, machines.Endpoint{Key: "a"}, second, noProgress); err != nil {
+		t.Fatalf("restore while a GC pass holds the user's state lock: %v", err)
+	}
+	if !st.has(p.manifest(second)) {
+		t.Error("the restore wrote no manifest of the compacted snapshot")
+	}
+}
+
+func TestADeleteOfTheUsersStateWaitsForARestoreOfAnotherReplica(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	saveLive(t, layer, statePath{user: alice, box: aliceBox}, "a")
+	restoring, err := clustertest.OpenReplica(t, dsn).LockLongShared(t.Context(), "delete:"+alice)
+	if err != nil {
+		t.Fatalf("hold the delete lock shared: %v", err)
+	}
+	release := sync.OnceFunc(restoring)
+	t.Cleanup(release)
+	deleted := make(chan error, 1)
+	go func() { deleted <- (&Service{state: layer}).DeleteState(t.Context(), alice) }()
+	clustertest.WaitFor(t, "the delete waits for the restore", clustertest.AdvisoryWaiting(t, dsn))
+	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) == 0 {
+		t.Errorf("objects of the user while the restore holds the delete lock = %v, %v; want them kept", left, err)
+	}
+	release()
+	if err := <-deleted; err != nil {
+		t.Fatalf("DeleteState: %v", err)
+	}
+	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects of the deleted user = %v, %v; want none", left, err)
+	}
 }
 
 func TestSavesWaitingForTheirCommitKeepTheirSaveSlots(t *testing.T) {
@@ -297,4 +328,30 @@ func TestSavesWaitingForTheirCommitKeepTheirSaveSlots(t *testing.T) {
 			t.Errorf("save: %v", err)
 		}
 	}
+}
+
+func compactedSecond(t *testing.T, st *versionedStore, agent *fakeAgent, layer *stateLayer, p statePath) string {
+	t.Helper()
+	live := func(string) bool { return true }
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	agent.files = manyFiles(64, 0)
+	saveLive(t, layer, p, "a")
+	if _, err := layer.collect(t.Context(), p.user, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	agent.files = manyFiles(64, 1)
+	saveLive(t, layer, p, "a")
+	h, err := layer.head(t.Context(), p)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	agent.files = manyFiles(64, 2)
+	saveLive(t, layer, p, "a")
+	if _, err := layer.collect(t.Context(), p.user, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if st.has(p.manifest(h.Latest)) {
+		t.Fatal("the second snapshot's manifest was not compacted")
+	}
+	return h.Latest
 }
