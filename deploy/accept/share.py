@@ -290,7 +290,7 @@ def cut_check(what, share, action):
     reply = viewer.reply()
     viewer.handshake()
     viewer.watch()
-    guest = MCP(f"/cocoonbox.mcp/{share['share']['box_id']}", secret)
+    guest = MCP(f"/cocoonbox.mcp/{share['box_id']}", secret)
     guest.open()
     stream = guest.stream()
     deadline = time.time() + 5
@@ -371,7 +371,7 @@ def main():
     )
 
     print("== 2. allow write, then take it back")
-    qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": True})
+    qa1.call("PATCH", "shares/" + share["id"], {"write": True})
     status, out = guest.call("shell", {"command": "echo guest-write"})
     check("guest-write" in json.dumps(out.get("result", {})), "with write on, the next guest shell call runs")
     status, tools = guest.tools()
@@ -397,14 +397,14 @@ def main():
         code != 0 and "Unauthenticated" in err,
         "Session.FillCredential with the share secret is refused (Unauthenticated)",
     )
-    qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": False})
+    qa1.call("PATCH", "shares/" + share["id"], {"write": False})
     status, out = guest.call("shell", {"command": "echo again"})
     check(out.get("error", {}).get("code") == -32602, "with write off again, the next guest shell call is refused")
 
     print("== 3. a share for qa2 only")
-    qa1.call("DELETE", "shares/" + share["share"]["id"])
+    qa1.call("DELETE", "shares/" + share["id"])
     status, named = qa1.call("POST", "shares", {"box_id": box, "user_names": ["qa2"]})
-    check(status == 200 and named["share"]["users"] == ["qa2"], "qa1 creates a share for qa2")
+    check(status == 200 and named["users"] == ["qa2"], "qa1 creates a share for qa2")
     check(MCP(path, named["secret"]).open() == 401, "the link alone is refused (401)")
     check(MCP(path, named["secret"], os.environ["QA2_TOKEN"]).open() == 200, "the link with qa2's token is admitted")
     check(
@@ -422,12 +422,12 @@ def main():
     names = [a["name"] for a in agents(box)]
     owner_mcp = [n for n in names if n.startswith("mcp:owner-accept")]
     check(not owner_mcp, f"qa1's own MCP session made no agent: {owner_mcp}")
-    shared = [n for n in names if n.startswith("mcp:share-accept@" + named["share"]["id"] + ":")]
+    shared = [n for n in names if n.startswith("mcp:share-accept@" + named["id"] + ":")]
     check(len(shared) >= 1, f"qa2's session shows as {shared[:1]}")
     note("Manual: qa1's app lists the qa2 session under External with its calls, and End closes it.")
 
     print("== 5. a Rebase waits for a guest's running shell call")
-    qa1.call("PATCH", "shares/" + named["share"]["id"], {"write": True})
+    qa1.call("PATCH", "shares/" + named["id"], {"write": True})
     worker = MCP(path, named["secret"], os.environ["QA2_TOKEN"])
     worker.open()
     done = {}
@@ -460,24 +460,24 @@ def main():
     control.call("box_ensure", {"wait": True})
 
     print("== 6. revoke, regenerate and expiry cut the page and MCP within 1 s")
-    sid = named["share"]["id"]
+    sid = named["id"]
     qa1.call("DELETE", "shares/" + sid)
     _, opened = qa1.call("POST", "shares", {"box_id": box})
-    cut_check("revoke", opened, lambda: (qa1.call("DELETE", "shares/" + opened["share"]["id"]), time.time())[1])
+    cut_check("revoke", opened, lambda: (qa1.call("DELETE", "shares/" + opened["id"]), time.time())[1])
     _, opened = qa1.call("POST", "shares", {"box_id": box})
     fresh = {}
 
     def regenerate():
-        _, fresh["share"] = qa1.call("POST", "shares/" + opened["share"]["id"] + "/regenerate")
+        _, fresh["share"] = qa1.call("POST", "shares/" + opened["id"] + "/regenerate")
         return time.time()
 
     cut_check("regenerate", opened, regenerate)
     check(MCP(path, fresh["share"]["secret"]).open() == 200, "the regenerated link works")
-    qa1.call("DELETE", "shares/" + opened["share"]["id"])
+    qa1.call("DELETE", "shares/" + opened["id"])
     _, short = qa1.call("POST", "shares", {"box_id": box, "ttl_seconds": 60})
 
     def expire():
-        until = short["share"]["expires_at_ms"] / 1000
+        until = short["expires_at_ms"] / 1000
         time.sleep(max(0, until - time.time()))
         return until
 
