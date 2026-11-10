@@ -443,6 +443,7 @@ type fakeRegistry struct {
 	flavor    machines.Flavor
 	flavorErr error
 	disabled  map[string]bool
+	stored    map[string]bool
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -462,6 +463,12 @@ func (r *fakeRegistry) Disabled(owner string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.disabled[owner]
+}
+
+func (r *fakeRegistry) AccountDisabled(_ context.Context, owner string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.disabled[owner] || r.stored[owner], nil
 }
 
 func (r *fakeRegistry) HasBox(owner, id string) bool {

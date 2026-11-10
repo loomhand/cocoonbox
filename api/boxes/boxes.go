@@ -117,6 +117,7 @@ type Registry interface {
 	MaxRunning(owner string) int
 	Policy(owner string) users.Policy
 	Disabled(owner string) bool
+	AccountDisabled(ctx context.Context, owner string) (bool, error)
 	OnBoxes(fn func(owner string))
 }
 

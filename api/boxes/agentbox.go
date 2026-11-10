@@ -51,8 +51,11 @@ func (s *Service) admitStart(ctx context.Context, user string) (func(), error) {
 		unlock()
 		return nil, err
 	}
-	if s.registry.Disabled(user) {
+	if disabled, err := s.registry.AccountDisabled(ctx, user); err != nil || disabled {
 		unlock()
+		if err != nil {
+			return nil, err
+		}
 		return nil, status.Error(codes.FailedPrecondition, "the account is disabled")
 	}
 	return unlock, nil

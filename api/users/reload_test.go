@@ -176,6 +176,24 @@ func TestAListenerFullyReloadsTokenChangesAndDisables(t *testing.T) {
 	clustertest.WaitFor(t, "the listener ends the disabled user's lifetime", func() bool { return life.Err() != nil })
 }
 
+func TestAccountDisabledReadsAnotherReplicasDisable(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	other := openTestService(t, dsn, gw, tenants)
+	u := mustCreate(t, other, NewUser{Name: "qa1"})
+	if err := svc.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, err := other.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if svc.Disabled(u.ID) {
+		t.Fatal("the replica's cache learned the disable without a listener")
+	}
+	if disabled, err := svc.AccountDisabled(t.Context(), u.ID); err != nil || !disabled {
+		t.Errorf("AccountDisabled = %t, %v; want true from the table", disabled, err)
+	}
+}
+
 func TestAFullLoadInstallsWhileNewUsersKeepArriving(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	elsewhere := mustCreate(t, openTestService(t, dsn, gw, tenants), NewUser{Name: "qa1"})

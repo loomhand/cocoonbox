@@ -204,6 +204,63 @@ func TestAFirstSaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothi
 	}
 }
 
+func TestARestoreWritesNoManifestAfterAnotherReplicaDeletesTheUsersState(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	layer.deltaFor = func(string) bool { return true }
+	other := st.layer(agent)
+	other.shared = clustertest.OpenReplica(t, dsn)
+	svc := &Service{state: other}
+	p := statePath{user: alice, box: aliceBox}
+	live := func(string) bool { return true }
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	agent.files = manyFiles(64, 0)
+	saveLive(t, layer, p, "a")
+	if _, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	agent.files = manyFiles(64, 1)
+	saveLive(t, layer, p, "a")
+	h, err := layer.head(t.Context(), p)
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	second := h.Latest
+	agent.files = manyFiles(64, 2)
+	saveLive(t, layer, p, "a")
+	if _, err := layer.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if st.has(p.manifest(second)) {
+		t.Fatal("the second snapshot's manifest was not compacted")
+	}
+	var once sync.Once
+	st.before = func(action, key string) {
+		if action != "put" || key != p.manifest(second) {
+			return
+		}
+		once.Do(func() {
+			deleted := make(chan error, 1)
+			go func() { deleted <- svc.DeleteState(t.Context(), alice) }()
+			select {
+			case err := <-deleted:
+				if err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+	_, _ = layer.restore(t.Context(), p, machines.Endpoint{Key: "a"}, second, noProgress)
+	clustertest.WaitFor(t, "no object of the deleted user", func() bool {
+		left, err := st.List(t.Context(), alice+"/")
+		return err == nil && len(left) == 0
+	})
+}
+
 func TestSavesWaitingForTheirCommitKeepTheirSaveSlots(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)

@@ -55,6 +55,7 @@ type operation struct {
 	phase controlv1.Phase
 	// park marks the sweep's save and removal of a hibernated machine, which any client call supersedes.
 	park     bool
+	yield    bool
 	gen      int64
 	ctx      context.Context
 	stop     context.CancelFunc
@@ -248,7 +249,7 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 	r.mu.Lock()
 	r.sweepLocked()
 	cur := r.activeLocked(op.boxID)
-	if cur != nil && cur.phase == op.phase && cur.park == op.park {
+	if cur != nil && (op.yield || cur.phase == op.phase && cur.park == op.park) {
 		r.mu.Unlock()
 		return cur, false
 	}
