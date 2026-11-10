@@ -279,6 +279,8 @@ func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*contro
 		return nil, status.Error(codes.FailedPrecondition, "box is being parked")
 	case s.deleting(box):
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
+	case cur.State == machines.StateFailed && !cur.HibernateFailed():
+		return nil, status.Error(codes.FailedPrecondition, "box is failed; call box_ensure")
 	}
 	m, err := s.sleep(ctx, cur.ID)
 	if err != nil {

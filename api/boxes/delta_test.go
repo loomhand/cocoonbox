@@ -139,17 +139,7 @@ func TestADeleteOfTheUsersStateDuringARestoreLeavesNothing(t *testing.T) {
 		if action != "put" || key != p.manifest(second) {
 			return
 		}
-		once.Do(func() {
-			deleted := make(chan error, 1)
-			go func() { deleted <- env.svc.DeleteState(t.Context(), alice) }()
-			select {
-			case err := <-deleted:
-				if err != nil {
-					t.Errorf("DeleteState: %v", err)
-				}
-			case <-time.After(200 * time.Millisecond):
-			}
-		})
+		once.Do(func() { deleteDuring(t, env.svc, deleteLocked) })
 	}
 	op, err := env.svc.RestorePaths(env.ctx, &controlv1.RestorePathsRequest{BoxId: aliceBox, SnapshotId: second, Paths: []string{"/workspace/src/f-0001.go"}})
 	if err != nil {
@@ -388,14 +378,37 @@ func newDeltaEnv(t *testing.T) *stateEnv {
 
 func waitLocked(t *testing.T, in string) {
 	t.Helper()
+	clustertest.WaitFor(t, in+" waits on its lock", func() bool { return locked(in) })
+}
+
+func locked(in string) bool {
 	buf := make([]byte, 1<<20)
-	clustertest.WaitFor(t, in+" waits on its lock", func() bool {
-		for g := range strings.SplitSeq(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
-			if strings.Contains(g, "[sync.Mutex.Lock") && strings.Contains(g, in) {
-				return true
-			}
+	for g := range strings.SplitSeq(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+		if (strings.Contains(g, "[sync.Mutex.Lock") || strings.Contains(g, "[sync.RWMutex.Lock")) && strings.Contains(g, in) {
+			return true
 		}
-		return false
+	}
+	return false
+}
+
+func deleteLocked() bool {
+	return locked("(*Service).DeleteState")
+}
+
+func deleteDuring(t *testing.T, svc *Service, waiting func() bool) {
+	t.Helper()
+	deleted := make(chan error, 1)
+	go func() { deleted <- svc.DeleteState(t.Context(), alice) }()
+	clustertest.WaitFor(t, "DeleteState ends or waits on its lock", func() bool {
+		select {
+		case err := <-deleted:
+			if err != nil {
+				t.Errorf("DeleteState: %v", err)
+			}
+			return true
+		default:
+			return waiting()
+		}
 	})
 }
 

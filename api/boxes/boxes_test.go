@@ -312,6 +312,24 @@ func TestHibernateAllLeavesABoxWhoseClaimFailed(t *testing.T) {
 	}
 }
 
+func TestHibernateRefusesABoxWhoseClaimOrWakeFailed(t *testing.T) {
+	for _, reason := range []string{machines.ErrCapacity.Error(), "wake failed"} {
+		t.Run(reason, func(t *testing.T) {
+			fake := newFakeMachines()
+			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateFailed, Reason: reason, Revision: 1})
+			svc := newService(fake, testDefaults, newFakeRegistry())
+
+			_, err := svc.Hibernate(auth.WithUser(t.Context(), alice), &controlv1.BoxRef{BoxId: aliceBox})
+			if status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != "box is failed; call box_ensure" {
+				t.Fatalf("Hibernate = %v, want FailedPrecondition naming box_ensure", err)
+			}
+			if m, _ := fake.Get(t.Context(), aliceBox); m.State != machines.StateFailed || m.Revision != 1 {
+				t.Errorf("the box after Hibernate is %v at revision %d, want it left failed", m.State, m.Revision)
+			}
+		})
+	}
+}
+
 func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1})

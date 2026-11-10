@@ -650,7 +650,7 @@ func checkRunning(g *oauth.Grant, list []*controlv1.Box) error {
 // holdsMemory reports whether a box counts against a running cap.
 func holdsMemory(b *controlv1.Box) bool {
 	switch b.GetState() {
-	case controlv1.BoxState_BOX_STATE_STARTING, controlv1.BoxState_BOX_STATE_RUNNING, controlv1.BoxState_BOX_STATE_HIBERNATING:
+	case controlv1.BoxState_BOX_STATE_STARTING, controlv1.BoxState_BOX_STATE_RUNNING, controlv1.BoxState_BOX_STATE_HIBERNATING, controlv1.BoxState_BOX_STATE_FAILED:
 		return true
 	default:
 		return false

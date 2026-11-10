@@ -244,7 +244,7 @@ func (r *operations) start(base context.Context, user, boxID string, phase contr
 	return r.begin(base, &operation{user: user, boxID: boxID, phase: phase, gen: gen}, timeout)
 }
 
-// begin returns the running operation of op's phase and kind on its box, or supersedes whatever runs there with op, whose context derives from base.
+// begin returns the running operation of op's phase and kind on its box, or any running one when op yields, or else supersedes whatever runs there with op, whose context derives from base.
 func (r *operations) begin(base context.Context, op *operation, timeout time.Duration) (*operation, bool) {
 	r.mu.Lock()
 	r.sweepLocked()

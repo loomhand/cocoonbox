@@ -252,17 +252,7 @@ func TestADeleteOfTheUsersStateDuringAPruneLeavesNothing(t *testing.T) {
 		if (action != "put" && action != "putif") || key != p.timeline() {
 			return
 		}
-		once.Do(func() {
-			deleted := make(chan error, 1)
-			go func() { deleted <- env.svc.DeleteState(t.Context(), alice) }()
-			select {
-			case err := <-deleted:
-				if err != nil {
-					t.Errorf("DeleteState: %v", err)
-				}
-			case <-time.After(200 * time.Millisecond):
-			}
-		})
+		once.Do(func() { deleteDuring(t, env.svc, deleteLocked) })
 	}
 	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
 	clustertest.WaitFor(t, "no object of the deleted user", func() bool {
@@ -288,7 +278,31 @@ func TestAPruneWritesNothingForAUserDeletedBeforeItsBoxLock(t *testing.T) {
 			})
 		}
 	}
-	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
+	r, _ := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
+	if left, err := env.store.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
+	}
+	if r.boxes != 0 {
+		t.Errorf("boxes the pass reports = %d, want 0 for the emptied box", r.boxes)
+	}
+}
+
+func TestAGCPassRecordsNoDeletionOfABoxEmptiedBeforeItsLock(t *testing.T) {
+	env := newStateEnv(t)
+	gone := statePath{user: alice, box: aliceBox}
+	env.saveEach(t, []string{"c1"})
+	env.deleteBox(t, gone.box)
+	var once sync.Once
+	env.store.before = func(action, key string) {
+		if action == "get" && key == gone.deleted() {
+			once.Do(func() {
+				if err := env.svc.DeleteState(t.Context(), alice); err != nil {
+					t.Errorf("DeleteState: %v", err)
+				}
+			})
+		}
+	}
+	_, _ = env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000, DeletedRetention: 7 * 24 * time.Hour}, time.Now(), env.live)
 	if left, err := env.store.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
 		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
 	}

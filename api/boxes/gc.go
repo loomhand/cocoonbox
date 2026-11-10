@@ -109,7 +109,6 @@ func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, n
 			return r, fmt.Errorf("prune box %s: %w", box, err)
 		}
 	}
-	r.boxes = len(kept)
 	return r, l.sweep(ctx, user, opts, now, kept, dropped, purged, &r)
 }
 
@@ -179,6 +178,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 		return nil, nil, err
 	}
 	records, manifests, full := obsolete(p, listing, now, func(id string) bool { return retained[id] || needed[id] }, dropped, r)
+	r.boxes++
 	r.kept += len(next.Snapshots)
 	r.pruned += len(dropped)
 	ids := next.ids()

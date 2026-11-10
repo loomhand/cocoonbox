@@ -242,17 +242,7 @@ func TestARestoreWritesNoManifestAfterAnotherReplicaDeletesTheUsersState(t *test
 		if action != "put" || key != p.manifest(second) {
 			return
 		}
-		once.Do(func() {
-			deleted := make(chan error, 1)
-			go func() { deleted <- svc.DeleteState(t.Context(), alice) }()
-			select {
-			case err := <-deleted:
-				if err != nil {
-					t.Errorf("DeleteState: %v", err)
-				}
-			case <-time.After(200 * time.Millisecond):
-			}
-		})
+		once.Do(func() { deleteDuring(t, svc, clustertest.AdvisoryWaiting(t, dsn)) })
 	}
 	_, _ = layer.restore(t.Context(), p, machines.Endpoint{Key: "a"}, second, noProgress)
 	clustertest.WaitFor(t, "no object of the deleted user", func() bool {
