@@ -345,7 +345,7 @@ func (s *Server) create(ctx context.Context, req *controlv1.CreateBoxRequest, wa
 }
 
 func (s *Server) hibernate(ctx context.Context, ref string, progress progressFunc) (*operationResult, error) {
-	box, err := s.runningBox(ctx, ref)
+	box, err := s.runningBox(ctx, ref, controlv1.BoxState_BOX_STATE_FAILED)
 	if err != nil {
 		return nil, err
 	}
@@ -439,14 +439,14 @@ func (s *Server) finish(ctx context.Context, verb, id string, progress progressF
 	return w, nil
 }
 
-func (s *Server) runningBox(ctx context.Context, ref string) (*controlv1.Box, error) {
+func (s *Server) runningBox(ctx context.Context, ref string, also ...controlv1.BoxState) (*controlv1.Box, error) {
 	box, err := s.box(ctx, ref)
 	switch {
 	case err != nil:
 		return nil, err
 	case box == nil:
 		return nil, toolError("The box is " + stateAbsent + ".")
-	case box.GetState() != controlv1.BoxState_BOX_STATE_RUNNING:
+	case box.GetState() != controlv1.BoxState_BOX_STATE_RUNNING && !slices.Contains(also, box.GetState()):
 		return nil, toolError("The box is " + stateName(box.GetState()) + ".")
 	}
 	return box, nil

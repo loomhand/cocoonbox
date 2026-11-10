@@ -115,6 +115,20 @@ func TestAlarmWakesAHibernatedBoxAndHibernatesItAfterAwakeFor(t *testing.T) {
 	}
 }
 
+func TestAlarmHibernatesAWokenBoxWhoseHibernateFailed(t *testing.T) {
+	e := newWakeEnv(t)
+	e.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 1})
+	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
+	e.alarm(t, nine.Add(-wakeLead))
+	e.running(t)
+	e.fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
+
+	e.alarm(t, nine.Add(15*time.Minute))
+	if e.fake.state(aliceBox) != machines.StateHibernating {
+		t.Fatalf("box is %v after awake_for, want hibernating", e.fake.state(aliceBox))
+	}
+}
+
 func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 	tests := []struct {
 		name  string

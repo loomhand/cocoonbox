@@ -124,6 +124,22 @@ func TestTheRunningLimitIsPerUser(t *testing.T) {
 	}
 }
 
+func TestABoxWhoseHibernateFailedCountsTowardTheRunningLimit(t *testing.T) {
+	fake := newFakeMachines()
+	registry := newFakeRegistry()
+	registry.max = 4
+	svc := newService(fake, testDefaults, registry)
+	ctx := auth.WithUser(t.Context(), alice)
+	if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil {
+		t.Fatalf("Ensure main: %v", err)
+	}
+	fake.setFailed(aliceBox, machines.ReasonHibernateFailed)
+
+	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "over"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("Create beside a box whose hibernate failed = %v, want FailedPrecondition", err)
+	}
+}
+
 func TestCreateResolvesAnImageFamily(t *testing.T) {
 	defaults := testDefaults
 	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbdesk:v25", []string{"cbcore:v1", "cbdesk:v24"}, 9

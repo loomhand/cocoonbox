@@ -80,7 +80,7 @@ func serving(ms []machines.Machine) map[string]machines.Machine {
 
 // holdsMemory reports whether m counts against the running limit.
 func holdsMemory(m machines.Machine) bool {
-	return m.State == machines.StateStarting || m.State == machines.StateRunning || m.State == machines.StateHibernating
+	return m.State == machines.StateStarting || m.State == machines.StateRunning || m.State == machines.StateHibernating || m.HibernateFailed()
 }
 
 func toBox(box string, m machines.Machine) *controlv1.Box {

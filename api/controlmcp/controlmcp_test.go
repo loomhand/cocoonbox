@@ -412,6 +412,16 @@ func TestSaveReportsBytesAndRefusals(t *testing.T) {
 	}
 }
 
+func TestHibernateRetriesAFailedBox(t *testing.T) {
+	srv, fake := newTestServer(t)
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_FAILED)
+
+	resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_hibernate"}}`)
+	if !slices.ContainsFunc(fake.recorded(), func(c fakeCall) bool { return c.method == "Hibernate" }) {
+		t.Fatalf("box_hibernate of a failed box = %+v, want a Hibernate call", resp)
+	}
+}
+
 func TestUsageReportsTheCallersMeter(t *testing.T) {
 	srv, fake := newTestServer(t)
 

@@ -222,7 +222,7 @@ func (s *Service) sleepAfter(ctx context.Context, w users.WakeSchedule, now time
 		logger.Info(ctx, "a client reached the box since its scheduled wake; leaving it up")
 	case now.Before(w.SleepAt) || cur.State == machines.StateStarting || (cur.State == machines.StateRunning && s.ops.activeFor(w.Box) != nil):
 		return w
-	case cur.State != machines.StateRunning:
+	case cur.State != machines.StateRunning && !cur.HibernateFailed():
 		logger.Infof(ctx, "box is %s; the scheduled wake is over", stateWords[cur.State])
 	default:
 		if _, err := s.Hibernate(ctx, &controlv1.BoxRef{BoxId: w.Box}); err != nil {
