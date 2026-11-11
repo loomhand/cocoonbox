@@ -426,9 +426,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	old := r
 	if set.MaxBoxesCap != nil {
 		r.MaxBoxesCap = *set.MaxBoxesCap
-		if boxes, limit := s.boxLimits(r); boxes > limit {
-			r.MaxBoxes = r.MaxBoxesCap
-		}
+		_, limit := s.boxLimits(r)
+		r.MaxBoxes = min(r.MaxBoxes, limit)
 	}
 	if set.MaxBoxes != nil {
 		r.MaxBoxes = *set.MaxBoxes
@@ -453,7 +452,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	switch {
 	case r.MaxBoxesCap < 0 || limit > maxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d, or 0 for the default", ErrInvalid, maxBoxesCap)
-	case r.MaxBoxes < 0 || boxes > limit:
+	case r.MaxBoxes < 0 || r.MaxBoxes > limit:
 		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d, or 0 for the default", ErrInvalid, limit)
 	case boxes < oldBoxes && boxes < own:
 		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)

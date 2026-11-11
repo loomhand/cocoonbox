@@ -39,11 +39,15 @@ func TestTheConfiguredMaxBoxesHoldsForEveryUserWithoutItsOwn(t *testing.T) {
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	big := mustCreate(t, svc, NewUser{Name: "qa2"})
 	small := mustCreate(t, svc, NewUser{Name: "qa3"})
+	capped := mustCreate(t, svc, NewUser{Name: "qa4"})
 	if _, err := svc.Update(t.Context(), big.ID, Settings{MaxBoxesCap: new(5), MaxBoxes: new(5)}); err != nil {
 		t.Fatalf("raise qa2's max boxes: %v", err)
 	}
 	if _, err := svc.Update(t.Context(), small.ID, Settings{MaxBoxes: new(1)}); err != nil {
 		t.Fatalf("pin qa3 to one box: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), capped.ID, Settings{MaxBoxesCap: new(2)}); err != nil {
+		t.Fatalf("cap qa4 at two boxes: %v", err)
 	}
 	opts := Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost, MaxBoxes: 3}
 	raised, err := Open(t.Context(), opts)
@@ -53,6 +57,15 @@ func TestTheConfiguredMaxBoxesHoldsForEveryUserWithoutItsOwn(t *testing.T) {
 	t.Cleanup(raised.Close)
 	if got, _ := raised.Get(u.ID); got.MaxBoxes != 3 || got.MaxBoxesCap != 3 {
 		t.Errorf("qa1 = %d of at most %d, want the configured 3 of 3", got.MaxBoxes, got.MaxBoxesCap)
+	}
+	if got, _ := raised.Get(capped.ID); got.MaxBoxes != 2 || got.MaxBoxesCap != 2 {
+		t.Errorf("qa4 = %d of at most %d, want its own cap of 2 to bound the configured 3", got.MaxBoxes, got.MaxBoxesCap)
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-capped", Owner: capped.ID, Name: "b"}); err != nil {
+		t.Fatalf("AddBox within qa4's cap: %v", err)
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-capped2", Owner: capped.ID, Name: "c"}); !errors.Is(err, ErrQuota) {
+		t.Errorf("AddBox past qa4's cap of 2 = %v, want ErrQuota", err)
 	}
 	for _, name := range []string{"b", "c"} {
 		if _, err := raised.AddBox(t.Context(), Box{ID: "cb-" + name, Owner: u.ID, Name: name}); err != nil {
@@ -68,7 +81,7 @@ func TestTheConfiguredMaxBoxesHoldsForEveryUserWithoutItsOwn(t *testing.T) {
 	if _, err := raised.reconcileTenants(t.Context()); err != nil {
 		t.Fatalf("reconcileTenants: %v", err)
 	}
-	for id, want := range map[string]int{u.ID: 4, big.ID: 6, small.ID: 2} {
+	for id, want := range map[string]int{u.ID: 4, big.ID: 6, small.ID: 2, capped.ID: 3} {
 		if got := tenants.Max[id]; got != want {
 			t.Errorf("tenant cap of %s = %d, want %d", id, got, want)
 		}

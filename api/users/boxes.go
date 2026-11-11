@@ -165,9 +165,8 @@ func (s *Service) claimCap(r record) int {
 	return boxes + agent + 1
 }
 
-// boxLimits is r's max boxes and max boxes cap, each the configured max_boxes while the row holds 0.
 func (s *Service) boxLimits(r record) (boxes, limit int) {
-	return cmp.Or(r.MaxBoxes, s.store.defaultMaxBoxes), cmp.Or(r.MaxBoxesCap, s.store.defaultMaxBoxes)
+	return s.store.boxLimits(r.MaxBoxes, r.MaxBoxesCap)
 }
 
 func (s *Service) agentBoxes(owner string) int {
