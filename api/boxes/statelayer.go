@@ -164,7 +164,8 @@ type stateLayer struct {
 	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
 	shared *cluster.Store
 	// deltaFor reports whether a user's saves write delta records against the day's newest full snapshot.
-	deltaFor func(user string) bool
+	deltaFor      func(user string) bool
+	accountExists func(ctx context.Context, user string) (bool, error)
 
 	locks     utils.Locks
 	scheduled *semaphore.Weighted
@@ -535,6 +536,20 @@ func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, 
 }
 
 func (l *stateLayer) openIndex(ctx context.Context, p statePath, keyID string) error {
+	release, err := l.lockAccount(ctx, p.user)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if l.accountExists != nil {
+		exists, err := l.accountExists(ctx, p.user)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return errStateDeleted
+		}
+	}
 	unlock := l.locks.Lock(p.index())
 	defer unlock()
 	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, found bool) (bool, error) {
@@ -780,6 +795,13 @@ func (l *stateLayer) lockDelete(ctx context.Context, user string) (func(), error
 		return func() {}, nil
 	}
 	return l.shared.LockLong(ctx, "delete:"+user)
+}
+
+func (l *stateLayer) lockAccount(ctx context.Context, user string) (func(), error) {
+	if l.shared == nil {
+		return func() {}, nil
+	}
+	return l.shared.LockLongAll(ctx, cluster.Advisory{Name: "delete:" + user, Shared: true})
 }
 
 func (l *stateLayer) lockRestore(ctx context.Context, p statePath) (func(), error) {

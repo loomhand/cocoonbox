@@ -490,6 +490,10 @@ func (r *fakeRegistry) AccountDisabled(_ context.Context, owner string) (bool, e
 	return r.disabled[owner] || r.stored[owner], r.accountErr
 }
 
+func (r *fakeRegistry) AccountExists(context.Context, string) (bool, error) {
+	return true, nil
+}
+
 func (r *fakeRegistry) HasBox(owner, id string) bool {
 	return slices.ContainsFunc(r.Boxes(owner), func(b users.Box) bool { return b.ID == id })
 }

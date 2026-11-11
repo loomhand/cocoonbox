@@ -518,7 +518,10 @@ func (s *Server) removeUser(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	return s.users.Delete(ctx, id)
+	if err := s.users.Delete(ctx, id); err != nil {
+		return err
+	}
+	return s.boxes.DeleteState(ctx, id)
 }
 
 func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {

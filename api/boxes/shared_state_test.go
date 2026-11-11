@@ -206,6 +206,39 @@ func TestAFirstSaveWhoseUserStateAnotherReplicaDeletesDuringItsUploadLeavesNothi
 	}
 }
 
+func TestAFirstSaveAfterAnotherReplicaDeletedTheAccountWritesNoIndex(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	layer := st.layer(agent)
+	shared, dsn := clustertest.OpenDSN(t)
+	layer.shared = shared
+	other := st.layer(agent)
+	other.shared = clustertest.OpenReplica(t, dsn)
+	svc := &Service{state: other}
+	var gone atomic.Bool
+	layer.accountExists = func(context.Context, string) (bool, error) { return !gone.Load(), nil }
+	p := statePath{user: alice, box: aliceBox}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	var once sync.Once
+	st.before = func(action, key string) {
+		if action != "get" || key != p.index() {
+			return
+		}
+		once.Do(func() {
+			if err := svc.DeleteState(t.Context(), alice); err != nil {
+				t.Errorf("DeleteState before the save reads the index: %v", err)
+			}
+			gone.Store(true)
+		})
+	}
+	if _, err := layer.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); !errors.Is(err, errStateDeleted) {
+		t.Errorf("first save of a deleted account = %v; want errStateDeleted", err)
+	}
+	if left, err := st.List(t.Context(), alice+"/"); err != nil || len(left) > 0 {
+		t.Errorf("objects under the deleted user = %v, %v; want none", left, err)
+	}
+}
+
 func TestARestoreWritesNoManifestAfterAnotherReplicaDeletesTheUsersState(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)

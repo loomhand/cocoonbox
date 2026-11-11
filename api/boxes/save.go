@@ -26,6 +26,7 @@ const (
 func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.Keyring) {
 	s.state = newStateLayer(agents, st, keys)
 	s.state.deltaFor = func(user string) bool { return s.registry.Policy(user).Delta }
+	s.state.accountExists = s.registry.AccountExists
 }
 
 // EnableConditionalWrites makes each index and timeline rewrite land only on the version it read, so api processes on one store keep each other's writes.

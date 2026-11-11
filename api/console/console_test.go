@@ -287,8 +287,16 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 			t.Error("the user's token still worked while its boxes were released")
 		}
 	}
+	var sweeps []bool
+	env.boxes.onDeleteState = func() {
+		_, err := env.users.Get(u.ID)
+		sweeps = append(sweeps, err == nil)
+	}
 	if code := env.do(t, http.MethodDelete, "api/users/"+u.ID, root, "{}").Code; code != http.StatusNoContent {
 		t.Fatalf("delete = %d", code)
+	}
+	if !slices.Equal(sweeps, []bool{true, false}) {
+		t.Errorf("state sweeps with the user present = %v, want one before and one after its row goes", sweeps)
 	}
 	if env.boxes.released != u.ID {
 		t.Errorf("released %q, want %q", env.boxes.released, u.ID)
@@ -412,13 +420,14 @@ func (e *env) request(method, path, session, body string) *http.Request {
 }
 
 type fakeBoxes struct {
-	list      []*controlv1.Box
-	listedFor string
-	released  string
-	stateGone string
-	stateErr  error
-	onRelease func()
-	calls     []string
+	list          []*controlv1.Box
+	listedFor     string
+	released      string
+	stateGone     string
+	stateErr      error
+	onRelease     func()
+	onDeleteState func()
+	calls         []string
 }
 
 func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
@@ -456,6 +465,9 @@ func (*fakeBoxes) HibernateAll(context.Context, string) error { return nil }
 
 func (f *fakeBoxes) DeleteState(ctx context.Context, user string) error {
 	f.stateGone, f.stateErr = user, ctx.Err()
+	if f.onDeleteState != nil {
+		f.onDeleteState()
+	}
 	return nil
 }
 
