@@ -1,6 +1,8 @@
 package oauth
 
 import (
+	"bytes"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,13 +24,79 @@ func TestCheckRedirect(t *testing.T) {
 		{"com.example.app:/oauth", true},
 		{"http://evil.example/callback", false},
 		{"https://example.com/cb#frag", false},
+		{"cursor://anysphere.cursor-mcp/oauth/callback", true},
 		{"javascript:alert(1)", false},
-		{"cursor://anysphere/oauth", false},
+		{"JavaScript:alert(1)", false},
+		{"data:text/html,x", false},
+		{"vbscript:x", false},
+		{"file:///etc/passwd", false},
+		{"about:blank", false},
+		{"blob:https://example.com/id", false},
+		{"https:///cb", false},
+		{"/callback", false},
 		{"https://user@example.com/cb", false},
 	}
 	for _, tt := range tests {
 		if err := checkRedirect(tt.uri); (err == nil) != tt.ok {
 			t.Errorf("checkRedirect(%q) = %v, want ok %t", tt.uri, err, tt.ok)
+		}
+	}
+}
+
+func TestRegisterAdmitsCursorDesktopAndRefusesABrowserScheme(t *testing.T) {
+	s := &Service{key: []byte("k")}
+	tests := []struct {
+		redirect string
+		want     int
+	}{
+		{"cursor://anysphere.cursor-mcp/oauth/callback", http.StatusCreated},
+		{"javascript:alert(1)", http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		body, err := json.Marshal(struct {
+			ClientName   string   `json:"client_name"`
+			RedirectURIs []string `json:"redirect_uris"`
+		}{"Cursor", []string{tt.redirect}})
+		if err != nil {
+			t.Fatalf("encode the registration: %v", err)
+		}
+		w := httptest.NewRecorder()
+		s.ServeRegister(w, httptest.NewRequest(http.MethodPost, RegisterPath, bytes.NewReader(body)))
+		if w.Code != tt.want {
+			t.Fatalf("register %q = %d %s, want %d", tt.redirect, w.Code, w.Body, tt.want)
+		}
+		var reg struct {
+			ClientID string `json:"client_id"`
+			Error    string `json:"error"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+			t.Fatalf("register %q answered %s: %v", tt.redirect, w.Body, err)
+		}
+		if tt.want != http.StatusCreated {
+			if reg.Error != "invalid_redirect_uri" {
+				t.Errorf("register %q error = %q, want invalid_redirect_uri", tt.redirect, reg.Error)
+			}
+			continue
+		}
+		if c, err := s.client(t.Context(), reg.ClientID); err != nil || !c.allows(tt.redirect) {
+			t.Errorf("client %q = %+v, %v; want one that redirects to %q", reg.ClientID, c, err, tt.redirect)
+		}
+	}
+}
+
+func TestRedirectHostNamesWhereConsentSendsTheBrowser(t *testing.T) {
+	tests := []struct {
+		uri, host string
+		loopback  bool
+	}{
+		{"https://claude.ai/api/mcp/auth_callback", "claude.ai", false},
+		{"http://127.0.0.1:43123/callback", "127.0.0.1:43123", true},
+		{"cursor://anysphere.cursor-mcp/oauth/callback", "cursor://anysphere.cursor-mcp/oauth/callback", false},
+		{"microsoft-edge:https://example.com/cb", "microsoft-edge:https://example.com/cb", false},
+	}
+	for _, tt := range tests {
+		if host, loopback := redirectHost(tt.uri); host != tt.host || loopback != tt.loopback {
+			t.Errorf("redirectHost(%q) = %q, %t; want %q, %t", tt.uri, host, loopback, tt.host, tt.loopback)
 		}
 	}
 }
