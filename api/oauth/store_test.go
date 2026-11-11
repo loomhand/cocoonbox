@@ -178,7 +178,7 @@ func issueGrant(t *testing.T, s *Service, user string) grantTokens {
 	t.Helper()
 	g := grantTokens{id: grantPrefix + utils.RandomHex(grantIDBytes), access: randomToken(AccessPrefix), refresh: randomToken(refreshPrefix)}
 	c := code{
-		user: user, client: client{id: agentClient}, caps: Caps{MaxBoxes: 1, MaxRunning: 1}, chosen: []string{}, connectors: []string{},
+		user: user, client: client{id: agentClient}, caps: Caps{MaxBoxes: 1, MaxRunning: 1}, chosen: []string{},
 		grantExpires: time.Now().Add(time.Hour), expiresAt: time.Now().Add(time.Minute), codeSHA256: utils.HashHex(randomToken("code_")),
 	}
 	if err := s.store.addCode(t.Context(), c); err != nil {

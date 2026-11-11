@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
@@ -59,11 +60,11 @@ type ToolLists interface {
 	Get(id string) (users.User, error)
 }
 
-// Connectors serves the tools of the connected accounts the user ticked for a grant, as Connect's mode B door does, and tells when the user's tools change.
+// Connectors serves the tools of the connected accounts a grant reaches, as Connect's mode B door does, and tells when the user's tools change.
 type Connectors interface {
-	Reaches(ctx context.Context, user string, grants []string, name string) (bool, error)
-	GrantedTools(ctx context.Context, user string, grants []string) ([]map[string]jsontext.Value, error)
-	CallGranted(ctx context.Context, user, client string, grants []string, name string, args jsontext.Value) (any, error)
+	Reaches(ctx context.Context, user string, reach connect.Reach, name string) (bool, error)
+	GrantedTools(ctx context.Context, user string, reach connect.Reach) ([]map[string]jsontext.Value, error)
+	CallGranted(ctx context.Context, user, client string, reach connect.Reach, name string, args jsontext.Value) (any, error)
 	ServeChanges(w http.ResponseWriter, r *http.Request, user string)
 }
 
@@ -138,7 +139,7 @@ func (s *Server) EnableBoxTools(agents Agents, lists ToolLists) {
 	s.agents, s.lists = agents, lists
 }
 
-// EnableConnectors serves on RootPath, to a grant the user ticked accounts for, the tools of those accounts through connectors.
+// EnableConnectors serves on RootPath, to a grant that reaches connected accounts, the tools of those accounts through connectors.
 func (s *Server) EnableConnectors(connectors Connectors) {
 	s.connectors = connectors
 }
@@ -158,7 +159,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller += " grant=" + grant.ID
 	}
 	unified, allow := s.agents != nil && r.URL.Path == RootPath, http.MethodPost
-	streams := unified && len(s.connectorGrants(ctx)) != 0
+	streams := unified && !s.accountReach(ctx).None()
 	if unified {
 		allow += ", " + http.MethodDelete
 	}

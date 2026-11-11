@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 
 	"github.com/loomhand/cocoonbox/api/connect"
 	"github.com/loomhand/cocoonbox/api/oauth"
@@ -21,7 +19,7 @@ const (
 // Agents checks and answers an agent's authorization request, and lists, revokes and acknowledges a user's grants and sets the boxes each may use.
 type Agents interface {
 	Check(ctx context.Context, user string, req oauth.Request) (oauth.Consent, error)
-	Approve(ctx context.Context, user string, req oauth.Request, caps oauth.Caps, chosen, connectors []string) (string, error)
+	Approve(ctx context.Context, user string, req oauth.Request, caps oauth.Caps, chosen []string) (string, error)
 	Deny(ctx context.Context, req oauth.Request) (string, error)
 	Grants(ctx context.Context, user string) ([]oauth.Grant, error)
 	Choose(ctx context.Context, user, id string, boxes []string) error
@@ -41,9 +39,8 @@ type accountChoice struct {
 }
 
 type authorization struct {
-	Query      string   `json:"query"`
-	Boxes      []string `json:"boxes"`
-	Connectors []string `json:"connectors"`
+	Query string   `json:"query"`
+	Boxes []string `json:"boxes"`
 	oauth.Caps
 }
 
@@ -80,23 +77,16 @@ func (s *Server) checkAuthorization(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	var (
-		connectors []accountChoice
-		ticked     []string
-	)
+	var connectors []accountChoice
 	for _, a := range accounts {
 		connectors = append(connectors, accountChoice{ID: a.ID, Name: a.Name, Account: a.Label})
-		if slices.Contains(consent.Connectors, a.Grant) {
-			ticked = append(ticked, a.ID)
-		}
 	}
 	writeJSON(w, struct {
 		oauth.Consent
-		User             string          `json:"user"`
-		Boxes            []choice        `json:"boxes"`
-		Connectors       []accountChoice `json:"connectors"`
-		ChosenConnectors []string        `json:"chosen_connectors"`
-	}{Consent: consent, User: u.Name, Boxes: s.choices(u.ID), Connectors: connectors, ChosenConnectors: ticked})
+		User       string          `json:"user"`
+		Boxes      []choice        `json:"boxes"`
+		Connectors []accountChoice `json:"connectors"`
+	}{Consent: consent, User: u.Name, Boxes: s.choices(u.ID), Connectors: connectors})
 }
 
 func (s *Server) approveAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -104,13 +94,7 @@ func (s *Server) approveAuthorization(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	u := caller(r)
-	grants, err := s.connectorGrants(r.Context(), u.ID, a.Connectors)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	redirect, err := s.agents.Approve(r.Context(), u.ID, req, a.Caps, a.Boxes, grants)
+	redirect, err := s.agents.Approve(r.Context(), caller(r).ID, req, a.Caps, a.Boxes)
 	if err != nil {
 		s.failAuthorization(w, r, err)
 		return
@@ -197,25 +181,6 @@ func (s *Server) choices(user string) []choice {
 		}
 	}
 	return out
-}
-
-func (s *Server) connectorGrants(ctx context.Context, user string, ids []string) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	accounts, err := s.accounts(ctx, user)
-	if err != nil {
-		return nil, err
-	}
-	grants := make([]string, 0, len(ids))
-	for _, id := range ids {
-		i := slices.IndexFunc(accounts, func(a connect.Account) bool { return a.ID == id })
-		if i < 0 {
-			return nil, fmt.Errorf("%w: %q is not one of your connected accounts", oauth.ErrInvalid, id)
-		}
-		grants = append(grants, accounts[i].Grant)
-	}
-	return grants, nil
 }
 
 func (s *Server) accounts(ctx context.Context, user string) ([]connect.Account, error) {
