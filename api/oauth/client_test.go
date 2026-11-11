@@ -1,8 +1,8 @@
 package oauth
 
 import (
+	"bytes"
 	"encoding/json/v2"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -53,9 +53,15 @@ func TestRegisterAdmitsCursorDesktopAndRefusesABrowserScheme(t *testing.T) {
 		{"javascript:alert(1)", http.StatusBadRequest},
 	}
 	for _, tt := range tests {
-		body := fmt.Sprintf(`{"client_name":"Cursor","redirect_uris":[%q]}`, tt.redirect)
+		body, err := json.Marshal(struct {
+			ClientName   string   `json:"client_name"`
+			RedirectURIs []string `json:"redirect_uris"`
+		}{"Cursor", []string{tt.redirect}})
+		if err != nil {
+			t.Fatalf("encode the registration: %v", err)
+		}
 		w := httptest.NewRecorder()
-		s.ServeRegister(w, httptest.NewRequest(http.MethodPost, RegisterPath, strings.NewReader(body)))
+		s.ServeRegister(w, httptest.NewRequest(http.MethodPost, RegisterPath, bytes.NewReader(body)))
 		if w.Code != tt.want {
 			t.Fatalf("register %q = %d %s, want %d", tt.redirect, w.Code, w.Body, tt.want)
 		}
