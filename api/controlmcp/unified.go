@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -188,7 +189,7 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	logger := log.WithFunc("controlmcp.Server.initializeUnified")
 	result := initializeResult(sess.params, unifiedName)
 	result["instructions"] = unifiedHead
-	if len(s.connectorGrants(ctx)) != 0 {
+	if !s.accountReach(ctx).None() {
 		result["capabilities"] = map[string]any{toolsField: map[string]any{"listChanged": true}}
 	}
 	box, image, err := s.defaultBox(ctx)
@@ -224,9 +225,9 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 	for _, t := range boxTools {
 		tools = append(tools, withBoxArgument(t))
 	}
-	if grants := s.connectorGrants(ctx); len(grants) != 0 {
+	if reach := s.accountReach(ctx); !reach.None() {
 		g := grantOf(ctx)
-		accountTools, err := s.connectors.GrantedTools(ctx, g.User, grants)
+		accountTools, err := s.connectors.GrantedTools(ctx, g.User, reach)
 		if err != nil {
 			log.WithFunc("controlmcp.Server.listTools").Error(ctx, err, "list the connector tools of grant "+g.ID)
 		}
@@ -260,21 +261,21 @@ func (s *Server) boxTools(ctx context.Context) ([]jsontext.Value, *mcpwire.Error
 	return tools, nil
 }
 
-// connectorGrants returns the Connect grants of the accounts the user ticked for the caller's grant; a user token and a server without Connect get none.
-func (s *Server) connectorGrants(ctx context.Context) []string {
+// accountReach returns the connected accounts the caller's grant may use; a user token and a server without Connect reach none.
+func (s *Server) accountReach(ctx context.Context) connect.Reach {
 	if g := grantOf(ctx); g != nil && s.connectors != nil {
-		return g.Connectors
+		return connect.Reach{All: g.AllAccounts, Grants: g.Connectors}
 	}
-	return nil
+	return connect.Reach{}
 }
 
 // connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows; a failed lookup returns an error, never a box route.
 func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire.Error) {
-	grants := s.connectorGrants(ctx)
-	if len(grants) == 0 || isControlTool(name) {
+	reach := s.accountReach(ctx)
+	if reach.None() || isControlTool(name) {
 		return false, nil
 	}
-	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, grants, name)
+	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, reach, name)
 	if err != nil {
 		log.WithFunc("controlmcp.Server.connectorTool").Error(ctx, err, "read the connector of "+name)
 		return false, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "reading the connector failed"}
@@ -289,7 +290,7 @@ func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire
 // callConnector runs a tool of an account the caller's grant holds through Connect; it wakes no box.
 func (s *Server) callConnector(ctx context.Context, call *callParams) (any, *mcpwire.Error) {
 	g := grantOf(ctx)
-	out, err := s.connectors.CallGranted(ctx, g.User, g.ClientName, g.Connectors, call.Name, call.Arguments)
+	out, err := s.connectors.CallGranted(ctx, g.User, g.ClientName, s.accountReach(ctx), call.Name, call.Arguments)
 	if rpcErr, ok := errors.AsType[*mcpwire.Error](err); ok {
 		return nil, rpcErr
 	}

@@ -37,6 +37,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/edge"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/migrate"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
 	"github.com/loomhand/cocoonbox/api/users/userstest"
@@ -559,40 +560,32 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 	}
 }
 
-func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
+func TestAConnectGrantGetsTheToolsOfEveryActiveAccount(t *testing.T) {
 	e := newEnv(t)
 	vendor := e.enableConnect(t)
 	clientID := e.register(t, "Agent")
 	main := e.users.Boxes(e.alice)[0].ID
 
 	consent := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
-	if !consent.Connect || consent.Existing || fmt.Sprint(consent.Connectors) != "[{mock mock } {other other }]" || len(consent.ChosenConnectors) != 0 {
-		t.Fatalf("consent = %+v, want alice's active accounts and none ticked", consent)
+	if !consent.Connect || consent.Existing || fmt.Sprint(consent.Connectors) != "[{mock mock } {other other }]" {
+		t.Fatalf("consent = %+v, want alice's active accounts named", consent)
 	}
 	if boxesOnly := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes")); boxesOnly.Connect || len(boxesOnly.Connectors) != 0 {
-		t.Errorf("a request without the connect scope offers %+v", boxesOnly)
-	}
-	for _, tc := range []struct{ scope, connector string }{
-		{"boxes connect", "theirs"}, {"boxes connect", "stale"}, {"boxes connect", "nope"}, {"boxes", "mock"},
-	} {
-		q := authorizeQuery(clientID, strings.Repeat("v", 43), tc.scope)
-		body := map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "connectors": []string{tc.connector}}
-		if st, text := e.consoleStatus(t, http.MethodPost, "oauth/approve", body); st != http.StatusBadRequest {
-			t.Errorf("approve %s with %q: %d %s, want 400", tc.connector, tc.scope, st, text)
-		}
+		t.Errorf("a request without the connect scope names %+v", boxesOnly)
 	}
 
-	access, refresh, scope := e.connectGrant(t, clientID, []string{main}, "mock")
+	access, refresh, scope := e.connectGrant(t, clientID, "boxes connect", []string{main})
 	if scope != "boxes connect" {
 		t.Errorf("token scope = %q", scope)
 	}
-	renewal := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect"))
-	if !renewal.Existing || !slices.Equal(renewal.ChosenConnectors, []string{"mock"}) {
-		t.Errorf("renewal consent = %+v, want mock ticked", renewal)
+	if renewal := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect")); !renewal.Existing {
+		t.Errorf("renewal consent = %+v, want the existing grant", renewal)
 	}
 	tools := e.rootTools(t, access)
-	if _, ok := tools["mock_list_items"]; !ok || slices.ContainsFunc(slices.Collect(maps.Keys(tools)), func(n string) bool { return strings.HasPrefix(n, "other_") }) {
-		t.Fatalf("grant tools = %v, want mock's and not other's", slices.Sorted(maps.Keys(tools)))
+	for name, want := range map[string]bool{"mock_list_items": true, "other_list_items": true, "stale_list_items": false, "theirs_list_items": false} {
+		if _, ok := tools[name]; ok != want {
+			t.Errorf("grant lists %s = %t, want %t: %v", name, ok, want, slices.Sorted(maps.Keys(tools)))
+		}
 	}
 	if !strings.Contains(tools["mock_create_item"], `"destructiveHint":true`) || !strings.Contains(tools["mock_list_items"], `"readOnlyHint":true`) {
 		t.Errorf("annotations = %v", tools)
@@ -615,9 +608,9 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 		t.Errorf("refresh: %d scope %q", resp.StatusCode, refreshed.Scope)
 	}
 
-	plain, _, plainScope := e.connectGrant(t, e.register(t, "Plain Agent"), nil)
+	plain, _, plainScope := e.connectGrant(t, e.register(t, "Plain Agent"), "boxes", nil)
 	if names := slices.Collect(maps.Keys(e.rootTools(t, plain))); plainScope != "boxes" || slices.Contains(names, "mock_list_items") {
-		t.Errorf("a grant with no account ticked: scope %q, tools %v", plainScope, names)
+		t.Errorf("a grant without the connect scope: scope %q, tools %v", plainScope, names)
 	}
 	if names := slices.Collect(maps.Keys(e.rootTools(t, e.userToken))); slices.Contains(names, "mock_list_items") {
 		t.Errorf("the user token on the unified MCP lists %v, want no account tools", names)
@@ -630,10 +623,10 @@ func TestAGrantGetsTheToolsOfOnlyTheAccountsTheUserTicks(t *testing.T) {
 	}
 }
 
-func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
+func TestAccountChangesAfterConsentReachTheGrantsStreamAndTools(t *testing.T) {
 	e := newEnv(t)
 	e.enableConnect(t)
-	access, _, _ := e.connectGrant(t, e.register(t, "Agent"), nil, "mock")
+	access, _, _ := e.connectGrant(t, e.register(t, "Agent"), "boxes connect", nil)
 	e.console(t, http.MethodPut, "connect/mock/policy", map[string]any{"tool": "list_items", "policy": "off"}, nil)
 	if _, ok := e.rootTools(t, access)["mock_list_items"]; ok {
 		t.Error("a tool that is off is listed")
@@ -643,6 +636,17 @@ func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 
 	stream := e.rootStream(t, access)
+	e.connectAccount(t, e.alice, "late")
+	if event := readEvent(t, stream); !strings.Contains(event, "notifications/tools/list_changed") {
+		t.Errorf("stream after a new connect = %q", event)
+	}
+	if _, ok := e.rootTools(t, access)["late_list_items"]; !ok {
+		t.Error("an account connected after the consent is not listed")
+	}
+	if isError, text := e.rootTool(t, access, "", "late_create_item", map[string]any{"title": "x"}); isError || text != "create_item done" {
+		t.Errorf("call of an account connected after the consent = %t %q", isError, text)
+	}
+
 	e.console(t, http.MethodDelete, "connect/mock", map[string]any{}, nil)
 	if event := readEvent(t, stream); !strings.Contains(event, "notifications/tools/list_changed") {
 		t.Errorf("stream after a disconnect = %q", event)
@@ -652,10 +656,10 @@ func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 	e.connectAccount(t, e.alice, "mock")
 	if event := readEvent(t, stream); !strings.Contains(event, "notifications/tools/list_changed") {
-		t.Errorf("stream after a connect = %q", event)
+		t.Errorf("stream after a reconnect = %q", event)
 	}
-	if _, ok := e.rootTools(t, access)["mock_create_item"]; ok {
-		t.Error("connecting the account again gives it back to a grant the user ticked it for before the disconnect")
+	if _, ok := e.rootTools(t, access)["mock_create_item"]; !ok {
+		t.Error("an account connected again is not listed")
 	}
 
 	grants := e.grants(t)
@@ -665,6 +669,54 @@ func TestAccountChangesReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 	if resp := e.rpc(t, controlmcp.RootPath, access, "", "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("tools/list after the revoke = %d", resp.StatusCode)
+	}
+}
+
+func TestTheAllAccountsMigrationMovesTickedGrantsAndRunsAgain(t *testing.T) {
+	e := newEnv(t)
+	caps := oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}
+	e.authorize(t, e.register(t, "Ticked"), caps)
+	e.authorize(t, e.register(t, "Plain"), caps)
+	ids := map[string]string{}
+	for _, g := range e.grants(t) {
+		ids[g.ClientName] = g.ID
+	}
+	conn, err := pgx.Connect(t.Context(), e.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	var kept bool
+	q := "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'oauth_codes' AND column_name = 'connectors')"
+	if err := conn.QueryRow(t.Context(), q).Scan(&kept); err != nil || !kept {
+		t.Errorf("oauth_codes.connectors after migration 5 = %t, %v; the api before it still writes that column", kept, err)
+	}
+	rollback := `ALTER TABLE oauth_grants DROP COLUMN all_accounts; ALTER TABLE oauth_codes DROP COLUMN all_accounts;
+		DELETE FROM oauth_schema_migrations WHERE version = 5`
+	if _, err := conn.Exec(t.Context(), rollback); err != nil {
+		t.Fatalf("roll back before migration 5: %v", err)
+	}
+	if _, err := conn.Exec(t.Context(), "INSERT INTO oauth_connectors (grant_id, connect_grant) VALUES ($1, 'cg-mock')", ids["Ticked"]); err != nil {
+		t.Fatalf("tick an account: %v", err)
+	}
+	for _, run := range []string{"on a database without it", "again after its record is deleted"} {
+		pool, err := migrate.Open(t.Context(), e.dsn, oauth.Migrations)
+		if err != nil {
+			t.Fatalf("migration 5 %s: %v", run, err)
+		}
+		pool.Close()
+		for name, want := range map[string]bool{"Ticked": true, "Plain": false} {
+			var all bool
+			var ticks int
+			err := conn.QueryRow(t.Context(), `SELECT g.all_accounts, (SELECT count(*) FROM oauth_connectors n WHERE n.grant_id = g.id)
+				FROM oauth_grants g WHERE g.id = $1`, ids[name]).Scan(&all, &ticks)
+			if err != nil || all != want || ticks != 0 {
+				t.Errorf("grant %s after migration 5 %s = all accounts %t, %d ticks, %v; want %t and none", name, run, all, ticks, err, want)
+			}
+		}
+		if _, err := conn.Exec(t.Context(), "DELETE FROM oauth_schema_migrations WHERE version = 5"); err != nil {
+			t.Fatalf("forget migration 5: %v", err)
+		}
 	}
 }
 
@@ -1035,14 +1087,14 @@ func (e *env) connectConsent(t *testing.T, q url.Values) connectConsent {
 	return consent
 }
 
-func (e *env) connectGrant(t *testing.T, clientID string, boxes []string, connectors ...string) (string, string, string) {
+func (e *env) connectGrant(t *testing.T, clientID, scope string, boxes []string) (string, string, string) {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
-	q := authorizeQuery(clientID, verifier, "boxes connect")
+	q := authorizeQuery(clientID, verifier, scope)
 	var approved struct {
 		Redirect string `json:"redirect"`
 	}
-	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "boxes": boxes, "connectors": connectors}, &approved)
+	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode(), "max_boxes": 1, "max_running": 1, "days": 1, "boxes": boxes}, &approved)
 	u, err := url.Parse(approved.Redirect)
 	if err != nil {
 		t.Fatalf("redirect = %q", approved.Redirect)
@@ -1109,7 +1161,6 @@ type connectConsent struct {
 		Name    string `json:"name"`
 		Account string `json:"account"`
 	} `json:"connectors"`
-	ChosenConnectors []string `json:"chosen_connectors"`
 }
 
 type fakeBoxes struct {

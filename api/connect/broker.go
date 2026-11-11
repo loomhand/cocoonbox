@@ -53,16 +53,12 @@ func (t tool) effective(choice string) string {
 	}
 }
 
-// caller is who calls a door; grants, when set, are the only grants whose tools it reaches.
+// caller is who calls a door and the accounts it reaches; the zero reach reaches none.
 type caller struct {
-	user   string
-	door   string
-	name   string
-	grants []string
-}
-
-func (c caller) reaches(grant string) bool {
-	return c.grants == nil || slices.Contains(c.grants, grant)
+	user  string
+	door  string
+	name  string
+	reach Reach
 }
 
 type callResult struct {
@@ -90,7 +86,7 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(listFanout)
 	for i, g := range grants {
-		if g.status != statusActive || g.mcpURL == "" || !c.reaches(g.id) {
+		if g.status != statusActive || g.mcpURL == "" || !c.reach.covers(g.id) {
 			continue
 		}
 		eg.Go(func() error {
@@ -133,7 +129,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 		}
 	}()
 	g, err := s.store.grant(ctx, c.user, connector)
-	if err == nil && !c.reaches(g.id) {
+	if err == nil && !c.reach.covers(g.id) {
 		err = errNoGrant
 	}
 	if errors.Is(err, errNoGrant) {

@@ -54,7 +54,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 			s.serveDevice(w, r, redeemed)
 			return
 		}
-		connectors = len(redeemed.connectors) != 0
+		connectors = redeemed.allAccounts
 	case refreshToken:
 		var replayed string
 		replayed, connectors, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)

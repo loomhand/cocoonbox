@@ -54,10 +54,8 @@ async function load() {
   $("existing").hidden = !c.existing;
   $("choice-list").replaceChildren(...c.boxes.map((b) => checkbox("box", b.id, b.name, c.chosen.includes(b.id))));
   $("choices").hidden = !c.boxes.length;
-  $("connector-list").replaceChildren(
-    ...c.connectors.map((a) => checkbox("connector", a.id, a.account ? a.name + " (" + a.account + ")" : a.name, c.chosen_connectors.includes(a.id))),
-  );
-  $("connectors").hidden = !c.connectors.length;
+  $("connector-list").replaceChildren(...c.connectors.map((a) => item(a.account ? a.name + " (" + a.account + ")" : a.name)));
+  $("connectors").hidden = !c.connect;
   const f = $("consent-form");
   f.max_boxes.value = c.defaults.max_boxes;
   f.max_running.value = c.defaults.max_running;
@@ -76,6 +74,12 @@ function checkbox(name, value, text, checked) {
   return label;
 }
 
+function item(text) {
+  const li = document.createElement("li");
+  li.textContent = text;
+  return li;
+}
+
 click("github-button", async () => {
   const { url } = await api("POST", "auth/github/begin", { return_to: location.pathname + location.search, invite });
   location.assign(url);
@@ -92,8 +96,7 @@ $("consent-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
   const boxes = [...f.querySelectorAll("input[name=box]:checked")].map((i) => i.value);
-  const connectors = [...f.querySelectorAll("input[name=connector]:checked")].map((i) => i.value);
-  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value), boxes, connectors })
+  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value), boxes })
     .then(({ redirect }) => {
       show("");
       notice("Allowed. Returning to the agent; you can close this tab.");
