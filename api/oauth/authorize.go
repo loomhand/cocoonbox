@@ -193,8 +193,8 @@ func agentScope(scope string) (connect, ok bool) {
 	return slices.Contains(fields, ConnectScope), len(fields) == 0 || slices.Contains(fields, Scope)
 }
 
-func grantedScope(connectors bool) string {
-	if connectors {
+func grantedScope(accounts bool) string {
+	if accounts {
 		return agentScopes
 	}
 	return Scope

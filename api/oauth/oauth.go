@@ -119,7 +119,7 @@ func (c Caps) check() error {
 	return nil
 }
 
-// Grant is one client's access for one user; Boxes are the boxes it created that still exist, Chosen the user's own boxes the user chose for it; AllAccounts lets it use every connected account of the user, now and later, else only the Connect grants in Connectors.
+// Grant is one client's access for one user; Boxes are the boxes it created that still exist, Chosen the user's own boxes the user chose for it; AllAccounts lets it use every connected account of the user, now and later.
 type Grant struct {
 	ID         string `json:"id"`
 	User       string `json:"-"`
@@ -132,7 +132,6 @@ type Grant struct {
 	Boxes       []string   `json:"boxes"`
 	Chosen      []string   `json:"chosen"`
 	AllAccounts bool       `json:"-"`
-	Connectors  []string   `json:"-"`
 	CreatedAt   time.Time  `json:"created_at"`
 	ExpiresAt   time.Time  `json:"expires_at"`
 	UsedAt      *time.Time `json:"used_at"`

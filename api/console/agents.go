@@ -70,9 +70,10 @@ func (s *Server) checkAuthorization(w http.ResponseWriter, r *http.Request) {
 		s.failAuthorization(w, r, err)
 		return
 	}
+	consent.Connect = consent.Connect && s.connect != nil
 	var accounts []connect.Account
 	if consent.Connect {
-		if accounts, err = s.accounts(r.Context(), u.ID); err != nil {
+		if accounts, err = s.connect.Accounts(r.Context(), u.ID); err != nil {
 			s.fail(w, r, err)
 			return
 		}
@@ -181,13 +182,6 @@ func (s *Server) choices(user string) []choice {
 		}
 	}
 	return out
-}
-
-func (s *Server) accounts(ctx context.Context, user string) ([]connect.Account, error) {
-	if s.connect == nil {
-		return nil, nil
-	}
-	return s.connect.Accounts(ctx, user)
 }
 
 func decodeAuthorization(w http.ResponseWriter, r *http.Request) (oauth.Request, authorization, bool) {

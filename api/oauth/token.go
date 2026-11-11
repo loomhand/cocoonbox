@@ -38,8 +38,8 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	access, refresh := randomToken(AccessPrefix), randomToken(refreshPrefix)
 	tokens := issued{access: utils.HashHex(access), refresh: utils.HashHex(refresh)}
 	var (
-		err        error
-		connectors bool
+		err      error
+		accounts bool
 	)
 	switch f.Get("grant_type") {
 	case authorizationCode:
@@ -54,10 +54,10 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 			s.serveDevice(w, r, redeemed)
 			return
 		}
-		connectors = redeemed.allAccounts
+		accounts = redeemed.allAccounts
 	case refreshToken:
 		var replayed string
-		replayed, connectors, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
+		replayed, accounts, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
 		if replayed != "" {
 			s.accounts.EndCredential(r.Context(), replayed)
 		}
@@ -79,7 +79,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		"token_type":   "Bearer",
 		"expires_in":   int(accessTTL.Seconds()),
 		refreshToken:   refresh,
-		scopeParam:     grantedScope(connectors),
+		scopeParam:     grantedScope(accounts),
 	})
 }
 
