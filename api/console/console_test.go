@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -287,8 +288,16 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 			t.Error("the user's token still worked while its boxes were released")
 		}
 	}
+	var sweeps []bool
+	env.boxes.onDeleteState = func() {
+		_, err := env.users.Get(u.ID)
+		sweeps = append(sweeps, err == nil)
+	}
 	if code := env.do(t, http.MethodDelete, "api/users/"+u.ID, root, "{}").Code; code != http.StatusNoContent {
 		t.Fatalf("delete = %d", code)
+	}
+	if !slices.Equal(sweeps, []bool{true, false}) {
+		t.Errorf("state sweeps with the user present = %v, want one before and one after its row goes", sweeps)
 	}
 	if env.boxes.released != u.ID {
 		t.Errorf("released %q, want %q", env.boxes.released, u.ID)
@@ -305,6 +314,44 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	self, _ := env.users.ByName("root")
 	if code := env.do(t, http.MethodDelete, "api/users/"+self.ID, root, "{}").Code; code != http.StatusBadRequest {
 		t.Errorf("deleting yourself = %d, want 400", code)
+	}
+}
+
+func TestADeleteRetriedAfterTheRowWentStillDeletesTheState(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	gone := "u-000000000001"
+	if code := env.do(t, http.MethodDelete, "api/users/"+gone, root, "{}").Code; code != http.StatusNotFound {
+		t.Errorf("delete of a user without a row = %d, want 404", code)
+	}
+	if env.boxes.stateGone != gone {
+		t.Errorf("state deleted for %q, want %q, whose row a failed sweep outlived", env.boxes.stateGone, gone)
+	}
+	other, err := users.Open(t.Context(), users.Options{DSN: env.dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: env.gw, Tenants: env.tenants, FirstBoxID: boxes.BoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost})
+	if err != nil {
+		t.Fatalf("open another replica's users: %v", err)
+	}
+	t.Cleanup(other.Close)
+	fresh, err := other.Create(t.Context(), users.NewUser{Name: "qa9", Password: password})
+	if err != nil {
+		t.Fatalf("create qa9 on another replica: %v", err)
+	}
+	if _, err := env.users.Get(fresh.ID); !errors.Is(err, users.ErrNotFound) {
+		t.Fatalf("this replica already holds qa9: %v", err)
+	}
+	env.boxes.released, env.boxes.stateGone = "", ""
+	if code := env.do(t, http.MethodDelete, "api/users/"+fresh.ID, root, "{}").Code; code != http.StatusNoContent {
+		t.Errorf("delete of a user only another replica has loaded = %d, want 204", code)
+	}
+	if env.boxes.released != fresh.ID || env.boxes.stateGone != fresh.ID {
+		t.Errorf("released %q and swept %q, want the live account %q released before its state goes", env.boxes.released, env.boxes.stateGone, fresh.ID)
+	}
+	env.boxes.stateGone = ""
+	if code := env.do(t, http.MethodDelete, "api/users/"+url.PathEscape("u-x/boxes"), root, "{}").Code; code != http.StatusNotFound {
+		t.Errorf("delete of a slash id = %d, want 404", code)
+	}
+	if env.boxes.stateGone != "" {
+		t.Errorf("state deleted for %q; a slash id names part of another user's state", env.boxes.stateGone)
 	}
 }
 
@@ -412,13 +459,14 @@ func (e *env) request(method, path, session, body string) *http.Request {
 }
 
 type fakeBoxes struct {
-	list      []*controlv1.Box
-	listedFor string
-	released  string
-	stateGone string
-	stateErr  error
-	onRelease func()
-	calls     []string
+	list          []*controlv1.Box
+	listedFor     string
+	released      string
+	stateGone     string
+	stateErr      error
+	onRelease     func()
+	onDeleteState func()
+	calls         []string
 }
 
 func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
@@ -456,6 +504,9 @@ func (*fakeBoxes) HibernateAll(context.Context, string) error { return nil }
 
 func (f *fakeBoxes) DeleteState(ctx context.Context, user string) error {
 	f.stateGone, f.stateErr = user, ctx.Err()
+	if f.onDeleteState != nil {
+		f.onDeleteState()
+	}
 	return nil
 }
 

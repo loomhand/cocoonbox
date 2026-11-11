@@ -118,6 +118,7 @@ type Registry interface {
 	Policy(owner string) users.Policy
 	Disabled(owner string) bool
 	AccountDisabled(ctx context.Context, owner string) (bool, error)
+	AccountExists(ctx context.Context, owner string) (bool, error)
 	OnBoxes(fn func(owner string))
 }
 

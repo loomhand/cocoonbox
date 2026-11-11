@@ -504,7 +504,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeUser(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeLimit)
 	defer cancel()
-	if _, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)}); err != nil {
+	if err := s.disable(ctx, id); err != nil {
 		return err
 	}
 	if err := s.boxes.Release(ctx, id); err != nil {
@@ -518,7 +518,29 @@ func (s *Server) removeUser(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	return s.users.Delete(ctx, id)
+	if err := s.users.Delete(ctx, id); err != nil {
+		return err
+	}
+	return s.boxes.DeleteState(ctx, id)
+}
+
+func (s *Server) disable(ctx context.Context, id string) error {
+	_, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)})
+	if !errors.Is(err, users.ErrNotFound) || strings.Contains(id, "/") {
+		return err
+	}
+	exists, existsErr := s.users.AccountExists(ctx, id)
+	switch {
+	case existsErr != nil:
+		return existsErr
+	case !exists:
+		return errors.Join(err, s.boxes.DeleteState(ctx, id))
+	}
+	if err = s.users.SyncUser(ctx, id); err != nil {
+		return err
+	}
+	_, err = s.users.Update(ctx, id, users.Settings{Disabled: new(true)})
+	return err
 }
 
 func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {

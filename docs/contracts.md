@@ -110,7 +110,7 @@ GitHub is the one identity provider. A dedicated GitHub OAuth App, apart from Co
 
 **Agent boxes of a user.** `users.max_agent_boxes` (users migration 0010; null for no cap, the admin-made default) bounds the boxes all of a user's grants hold together, checked under the owner's row lock when a box is added, and the tenant's `max_claims` counts the agent boxes up to it: `max_boxes` + min(agent boxes, `max_agent_boxes`) + 1. An admin sets it per user (`PATCH /cb/api/users/{id} {max_agent_boxes}`, 0 for no cap).
 
-**Self-delete.** `POST /cb/api/me/delete {name}` with the caller's own user name runs the admin delete (disable, release the boxes, delete the state, revoke the connections, delete the row, whose cascade removes identities, device tokens, grants and the queue entry), ends the session and admits the next person; an admin's account is refused (403).
+**Self-delete.** `POST /cb/api/me/delete {name}` with the caller's own user name runs the admin delete (disable, release the boxes, delete the state, revoke the connections, delete the row, whose cascade removes identities, device tokens, grants and the queue entry, then delete the state once more for a save that raced the row's removal), ends the session and admits the next person; an admin's account is refused (403).
 
 ## Client (macos) ↔ edge
 
