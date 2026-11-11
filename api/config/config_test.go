@@ -29,8 +29,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.State.GC.Interval != 0 || cfg.State.GC.DeleteBatch != 1000 || cfg.State.GC.DeletedRetention != Duration(7*24*time.Hour) {
 		t.Errorf("gc = %+v, want off with batches of 1000 and deleted boxes kept 7 days", cfg.State.GC)
 	}
-	if cfg.MaxRunningBoxes != 1 || cfg.Accounts.EnsureLimit != 4 {
-		t.Errorf("max running boxes = %d, ensure limit = %d, want 1 and 4", cfg.MaxRunningBoxes, cfg.Accounts.EnsureLimit)
+	if cfg.MaxBoxes != 1 || cfg.MaxRunningBoxes != 1 || cfg.Accounts.EnsureLimit != 4 {
+		t.Errorf("max boxes = %d, max running boxes = %d, ensure limit = %d, want 1, 1 and 4", cfg.MaxBoxes, cfg.MaxRunningBoxes, cfg.Accounts.EnsureLimit)
 	}
 	if cfg.Wake != (Wake{MaxSchedules: 3, Floor: Duration(time.Hour), MaxAwakeFor: Duration(time.Hour)}) {
 		t.Errorf("wake = %+v, want 3 schedules, a 1h floor and 1h awake at most", cfg.Wake)
@@ -77,6 +77,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "gw admin without token", body: signingKey + "  gw_admin:\n    url: http://10.203.0.1:18090\n", want: "provision.gw_admin.url and provision.gw_admin.token_file"},
 		{name: "no gw admin", body: signingKey, want: "provision.gw_admin.url and provision.gw_admin.token_file"},
 		{name: "gc without a bucket", body: required + "state:\n  gc:\n    interval: 24h\n", want: "state.gc.interval"},
+		{name: "negative max boxes", body: required + "max_boxes: -1\n", want: "max_boxes must be at least 1"},
 		{name: "negative running limit", body: required + "max_running_boxes: -1\n", want: "max_running_boxes must be at least 1"},
 		{name: "negative ensure limit", body: strings.Replace(required, accounts, accounts+"  ensure_limit: -1\n", 1), want: "accounts.ensure_limit must be at least 1"},
 		{name: "negative deleted retention", body: required + "state:\n  gc:\n    deleted_retention: -1h\n", want: "state.gc.deleted_retention must not be negative"},

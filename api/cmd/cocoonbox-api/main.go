@@ -517,6 +517,7 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 		FirstBoxID:    boxes.BoxID,
 		BoxFlavor:     machineFlavor(cfg.Flavor),
 		EnsureLimit:   cfg.Accounts.EnsureLimit,
+		MaxBoxes:      cfg.MaxBoxes,
 	})
 }
 

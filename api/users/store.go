@@ -1,6 +1,7 @@
 package users
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json/jsontext"
@@ -41,11 +42,12 @@ var (
 )
 
 type store struct {
-	pool  *pgxpool.Pool
-	locks *pgxpool.Pool
+	pool            *pgxpool.Pool
+	locks           *pgxpool.Pool
+	defaultMaxBoxes int
 }
 
-func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error) {
+func openStore(ctx context.Context, dsn string, lockConns int32, defaultMaxBoxes int) (*store, error) {
 	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
@@ -57,7 +59,7 @@ func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error)
 		pool.Close()
 		return nil, fmt.Errorf("open the user lock pool: %w", err)
 	}
-	return &store{pool: pool, locks: locks}, nil
+	return &store{pool: pool, locks: locks, defaultMaxBoxes: defaultMaxBoxes}, nil
 }
 
 func (s *store) close() {
@@ -160,7 +162,7 @@ func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
 }
 
-// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes or max_agent_boxes; the owner's row lock orders concurrent adds.
+// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes (0 takes s.defaultMaxBoxes) or max_agent_boxes; the owner's row lock orders concurrent adds.
 func (s *store) insertBox(ctx context.Context, b Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var maxBoxes, boxes int
@@ -171,6 +173,7 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 		} else if err != nil {
 			return err
 		}
+		maxBoxes = cmp.Or(maxBoxes, s.defaultMaxBoxes)
 		if err = tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1 AND agent = $2", b.Owner, b.Agent).Scan(&boxes); err != nil {
 			return err
 		}

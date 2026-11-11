@@ -26,6 +26,7 @@ const (
 	defaultPresignTTL       = 10 * time.Minute
 	defaultRegion           = "us-east-1"
 	maxDeleteBatch          = 1000
+	defaultMaxBoxes         = 1
 	defaultMaxRunning       = 1
 	defaultEnsureLimit      = 4
 
@@ -244,6 +245,8 @@ type Config struct {
 	Provision Provision `json:"provision"`
 	Accounts  Accounts  `json:"accounts"`
 	Flavor    Flavor    `json:"flavor"`
+	// MaxBoxes is how many boxes a user may have unless the user's row sets its own number.
+	MaxBoxes int `json:"max_boxes"`
 	// MaxRunningBoxes bounds how many boxes of one user run at once; Ensure and Create past it fail and name the running box.
 	MaxRunningBoxes int `json:"max_running_boxes"`
 	// UserIdleHibernate saves and hibernates a user's running box no client reached for this long; 0s (the default) leaves it up.
@@ -324,6 +327,7 @@ func (c *Config) applyDefaults() {
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
 	c.State.GC.DeletedRetention = cmp.Or(c.State.GC.DeletedRetention, Duration(defaultDeletedRetention))
+	c.MaxBoxes = cmp.Or(c.MaxBoxes, defaultMaxBoxes)
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
 	c.Accounts.EnsureLimit = cmp.Or(c.Accounts.EnsureLimit, defaultEnsureLimit)
 	c.Wake.MaxSchedules = cmp.Or(c.Wake.MaxSchedules, defaultWakeSchedules)
@@ -368,6 +372,9 @@ func (c *Config) validate() error {
 	}
 	if c.Image == "" {
 		errs = append(errs, errors.New("image is required: it names the default sandboxd template"))
+	}
+	if c.MaxBoxes < 1 {
+		errs = append(errs, fmt.Errorf("max_boxes must be at least 1, got %d", c.MaxBoxes))
 	}
 	if c.MaxRunningBoxes < 1 {
 		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
