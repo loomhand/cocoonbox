@@ -18,8 +18,8 @@ const (
 
 // Agents checks and answers an agent's authorization request, and lists, revokes and acknowledges a user's grants and sets the boxes each may use.
 type Agents interface {
-	Check(ctx context.Context, user string, req oauth.Request) (oauth.Consent, error)
-	Approve(ctx context.Context, user string, req oauth.Request, caps oauth.Caps, chosen []string) (string, error)
+	Check(ctx context.Context, user string, req oauth.Request, accounts bool) (oauth.Consent, error)
+	Approve(ctx context.Context, user string, req oauth.Request, caps oauth.Caps, chosen []string, accounts bool) (string, error)
 	Deny(ctx context.Context, req oauth.Request) (string, error)
 	Grants(ctx context.Context, user string) ([]oauth.Grant, error)
 	Choose(ctx context.Context, user, id string, boxes []string) error
@@ -65,12 +65,11 @@ func (s *Server) checkAuthorization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := caller(r)
-	consent, err := s.agents.Check(r.Context(), u.ID, req)
+	consent, err := s.agents.Check(r.Context(), u.ID, req, s.connect != nil)
 	if err != nil {
 		s.failAuthorization(w, r, err)
 		return
 	}
-	consent.Connect = consent.Connect && s.connect != nil
 	var accounts []connect.Account
 	if consent.Connect {
 		if accounts, err = s.connect.Accounts(r.Context(), u.ID); err != nil {
@@ -95,7 +94,7 @@ func (s *Server) approveAuthorization(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	redirect, err := s.agents.Approve(r.Context(), caller(r).ID, req, a.Caps, a.Boxes)
+	redirect, err := s.agents.Approve(r.Context(), caller(r).ID, req, a.Caps, a.Boxes, s.connect != nil)
 	if err != nil {
 		s.failAuthorization(w, r, err)
 		return

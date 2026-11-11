@@ -645,10 +645,19 @@ func TestAReApprovalWithoutTheConnectScopeDropsTheAccounts(t *testing.T) {
 	}
 }
 
-func TestAServerWithoutConnectAsksForNoAccounts(t *testing.T) {
+func TestAServerWithoutConnectNeitherAsksForNorGrantsAccounts(t *testing.T) {
 	e := newEnv(t)
-	if consent := e.connectConsent(t, authorizeQuery(e.register(t, "Agent"), strings.Repeat("v", 43), "boxes connect")); consent.Connect || len(consent.Connectors) != 0 {
+	clientID := e.register(t, "Agent")
+	if consent := e.connectConsent(t, authorizeQuery(clientID, strings.Repeat("v", 43), "boxes connect")); consent.Connect || len(consent.Connectors) != 0 {
 		t.Errorf("consent without Connect = %+v, want no accounts asked for", consent)
+	}
+	access, _, scope := e.connectGrant(t, clientID, "boxes connect", nil)
+	if scope != "boxes" {
+		t.Errorf("token scope without Connect = %q, want boxes", scope)
+	}
+	e.enableConnect(t)
+	if _, ok := e.rootTools(t, access)["mock_list_items"]; ok {
+		t.Error("a grant approved without Connect lists the account's tools once Connect is on")
 	}
 }
 
