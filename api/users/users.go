@@ -1186,7 +1186,6 @@ func (s *Service) allowMiss() bool {
 	return now >= next && s.nextMiss.CompareAndSwap(next, now+int64(tokenMissInterval))
 }
 
-// moveAdmin refuses demoting the last enabled admin and gives a promoted user no gw cap, a demoted one the tenant's default.
 func (s *Service) checkLimits(id string, old, r record, set Settings) error {
 	own := len(s.Boxes(id)) - s.agentBoxes(id)
 	boxes, limit := s.boxLimits(r)
@@ -1207,6 +1206,7 @@ func (s *Service) checkLimits(id string, old, r record, set Settings) error {
 	return nil
 }
 
+// moveAdmin refuses demoting the last enabled admin and gives a promoted user no gw cap, a demoted one the tenant's default.
 func (s *Service) moveAdmin(ctx context.Context, old, r record) error {
 	if r.Admin == old.Admin {
 		return nil
