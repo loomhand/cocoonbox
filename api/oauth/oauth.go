@@ -59,6 +59,7 @@ const (
 	refreshToken           = "refresh_token"
 	authNone               = "none"
 	schemeHTTP             = "http"
+	schemeHTTPS            = "https"
 	refreshPrefix          = "cbr_"
 	grantPrefix            = "oag_"
 	secretBytes            = 32

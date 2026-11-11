@@ -95,6 +95,7 @@ func (s *Service) ServeRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	name := cmp.Or(strings.TrimSpace(req.ClientName), unnamedClient)
 	if err := checkClient(name, req.RedirectURIs); err != nil {
+		log.WithFunc("oauth.Service.ServeRegister").Warnf(r.Context(), "refused registration of client %q: %v", name, err)
 		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", err.Error())
 		return
 	}

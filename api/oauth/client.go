@@ -35,7 +35,8 @@ const (
 var (
 	errUnknownClient = errors.New("client_id is neither a client metadata document URL nor a client this server registered")
 
-	loopbackHosts = []string{"localhost", "127.0.0.1", "::1"}
+	loopbackHosts  = []string{"localhost", "127.0.0.1", "::1"}
+	browserSchemes = []string{schemeHTTP, schemeHTTPS, "javascript", "data", "vbscript", "file", "about", "blob"}
 	// firstParty are the clients fixed in the server: each redirects to a loopback listener it opens for the sign-in.
 	firstParty = map[string]client{
 		CLIClient: {id: CLIClient, name: "cocoonbox CLI", redirects: []string{"http://127.0.0.1/callback"}, firstParty: true},
@@ -227,9 +228,9 @@ func checkRedirect(uri string) error {
 	switch {
 	case err != nil || len(uri) > maxRedirectLen || u.Fragment != "" || u.User != nil:
 		return fmt.Errorf("redirect URI %q is not a URI without a fragment", uri)
-	case u.Scheme == "https" && u.Host != "",
+	case u.Scheme == schemeHTTPS && u.Host != "",
 		u.Scheme == schemeHTTP && isLoopback(u.Hostname()),
-		strings.Contains(u.Scheme, "."):
+		u.Scheme != "" && !slices.Contains(browserSchemes, u.Scheme):
 		return nil
 	}
 	return fmt.Errorf("redirect URI %q must be https, http on localhost, or an app's own scheme", uri)
@@ -244,7 +245,7 @@ func redirectHost(uri string) (string, bool) {
 	switch {
 	case u.Scheme == schemeHTTP && isLoopback(u.Hostname()):
 		return u.Host, true
-	case u.Scheme == "https":
+	case u.Scheme == schemeHTTPS:
 		return u.Host, false
 	}
 	return u.Scheme + ":", false
