@@ -1625,8 +1625,8 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shuttle-desk-core"
-version = "0.1.48"
-source = "git+https://github.com/loomhand/shuttle?tag=v0.1.48#449d4795ce77c8387fe05d235e7d12de6a86680f"
+version = "0.1.49"
+source = "git+https://github.com/loomhand/shuttle?tag=v0.1.49#379d906d0ba132c88533fc8288c3f8440454301c"
 dependencies = [
  "png",
  "serde",
