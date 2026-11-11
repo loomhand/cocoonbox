@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -313,6 +314,25 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	self, _ := env.users.ByName("root")
 	if code := env.do(t, http.MethodDelete, "api/users/"+self.ID, root, "{}").Code; code != http.StatusBadRequest {
 		t.Errorf("deleting yourself = %d, want 400", code)
+	}
+}
+
+func TestADeleteRetriedAfterTheRowWentStillDeletesTheState(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	gone := "u-000000000001"
+	if code := env.do(t, http.MethodDelete, "api/users/"+gone, root, "{}").Code; code != http.StatusNotFound {
+		t.Errorf("delete of a user without a row = %d, want 404", code)
+	}
+	if env.boxes.stateGone != gone {
+		t.Errorf("state deleted for %q, want %q, whose row a failed sweep outlived", env.boxes.stateGone, gone)
+	}
+	env.boxes.stateGone = ""
+	if code := env.do(t, http.MethodDelete, "api/users/"+url.PathEscape("u-x/boxes"), root, "{}").Code; code != http.StatusNotFound {
+		t.Errorf("delete of a slash id = %d, want 404", code)
+	}
+	if env.boxes.stateGone != "" {
+		t.Errorf("state deleted for %q; a slash id names part of another user's state", env.boxes.stateGone)
 	}
 }
 

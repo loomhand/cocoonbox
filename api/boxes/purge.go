@@ -24,11 +24,6 @@ func (s *Service) DeleteState(ctx context.Context, user string) error {
 		return err
 	}
 	defer deleting()
-	release, err := s.state.lockShared(ctx, user)
-	if err != nil {
-		return err
-	}
-	defer release()
 	exclusive := s.state.userLock(user)
 	exclusive.Lock()
 	defer exclusive.Unlock()

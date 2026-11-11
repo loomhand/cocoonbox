@@ -794,7 +794,7 @@ func (l *stateLayer) lockDelete(ctx context.Context, user string) (func(), error
 	if l.shared == nil {
 		return func() {}, nil
 	}
-	return l.shared.LockLong(ctx, "delete:"+user)
+	return l.shared.LockLongAll(ctx, cluster.Advisory{Name: "delete:" + user}, cluster.Advisory{Name: "state:" + user})
 }
 
 func (l *stateLayer) lockAccount(ctx context.Context, user string) (func(), error) {

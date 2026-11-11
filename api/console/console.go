@@ -504,7 +504,9 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeUser(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeLimit)
 	defer cancel()
-	if _, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)}); err != nil {
+	if _, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)}); errors.Is(err, users.ErrNotFound) && !strings.Contains(id, "/") {
+		return errors.Join(err, s.boxes.DeleteState(ctx, id))
+	} else if err != nil {
 		return err
 	}
 	if err := s.boxes.Release(ctx, id); err != nil {
