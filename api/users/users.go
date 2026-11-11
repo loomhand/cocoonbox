@@ -446,20 +446,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	r.Policy.Delta = deref(set.Delta, r.Policy.Delta)
 	r.Policy.NoPark = deref(set.NoPark, r.Policy.NoPark)
 	r.Policy.NoGC = deref(set.NoGC, r.Policy.NoGC)
-	own := len(s.Boxes(id)) - s.agentBoxes(id)
-	boxes, limit := s.boxLimits(r)
-	oldBoxes, _ := s.boxLimits(old)
-	switch {
-	case r.MaxBoxesCap < 0 || limit > maxBoxesCap:
-		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d, or 0 for the default", ErrInvalid, maxBoxesCap)
-	case r.MaxBoxes < 0 || r.MaxBoxes > limit:
-		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d, or 0 for the default", ErrInvalid, limit)
-	case boxes < oldBoxes && boxes < own:
-		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)
-	case r.MaxRunning < 0 || r.MaxRunning > boxes:
-		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, boxes)
-	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
-		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
+	if err := s.checkLimits(id, old, r, set); err != nil {
+		return User{}, err
 	}
 	if err := s.moveAdmin(ctx, old, r); err != nil {
 		return User{}, err
@@ -1199,6 +1187,26 @@ func (s *Service) allowMiss() bool {
 }
 
 // moveAdmin refuses demoting the last enabled admin and gives a promoted user no gw cap, a demoted one the tenant's default.
+func (s *Service) checkLimits(id string, old, r record, set Settings) error {
+	own := len(s.Boxes(id)) - s.agentBoxes(id)
+	boxes, limit := s.boxLimits(r)
+	oldBoxes, _ := s.boxLimits(old)
+	limits := set.MaxBoxes != nil || set.MaxBoxesCap != nil
+	switch {
+	case limits && (r.MaxBoxesCap < 0 || limit > maxBoxesCap):
+		return fmt.Errorf("%w: max boxes cap must be in 1..%d, or 0 for the default", ErrInvalid, maxBoxesCap)
+	case limits && (r.MaxBoxes < 0 || r.MaxBoxes > limit):
+		return fmt.Errorf("%w: max boxes must be in 1..%d, or 0 for the default", ErrInvalid, limit)
+	case boxes < oldBoxes && boxes < own:
+		return fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)
+	case (set.MaxRunning != nil || boxes < oldBoxes) && (r.MaxRunning < 0 || r.MaxRunning > boxes):
+		return fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, boxes)
+	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
+		return fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
+	}
+	return nil
+}
+
 func (s *Service) moveAdmin(ctx context.Context, old, r record) error {
 	if r.Admin == old.Admin {
 		return nil

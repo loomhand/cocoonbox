@@ -123,6 +123,39 @@ func TestTheMigrationHandsUsersAtTheCreationValuesToTheConfig(t *testing.T) {
 	}
 }
 
+func TestLoweringTheConfiguredMaxBoxesLeavesAnInheritingUserEditable(t *testing.T) {
+	_, gw, tenants, dsn := newTestService(t)
+	raised, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost, MaxBoxes: 3})
+	if err != nil {
+		t.Fatalf("Open with max boxes 3: %v", err)
+	}
+	t.Cleanup(raised.Close)
+	u := mustCreate(t, raised, NewUser{Name: "qa1"})
+	if _, err := raised.Update(t.Context(), u.ID, Settings{MaxBoxes: new(3), MaxRunning: new(3)}); err != nil {
+		t.Fatalf("pin qa1 at 3 boxes, 3 running: %v", err)
+	}
+	lowered := openTestService(t, dsn, gw, tenants)
+	for name, set := range map[string]Settings{
+		"disable":     {Disabled: new(true)},
+		"residential": {Residential: new(true)},
+		"image":       {Image: new("desk")},
+	} {
+		if _, err := lowered.Update(t.Context(), u.ID, set); err != nil {
+			t.Errorf("%s after the config dropped to 1 = %v, want it through", name, err)
+		}
+	}
+	if got, err := lowered.Update(t.Context(), u.ID, Settings{MaxBoxes: new(0)}); err != nil || got.MaxBoxes != 1 {
+		t.Errorf("reset max boxes = %d, %v; want the configured 1", got.MaxBoxes, err)
+	}
+	var row int
+	if err := lowered.store.pool.QueryRow(t.Context(), "SELECT max_boxes FROM users WHERE id = $1", u.ID).Scan(&row); err != nil || row != 0 {
+		t.Errorf("max_boxes row after reset = %d, %v; want 0 for the default", row, err)
+	}
+	if err := lowered.Delete(t.Context(), u.ID); err != nil {
+		t.Errorf("Delete after the config dropped to 1 = %v", err)
+	}
+}
+
 func TestAddBoxKeepsTheQuotaAndUniqueNames(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u := mustCreate(t, svc, NewUser{Name: "qa1"})

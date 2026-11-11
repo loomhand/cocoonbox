@@ -27,6 +27,7 @@ const (
 	defaultRegion           = "us-east-1"
 	maxDeleteBatch          = 1000
 	defaultMaxBoxes         = 1
+	maxBoxesCap             = 16
 	defaultMaxRunning       = 1
 	defaultEnsureLimit      = 4
 
@@ -373,8 +374,8 @@ func (c *Config) validate() error {
 	if c.Image == "" {
 		errs = append(errs, errors.New("image is required: it names the default sandboxd template"))
 	}
-	if c.MaxBoxes < 1 {
-		errs = append(errs, fmt.Errorf("max_boxes must be at least 1, got %d", c.MaxBoxes))
+	if c.MaxBoxes < 1 || c.MaxBoxes > maxBoxesCap {
+		errs = append(errs, fmt.Errorf("max_boxes must be in 1..%d, got %d", maxBoxesCap, c.MaxBoxes))
 	}
 	if c.MaxRunningBoxes < 1 {
 		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
