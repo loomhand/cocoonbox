@@ -248,7 +248,7 @@ func redirectHost(uri string) (string, bool) {
 	case u.Scheme == schemeHTTPS:
 		return u.Host, false
 	}
-	return u.Scheme + ":", false
+	return uri, false
 }
 
 func isLoopback(host string) bool {

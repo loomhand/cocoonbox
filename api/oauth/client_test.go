@@ -85,7 +85,8 @@ func TestRedirectHostNamesWhereConsentSendsTheBrowser(t *testing.T) {
 	}{
 		{"https://claude.ai/api/mcp/auth_callback", "claude.ai", false},
 		{"http://127.0.0.1:43123/callback", "127.0.0.1:43123", true},
-		{"cursor://anysphere.cursor-mcp/oauth/callback", "cursor:", false},
+		{"cursor://anysphere.cursor-mcp/oauth/callback", "cursor://anysphere.cursor-mcp/oauth/callback", false},
+		{"microsoft-edge:https://example.com/cb", "microsoft-edge:https://example.com/cb", false},
 	}
 	for _, tt := range tests {
 		if host, loopback := redirectHost(tt.uri); host != tt.host || loopback != tt.loopback {
