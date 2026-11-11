@@ -672,7 +672,7 @@ func TestAccountChangesAfterConsentReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 }
 
-func TestTheAllAccountsMigrationMovesTickedGrantsAndRunsAgain(t *testing.T) {
+func TestTheAllAccountsMigrationMovesTickedGrantsFencesOldCodesAndRunsAgain(t *testing.T) {
 	e := newEnv(t)
 	caps := oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}
 	e.authorize(t, e.register(t, "Ticked"), caps)
@@ -686,13 +686,8 @@ func TestTheAllAccountsMigrationMovesTickedGrantsAndRunsAgain(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(t.Context()) }()
-	var kept bool
-	q := "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'oauth_codes' AND column_name = 'connectors')"
-	if err := conn.QueryRow(t.Context(), q).Scan(&kept); err != nil || !kept {
-		t.Errorf("oauth_codes.connectors after migration 5 = %t, %v; the api before it still writes that column", kept, err)
-	}
 	rollback := `ALTER TABLE oauth_grants DROP COLUMN all_accounts; ALTER TABLE oauth_codes DROP COLUMN all_accounts;
-		DELETE FROM oauth_schema_migrations WHERE version = 5`
+		ALTER TABLE oauth_codes ADD COLUMN connectors text[]; DELETE FROM oauth_schema_migrations WHERE version = 5`
 	if _, err := conn.Exec(t.Context(), rollback); err != nil {
 		t.Fatalf("roll back before migration 5: %v", err)
 	}
@@ -705,6 +700,11 @@ func TestTheAllAccountsMigrationMovesTickedGrantsAndRunsAgain(t *testing.T) {
 			t.Fatalf("migration 5 %s: %v", run, err)
 		}
 		pool.Close()
+		var kept bool
+		q := "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'oauth_codes' AND column_name = 'connectors')"
+		if err := conn.QueryRow(t.Context(), q).Scan(&kept); err != nil || kept {
+			t.Errorf("oauth_codes.connectors after migration 5 %s = %t, %v; want it gone, so an api before it can no longer issue or redeem a code", run, kept, err)
+		}
 		for name, want := range map[string]bool{"Ticked": true, "Plain": false} {
 			var all bool
 			var ticks int
