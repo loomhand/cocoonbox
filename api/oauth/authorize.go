@@ -69,8 +69,8 @@ type AuthorizeError struct {
 
 func (e *AuthorizeError) Error() string { return e.Description }
 
-// Check validates req of user and returns what the consent page shows.
-func (s *Service) Check(ctx context.Context, user string, req Request) (Consent, error) {
+// Check validates req of user and returns what the consent page shows; accounts tells whether the api serves connected accounts.
+func (s *Service) Check(ctx context.Context, user string, req Request, accounts bool) (Consent, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return Consent{}, err
@@ -91,13 +91,13 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	connect, _ := agentScope(req.Scope)
 	return Consent{
 		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
-		Connect: connect && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
+		Connect: connect && accounts && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
 		Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil
 }
 
-// Approve records user's consent to req within caps and the user's own boxes of chosen, with every connected account of the user when req asks for ConnectScope (none for a first-party client), and returns where the browser takes the code.
-func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string) (string, error) {
+// Approve records user's consent to req within caps and the user's own boxes of chosen, with every connected account of the user when req asks for ConnectScope and accounts is set (none for a first-party client), and returns where the browser takes the code.
+func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string, accounts bool) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return "", err
@@ -111,7 +111,7 @@ func (s *Service) Approve(ctx context.Context, user string, req Request, caps Ca
 	value := utils.RandomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
-		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, allAccounts: connect && !c.firstParty, label: req.DeviceName,
+		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, allAccounts: connect && accounts && !c.firstParty, label: req.DeviceName,
 		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: utils.HashHex(value),
 	}); err != nil {
 		return "", err
