@@ -1,6 +1,7 @@
 package users
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json/jsontext"
@@ -41,11 +42,12 @@ var (
 )
 
 type store struct {
-	pool  *pgxpool.Pool
-	locks *pgxpool.Pool
+	pool            *pgxpool.Pool
+	locks           *pgxpool.Pool
+	defaultMaxBoxes int
 }
 
-func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error) {
+func openStore(ctx context.Context, dsn string, lockConns int32, defaultMaxBoxes int) (*store, error) {
 	pool, err := migrate.Open(ctx, dsn, Migrations)
 	if err != nil {
 		return nil, err
@@ -57,7 +59,13 @@ func openStore(ctx context.Context, dsn string, lockConns int32) (*store, error)
 		pool.Close()
 		return nil, fmt.Errorf("open the user lock pool: %w", err)
 	}
-	return &store{pool: pool, locks: locks}, nil
+	return &store{pool: pool, locks: locks, defaultMaxBoxes: defaultMaxBoxes}, nil
+}
+
+// boxLimits resolves a row's max_boxes and max_boxes_cap: 0 takes s.defaultMaxBoxes, and the cap bounds the boxes.
+func (s *store) boxLimits(maxBoxes, maxBoxesCap int) (boxes, limit int) {
+	limit = cmp.Or(maxBoxesCap, s.defaultMaxBoxes)
+	return min(cmp.Or(maxBoxes, s.defaultMaxBoxes), limit), limit
 }
 
 func (s *store) close() {
@@ -160,17 +168,18 @@ func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Box])
 }
 
-// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes or max_agent_boxes; the owner's row lock orders concurrent adds.
+// insertBox adds b while the owner has fewer boxes of b's kind than its boxLimits or max_agent_boxes; the owner's row lock orders concurrent adds.
 func (s *store) insertBox(ctx context.Context, b Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var maxBoxes, boxes int
+		var maxBoxes, maxBoxesCap, boxes int
 		var maxAgentBoxes *int
-		err := tx.QueryRow(ctx, "SELECT max_boxes, max_agent_boxes FROM users WHERE id = $1 FOR UPDATE", b.Owner).Scan(&maxBoxes, &maxAgentBoxes)
+		err := tx.QueryRow(ctx, "SELECT max_boxes, max_boxes_cap, max_agent_boxes FROM users WHERE id = $1 FOR UPDATE", b.Owner).Scan(&maxBoxes, &maxBoxesCap, &maxAgentBoxes)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
+		maxBoxes, _ = s.boxLimits(maxBoxes, maxBoxesCap)
 		if err = tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1 AND agent = $2", b.Owner, b.Agent).Scan(&boxes); err != nil {
 			return err
 		}

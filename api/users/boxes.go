@@ -161,7 +161,12 @@ func (s *Service) claimCap(r record) int {
 	if r.MaxAgentBoxes != nil {
 		agent = min(agent, *r.MaxAgentBoxes)
 	}
-	return r.MaxBoxes + agent + 1
+	boxes, _ := s.boxLimits(r)
+	return boxes + agent + 1
+}
+
+func (s *Service) boxLimits(r record) (boxes, limit int) {
+	return s.store.boxLimits(r.MaxBoxes, r.MaxBoxesCap)
 }
 
 func (s *Service) agentBoxes(owner string) int {

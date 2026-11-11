@@ -13,6 +13,7 @@ flavor:                        # the flavor a new box takes and keeps; a sandbox
   vcpus: 4
   memory_mib: 8192
   disk_gib: 40
+max_boxes: 1                 # boxes a user may have; a user's own number overrides it
 max_running_boxes: 1         # boxes of one user that run at once; a user's own limit overrides it
 state:
   endpoint: s3.example.com:443

@@ -9,6 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/users/userstest"
 	"github.com/loomhand/cocoonbox/api/utils"
@@ -28,6 +31,128 @@ func TestEveryUserStartsWithOneBox(t *testing.T) {
 	}
 	if got := openTestService(t, dsn, gw, tenants).Boxes(u.ID); len(got) != 1 || got[0].ID != firstBoxID(u.ID) {
 		t.Errorf("Boxes after reopen = %+v", got)
+	}
+}
+
+func TestTheConfiguredMaxBoxesHoldsForEveryUserWithoutItsOwn(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	big := mustCreate(t, svc, NewUser{Name: "qa2"})
+	small := mustCreate(t, svc, NewUser{Name: "qa3"})
+	capped := mustCreate(t, svc, NewUser{Name: "qa4"})
+	if _, err := svc.Update(t.Context(), big.ID, Settings{MaxBoxesCap: new(5), MaxBoxes: new(5)}); err != nil {
+		t.Fatalf("raise qa2's max boxes: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), small.ID, Settings{MaxBoxes: new(1)}); err != nil {
+		t.Fatalf("pin qa3 to one box: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), capped.ID, Settings{MaxBoxesCap: new(2)}); err != nil {
+		t.Fatalf("cap qa4 at two boxes: %v", err)
+	}
+	opts := Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost, MaxBoxes: 3}
+	raised, err := Open(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("Open with max boxes 3: %v", err)
+	}
+	t.Cleanup(raised.Close)
+	if got, _ := raised.Get(u.ID); got.MaxBoxes != 3 || got.MaxBoxesCap != 3 {
+		t.Errorf("qa1 = %d of at most %d, want the configured 3 of 3", got.MaxBoxes, got.MaxBoxesCap)
+	}
+	if got, _ := raised.Get(capped.ID); got.MaxBoxes != 2 || got.MaxBoxesCap != 2 {
+		t.Errorf("qa4 = %d of at most %d, want its own cap of 2 to bound the configured 3", got.MaxBoxes, got.MaxBoxesCap)
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-capped", Owner: capped.ID, Name: "b"}); err != nil {
+		t.Fatalf("AddBox within qa4's cap: %v", err)
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-capped2", Owner: capped.ID, Name: "c"}); !errors.Is(err, ErrQuota) {
+		t.Errorf("AddBox past qa4's cap of 2 = %v, want ErrQuota", err)
+	}
+	for _, name := range []string{"b", "c"} {
+		if _, err := raised.AddBox(t.Context(), Box{ID: "cb-" + name, Owner: u.ID, Name: name}); err != nil {
+			t.Fatalf("AddBox %s within max boxes 3: %v", name, err)
+		}
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-d", Owner: u.ID, Name: "d"}); !errors.Is(err, ErrQuota) {
+		t.Errorf("AddBox past max boxes 3 = %v, want ErrQuota", err)
+	}
+	if _, err := raised.AddBox(t.Context(), Box{ID: "cb-small", Owner: small.ID, Name: "b"}); !errors.Is(err, ErrQuota) {
+		t.Errorf("AddBox past qa3's own 1 = %v, want ErrQuota", err)
+	}
+	if _, err := raised.reconcileTenants(t.Context()); err != nil {
+		t.Fatalf("reconcileTenants: %v", err)
+	}
+	for id, want := range map[string]int{u.ID: 4, big.ID: 6, small.ID: 2, capped.ID: 3} {
+		if got := tenants.Max[id]; got != want {
+			t.Errorf("tenant cap of %s = %d, want %d", id, got, want)
+		}
+	}
+	opts.MaxBoxes = maxBoxesCap + 1
+	if _, err := Open(t.Context(), opts); err == nil {
+		t.Error("Open with max boxes past the cap succeeded")
+	}
+}
+
+func TestTheMigrationHandsUsersAtTheCreationValuesToTheConfig(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	rows := map[string][2]int{"qa1": {1, 1}, "qa2": {4, 4}, "qa3": {1, 3}}
+	ids := map[string]string{}
+	for name := range rows {
+		ids[name] = mustCreate(t, svc, NewUser{Name: name}).ID
+	}
+	svc.Close()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	for name, row := range rows {
+		if _, err := conn.Exec(t.Context(), "UPDATE users SET max_boxes = $2, max_boxes_cap = $3 WHERE id = $1", ids[name], row[0], row[1]); err != nil {
+			t.Fatalf("set %s's row: %v", name, err)
+		}
+	}
+	if _, err := conn.Exec(t.Context(), "DELETE FROM schema_migrations WHERE version = 16"); err != nil {
+		t.Fatalf("undo migration 16: %v", err)
+	}
+	openTestService(t, dsn, gw, tenants)
+	want := map[string][2]int{"qa1": {0, 0}, "qa2": {4, 4}, "qa3": {1, 3}}
+	for name, w := range want {
+		var got [2]int
+		if err := conn.QueryRow(t.Context(), "SELECT max_boxes, max_boxes_cap FROM users WHERE id = $1", ids[name]).Scan(&got[0], &got[1]); err != nil || got != w {
+			t.Errorf("%s after migration = %v, %v; want %v", name, got, err, w)
+		}
+	}
+}
+
+func TestLoweringTheConfiguredMaxBoxesLeavesAnInheritingUserEditable(t *testing.T) {
+	_, gw, tenants, dsn := newTestService(t)
+	raised, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost, MaxBoxes: 3})
+	if err != nil {
+		t.Fatalf("Open with max boxes 3: %v", err)
+	}
+	t.Cleanup(raised.Close)
+	u := mustCreate(t, raised, NewUser{Name: "qa1"})
+	if _, err := raised.Update(t.Context(), u.ID, Settings{MaxBoxes: new(3), MaxRunning: new(3)}); err != nil {
+		t.Fatalf("pin qa1 at 3 boxes, 3 running: %v", err)
+	}
+	lowered := openTestService(t, dsn, gw, tenants)
+	for name, set := range map[string]Settings{
+		"disable":     {Disabled: new(true)},
+		"residential": {Residential: new(true)},
+		"image":       {Image: new("desk")},
+	} {
+		if _, err := lowered.Update(t.Context(), u.ID, set); err != nil {
+			t.Errorf("%s after the config dropped to 1 = %v, want it through", name, err)
+		}
+	}
+	if got, err := lowered.Update(t.Context(), u.ID, Settings{MaxBoxes: new(0)}); err != nil || got.MaxBoxes != 1 {
+		t.Errorf("reset max boxes = %d, %v; want the configured 1", got.MaxBoxes, err)
+	}
+	var row int
+	if err := lowered.store.pool.QueryRow(t.Context(), "SELECT max_boxes FROM users WHERE id = $1", u.ID).Scan(&row); err != nil || row != 0 {
+		t.Errorf("max_boxes row after reset = %d, %v; want 0 for the default", row, err)
+	}
+	if err := lowered.Delete(t.Context(), u.ID); err != nil {
+		t.Errorf("Delete after the config dropped to 1 = %v", err)
 	}
 }
 

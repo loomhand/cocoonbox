@@ -75,7 +75,7 @@ type Policy struct {
 	NoGC   bool   `json:"no_gc,omitzero"`
 }
 
-// User is a cocoonbox user as the console shows it; it never carries a credential. MaxRunning 0 is the api's default.
+// User is a cocoonbox user as the console shows it; it never carries a credential. MaxBoxes and MaxBoxesCap are the limits in force, and MaxRunning 0 is the api's default.
 type User struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -112,7 +112,7 @@ type NewUser struct {
 	DailyCapMicros *int64
 }
 
-// Settings changes a user's settings: nil keeps a value, MaxRunning 0 is the api default, MaxAgentBoxes 0 no cap, and Admin lifts the gw cap while set.
+// Settings changes a user's settings: nil keeps a value, MaxBoxes, MaxBoxesCap and MaxRunning 0 are the api defaults, MaxAgentBoxes 0 no cap, and Admin lifts the gw cap while set.
 type Settings struct {
 	Admin         *bool `json:"admin,omitempty"`
 	Disabled      *bool `json:"disabled,omitempty"`
@@ -156,6 +156,8 @@ type Options struct {
 	EnsureLimit int32
 	// PasswordCost is the bcrypt cost of new passwords and of the unknown-name check; 0 is bcrypt.DefaultCost.
 	PasswordCost int
+	// MaxBoxes is how many boxes a user may have while the user's row sets none; 0 is 1.
+	MaxBoxes int
 }
 
 // record is a user row with the values the console never sees.
@@ -234,7 +236,11 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := openStore(ctx, opts.DSN, opts.EnsureLimit)
+	maxBoxes := cmp.Or(opts.MaxBoxes, defaultBoxes)
+	if maxBoxes > maxBoxesCap {
+		return nil, fmt.Errorf("max boxes %d is past the %d a user may have", maxBoxes, maxBoxesCap)
+	}
+	st, err := openStore(ctx, opts.DSN, opts.EnsureLimit, maxBoxes)
 	if err != nil {
 		return nil, err
 	}
@@ -337,14 +343,17 @@ func (s *Service) ByTokenSHA256(ctx context.Context, sum string) (string, bool) 
 // Get returns user id.
 func (s *Service) Get(id string) (User, error) {
 	r, err := s.record(id)
-	return r.User, err
+	if err != nil {
+		return User{}, err
+	}
+	return s.user(r), nil
 }
 
 // ByName returns the user signed in as name.
 func (s *Service) ByName(name string) (User, error) {
 	for _, r := range s.records() {
 		if r.Name == name {
-			return r.User, nil
+			return s.user(r), nil
 		}
 	}
 	return User{}, ErrNotFound
@@ -355,7 +364,7 @@ func (s *Service) List() []User {
 	records := s.records()
 	out := make([]User, 0, len(records))
 	for _, r := range records {
-		out = append(out, r.User)
+		out = append(out, s.user(r))
 	}
 	return out
 }
@@ -417,7 +426,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	old := r
 	if set.MaxBoxesCap != nil {
 		r.MaxBoxesCap = *set.MaxBoxesCap
-		r.MaxBoxes = min(r.MaxBoxes, r.MaxBoxesCap)
+		_, limit := s.boxLimits(r)
+		r.MaxBoxes = min(r.MaxBoxes, limit)
 	}
 	if set.MaxBoxes != nil {
 		r.MaxBoxes = *set.MaxBoxes
@@ -436,18 +446,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	r.Policy.Delta = deref(set.Delta, r.Policy.Delta)
 	r.Policy.NoPark = deref(set.NoPark, r.Policy.NoPark)
 	r.Policy.NoGC = deref(set.NoGC, r.Policy.NoGC)
-	own := len(s.Boxes(id)) - s.agentBoxes(id)
-	switch {
-	case r.MaxBoxesCap < 1 || r.MaxBoxesCap > maxBoxesCap:
-		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
-	case r.MaxBoxes < 1 || r.MaxBoxes > r.MaxBoxesCap:
-		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d", ErrInvalid, r.MaxBoxesCap)
-	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < own:
-		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)
-	case r.MaxRunning < 0 || r.MaxRunning > r.MaxBoxes:
-		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, r.MaxBoxes)
-	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
-		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
+	if err := s.checkLimits(id, old, r, set); err != nil {
+		return User{}, err
 	}
 	if err := s.moveAdmin(ctx, old, r); err != nil {
 		return User{}, err
@@ -796,8 +796,6 @@ func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
 		Name:          nu.Name,
 		IDP:           cmp.Or(nu.IDP, passwordIDP),
 		Admin:         nu.Admin,
-		MaxBoxes:      defaultBoxes,
-		MaxBoxesCap:   defaultBoxes,
 		MaxAgentBoxes: nu.MaxAgentBoxes,
 		CreatedAt:     time.Now(),
 		tenantToken:   s.seal.seal(tenantToken, userData(id, columnTenant)),
@@ -1169,6 +1167,13 @@ func (s *Service) record(id string) (record, error) {
 	return r, nil
 }
 
+// user is r as the console shows it, with the limits in force.
+func (s *Service) user(r record) User {
+	u := r.User
+	u.MaxBoxes, u.MaxBoxesCap = s.boxLimits(r)
+	return u
+}
+
 func (s *Service) indexedToken(sum string) (tokenOwner, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1179,6 +1184,26 @@ func (s *Service) indexedToken(sum string) (tokenOwner, bool) {
 func (s *Service) allowMiss() bool {
 	now, next := time.Now().UnixNano(), s.nextMiss.Load()
 	return now >= next && s.nextMiss.CompareAndSwap(next, now+int64(tokenMissInterval))
+}
+
+func (s *Service) checkLimits(id string, old, r record, set Settings) error {
+	own := len(s.Boxes(id)) - s.agentBoxes(id)
+	boxes, limit := s.boxLimits(r)
+	oldBoxes, _ := s.boxLimits(old)
+	limits := set.MaxBoxes != nil || set.MaxBoxesCap != nil
+	switch {
+	case limits && (r.MaxBoxesCap < 0 || limit > maxBoxesCap):
+		return fmt.Errorf("%w: max boxes cap must be in 1..%d, or 0 for the default", ErrInvalid, maxBoxesCap)
+	case limits && (r.MaxBoxes < 0 || r.MaxBoxes > limit):
+		return fmt.Errorf("%w: max boxes must be in 1..%d, or 0 for the default", ErrInvalid, limit)
+	case boxes < oldBoxes && boxes < own:
+		return fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)
+	case (set.MaxRunning != nil || boxes < oldBoxes) && (r.MaxRunning < 0 || r.MaxRunning > boxes):
+		return fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, boxes)
+	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
+		return fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
+	}
+	return nil
 }
 
 // moveAdmin refuses demoting the last enabled admin and gives a promoted user no gw cap, a demoted one the tenant's default.
