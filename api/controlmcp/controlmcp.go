@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
-	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
@@ -62,9 +61,9 @@ type ToolLists interface {
 
 // Connectors serves the tools of the connected accounts a grant reaches, as Connect's mode B door does, and tells when the user's tools change.
 type Connectors interface {
-	Reaches(ctx context.Context, user string, reach connect.Reach, name string) (bool, error)
-	GrantedTools(ctx context.Context, user string, reach connect.Reach) ([]map[string]jsontext.Value, error)
-	CallGranted(ctx context.Context, user, client string, reach connect.Reach, name string, args jsontext.Value) (any, error)
+	Reaches(ctx context.Context, user string, accounts bool, name string) (bool, error)
+	GrantedTools(ctx context.Context, user string, accounts bool) ([]map[string]jsontext.Value, error)
+	CallGranted(ctx context.Context, user, client string, accounts bool, name string, args jsontext.Value) (any, error)
 	ServeChanges(w http.ResponseWriter, r *http.Request, user string)
 }
 
@@ -159,7 +158,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		caller += " grant=" + grant.ID
 	}
 	unified, allow := s.agents != nil && r.URL.Path == RootPath, http.MethodPost
-	streams := unified && !s.accountReach(ctx).None()
+	streams := unified && s.reachesAccounts(ctx)
 	if unified {
 		allow += ", " + http.MethodDelete
 	}

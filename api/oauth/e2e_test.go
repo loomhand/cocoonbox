@@ -623,6 +623,35 @@ func TestAConnectGrantGetsTheToolsOfEveryActiveAccount(t *testing.T) {
 	}
 }
 
+func TestAReApprovalWithoutTheConnectScopeDropsTheAccounts(t *testing.T) {
+	e := newEnv(t)
+	e.enableConnect(t)
+	clientID := e.register(t, "Agent")
+	first, _, _ := e.connectGrant(t, clientID, "boxes connect", nil)
+	if _, ok := e.rootTools(t, first)["mock_list_items"]; !ok {
+		t.Fatal("the connect grant does not list the account's tools")
+	}
+	second, _, scope := e.connectGrant(t, clientID, "boxes", nil)
+	if scope != "boxes" {
+		t.Errorf("re-approval scope = %q", scope)
+	}
+	for name, token := range map[string]string{"the first token": first, "the new token": second} {
+		if _, ok := e.rootTools(t, token)["mock_list_items"]; ok {
+			t.Errorf("%s still lists the account's tools after a re-approval without connect", name)
+		}
+	}
+	if grants := e.grants(t); len(grants) != 1 {
+		t.Errorf("grants = %+v, want the one renewed", grants)
+	}
+}
+
+func TestAServerWithoutConnectAsksForNoAccounts(t *testing.T) {
+	e := newEnv(t)
+	if consent := e.connectConsent(t, authorizeQuery(e.register(t, "Agent"), strings.Repeat("v", 43), "boxes connect")); consent.Connect || len(consent.Connectors) != 0 {
+		t.Errorf("consent without Connect = %+v, want no accounts asked for", consent)
+	}
+}
+
 func TestAccountChangesAfterConsentReachTheGrantsStreamAndTools(t *testing.T) {
 	e := newEnv(t)
 	e.enableConnect(t)
@@ -672,7 +701,7 @@ func TestAccountChangesAfterConsentReachTheGrantsStreamAndTools(t *testing.T) {
 	}
 }
 
-func TestTheAllAccountsMigrationMovesTickedGrantsFencesOldCodesAndRunsAgain(t *testing.T) {
+func TestTheAllAccountsMigrationDropsTickedAccountsFencesOldCodesAndRunsAgain(t *testing.T) {
 	e := newEnv(t)
 	caps := oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}
 	e.authorize(t, e.register(t, "Ticked"), caps)
@@ -705,13 +734,13 @@ func TestTheAllAccountsMigrationMovesTickedGrantsFencesOldCodesAndRunsAgain(t *t
 		if err := conn.QueryRow(t.Context(), q).Scan(&kept); err != nil || kept {
 			t.Errorf("oauth_codes.connectors after migration 5 %s = %t, %v; want it gone, so an api before it can no longer issue or redeem a code", run, kept, err)
 		}
-		for name, want := range map[string]bool{"Ticked": true, "Plain": false} {
+		for name, id := range ids {
 			var all bool
 			var ticks int
 			err := conn.QueryRow(t.Context(), `SELECT g.all_accounts, (SELECT count(*) FROM oauth_connectors n WHERE n.grant_id = g.id)
-				FROM oauth_grants g WHERE g.id = $1`, ids[name]).Scan(&all, &ticks)
-			if err != nil || all != want || ticks != 0 {
-				t.Errorf("grant %s after migration 5 %s = all accounts %t, %d ticks, %v; want %t and none", name, run, all, ticks, err, want)
+				FROM oauth_grants g WHERE g.id = $1`, id).Scan(&all, &ticks)
+			if err != nil || all || ticks != 0 {
+				t.Errorf("grant %s after migration 5 %s = all accounts %t, %d ticks, %v; want neither, so the user approves accounts again", name, run, all, ticks, err)
 			}
 		}
 		if _, err := conn.Exec(t.Context(), "DELETE FROM oauth_schema_migrations WHERE version = 5"); err != nil {

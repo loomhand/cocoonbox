@@ -12,7 +12,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,21 +47,6 @@ type Account struct {
 	ID    string
 	Name  string
 	Label string
-}
-
-// Reach is the connected accounts an agent's grant may use: All of its user's, now and later, or only the Connect grants in Grants.
-type Reach struct {
-	All    bool
-	Grants []string
-}
-
-// None reports whether r reaches no account.
-func (r Reach) None() bool {
-	return !r.All && len(r.Grants) == 0
-}
-
-func (r Reach) covers(grant string) bool {
-	return r.All || slices.Contains(r.Grants, grant)
 }
 
 // authFunc maps an Authorization header value to who it admits.
@@ -148,7 +132,7 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(mcpwire.SessionHeader))), reach: Reach{All: true}}
+	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(mcpwire.SessionHeader))), accounts: true}
 	var (
 		call struct {
 			Name      string         `json:"name"`
@@ -313,33 +297,27 @@ func (s *Service) Accounts(ctx context.Context, user string) ([]Account, error) 
 	return out, nil
 }
 
-// GrantedTools lists the tools of user's connectors within reach, as the mode B door serves them.
-func (s *Service) GrantedTools(ctx context.Context, user string, reach Reach) ([]map[string]jsontext.Value, error) {
-	if reach.None() {
-		return nil, nil
-	}
-	return s.doorTools(ctx, caller{user: user, door: DoorMCP, reach: reach})
+// GrantedTools lists the tools of user's connectors when accounts is set, as the mode B door serves them.
+func (s *Service) GrantedTools(ctx context.Context, user string, accounts bool) ([]map[string]jsontext.Value, error) {
+	return s.doorTools(ctx, caller{user: user, door: DoorMCP, accounts: accounts})
 }
 
-// CallGranted calls the tool name for the agent client of user when its connector is within reach, as the mode B door does.
-func (s *Service) CallGranted(ctx context.Context, user, client string, reach Reach, name string, args jsontext.Value) (any, error) {
-	if reach.None() {
-		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
-	}
-	return s.doorCall(ctx, caller{user: user, door: DoorMCP, name: DoorMCP + ":" + shorten(client, maxClientName), reach: reach}, name, args, "")
+// CallGranted calls the tool name for the agent client of user when accounts is set, as the mode B door does.
+func (s *Service) CallGranted(ctx context.Context, user, client string, accounts bool, name string, args jsontext.Value) (any, error) {
+	return s.doorCall(ctx, caller{user: user, door: DoorMCP, name: DoorMCP + ":" + shorten(client, maxClientName), accounts: accounts}, name, args, "")
 }
 
-// Reaches reports whether name is a tool name of a connector of user within reach.
-func (s *Service) Reaches(ctx context.Context, user string, reach Reach, name string) (bool, error) {
+// Reaches reports whether name is a tool name of a connector of user when accounts is set.
+func (s *Service) Reaches(ctx context.Context, user string, accounts bool, name string) (bool, error) {
 	connector, _, ok := strings.Cut(name, "_")
-	if !ok || reach.None() || !connectorPattern.MatchString(connector) {
+	if !ok || !accounts || !connectorPattern.MatchString(connector) {
 		return false, nil
 	}
-	g, err := s.store.grant(ctx, user, connector)
+	_, err := s.store.grant(ctx, user, connector)
 	if errors.Is(err, errNoGrant) {
 		return false, nil
 	}
-	return err == nil && reach.covers(g.id), err
+	return err == nil, err
 }
 
 // ServeChanges holds the mode B door's stream for user on w, which carries tools/list_changed whenever user's tools change, until r's context ends.

@@ -22,7 +22,6 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
-	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -189,7 +188,7 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	logger := log.WithFunc("controlmcp.Server.initializeUnified")
 	result := initializeResult(sess.params, unifiedName)
 	result["instructions"] = unifiedHead
-	if !s.accountReach(ctx).None() {
+	if s.reachesAccounts(ctx) {
 		result["capabilities"] = map[string]any{toolsField: map[string]any{"listChanged": true}}
 	}
 	box, image, err := s.defaultBox(ctx)
@@ -212,7 +211,7 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 	return result
 }
 
-// listTools lists the control tools, then the default box's tools, sleeping or not, then the tools of the accounts a grant holds that no other tool's name shadows.
+// listTools lists the control tools, then the default box's tools, sleeping or not, then the tools of the accounts a grant reaches that no other tool's name shadows.
 func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 	boxTools, rpcErr := s.boxTools(ctx)
 	if rpcErr != nil {
@@ -225,9 +224,9 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 	for _, t := range boxTools {
 		tools = append(tools, withBoxArgument(t))
 	}
-	if reach := s.accountReach(ctx); !reach.None() {
+	if s.reachesAccounts(ctx) {
 		g := grantOf(ctx)
-		accountTools, err := s.connectors.GrantedTools(ctx, g.User, reach)
+		accountTools, err := s.connectors.GrantedTools(ctx, g.User, true)
 		if err != nil {
 			log.WithFunc("controlmcp.Server.listTools").Error(ctx, err, "list the connector tools of grant "+g.ID)
 		}
@@ -261,21 +260,18 @@ func (s *Server) boxTools(ctx context.Context) ([]jsontext.Value, *mcpwire.Error
 	return tools, nil
 }
 
-// accountReach returns the connected accounts the caller's grant may use; a user token and a server without Connect reach none.
-func (s *Server) accountReach(ctx context.Context) connect.Reach {
-	if g := grantOf(ctx); g != nil && s.connectors != nil {
-		return connect.Reach{All: g.AllAccounts, Grants: g.Connectors}
-	}
-	return connect.Reach{}
+// reachesAccounts reports whether the caller's grant may use the user's connected accounts; a user token and a server without Connect reach none.
+func (s *Server) reachesAccounts(ctx context.Context) bool {
+	g := grantOf(ctx)
+	return g != nil && s.connectors != nil && g.AllAccounts
 }
 
-// connectorTool reports whether name is a tool of an account the caller's grant holds that no control or default box tool shadows; a failed lookup returns an error, never a box route.
+// connectorTool reports whether name is a tool of an account the caller's grant reaches that no control or default box tool shadows; a failed lookup returns an error, never a box route.
 func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire.Error) {
-	reach := s.accountReach(ctx)
-	if reach.None() || isControlTool(name) {
+	if !s.reachesAccounts(ctx) || isControlTool(name) {
 		return false, nil
 	}
-	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, reach, name)
+	reaches, err := s.connectors.Reaches(ctx, grantOf(ctx).User, true, name)
 	if err != nil {
 		log.WithFunc("controlmcp.Server.connectorTool").Error(ctx, err, "read the connector of "+name)
 		return false, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "reading the connector failed"}
@@ -287,10 +283,10 @@ func (s *Server) connectorTool(ctx context.Context, name string) (bool, *mcpwire
 	return rpcErr == nil && !slices.Contains(toolNames(boxTools), name), rpcErr
 }
 
-// callConnector runs a tool of an account the caller's grant holds through Connect; it wakes no box.
+// callConnector runs a tool of an account the caller's grant reaches through Connect; it wakes no box.
 func (s *Server) callConnector(ctx context.Context, call *callParams) (any, *mcpwire.Error) {
 	g := grantOf(ctx)
-	out, err := s.connectors.CallGranted(ctx, g.User, g.ClientName, s.accountReach(ctx), call.Name, call.Arguments)
+	out, err := s.connectors.CallGranted(ctx, g.User, g.ClientName, s.reachesAccounts(ctx), call.Name, call.Arguments)
 	if rpcErr, ok := errors.AsType[*mcpwire.Error](err); ok {
 		return nil, rpcErr
 	}

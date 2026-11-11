@@ -21,8 +21,7 @@ const (
 
 	grantColumns = `g.id, g.user_id, g.client_id, g.client_name, g.client_host, g.max_boxes, g.max_running, g.created_at, g.expires_at,
 		g.used_at, g.seen, g.all_accounts, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id),
-		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id),
-		ARRAY(SELECT n.connect_grant FROM oauth_connectors n WHERE n.grant_id = g.id ORDER BY n.connect_grant)`
+		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id)`
 )
 
 var (
@@ -149,11 +148,11 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 	return stored, cmp.Or(err, refused)
 }
 
-// refresh spends the refresh token, issues tokens in its place and reports whether its grant holds accounts; the one spent last, sent again, revokes its grant and returns its id.
+// refresh spends the refresh token, issues tokens in its place and reports whether its grant reaches accounts; the one spent last, sent again, revokes its grant and returns its id.
 func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (string, bool, error) {
 	var (
-		replayed   string
-		connectors bool
+		replayed string
+		accounts bool
 	)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var (
@@ -161,9 +160,9 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 			spent           bool
 			expiresAt       time.Time
 		)
-		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, g.all_accounts OR EXISTS (SELECT 1 FROM oauth_connectors n WHERE n.grant_id = g.id)
+		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, g.all_accounts
 			FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.sha256 = $1 AND t.refresh FOR UPDATE OF g, t`, refreshSHA256).Scan(
-			&grantID, &client, &spent, &expiresAt, &connectors)
+			&grantID, &client, &spent, &expiresAt, &accounts)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return errInvalidGrant
@@ -194,7 +193,7 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 	case replayed != "":
 		return replayed, false, errInvalidGrant
 	}
-	return "", connectors, nil
+	return "", accounts, nil
 }
 
 func (s *store) liveGrant(ctx context.Context, user, client string) (string, error) {
@@ -380,6 +379,6 @@ func insertTokens(ctx context.Context, tx pgx.Tx, grantID string, tokens issued,
 func scanGrant(row pgx.CollectableRow) (Grant, error) {
 	var g Grant
 	err := row.Scan(&g.ID, &g.User, &g.ClientID, &g.ClientName, &g.ClientHost, &g.MaxBoxes, &g.MaxRunning, &g.CreatedAt, &g.ExpiresAt,
-		&g.UsedAt, &g.Seen, &g.AllAccounts, &g.Boxes, &g.Chosen, &g.Connectors)
+		&g.UsedAt, &g.Seen, &g.AllAccounts, &g.Boxes, &g.Chosen)
 	return g, err
 }
