@@ -327,6 +327,25 @@ func TestADeleteRetriedAfterTheRowWentStillDeletesTheState(t *testing.T) {
 	if env.boxes.stateGone != gone {
 		t.Errorf("state deleted for %q, want %q, whose row a failed sweep outlived", env.boxes.stateGone, gone)
 	}
+	other, err := users.Open(t.Context(), users.Options{DSN: env.dsn, MasterKeyFile: userstest.MasterKeyFile(t), GW: env.gw, Tenants: env.tenants, FirstBoxID: boxes.BoxID, EnsureLimit: 4, PasswordCost: bcrypt.MinCost})
+	if err != nil {
+		t.Fatalf("open another replica's users: %v", err)
+	}
+	t.Cleanup(other.Close)
+	fresh, err := other.Create(t.Context(), users.NewUser{Name: "qa9", Password: password})
+	if err != nil {
+		t.Fatalf("create qa9 on another replica: %v", err)
+	}
+	if _, err := env.users.Get(fresh.ID); !errors.Is(err, users.ErrNotFound) {
+		t.Fatalf("this replica already holds qa9: %v", err)
+	}
+	env.boxes.released, env.boxes.stateGone = "", ""
+	if code := env.do(t, http.MethodDelete, "api/users/"+fresh.ID, root, "{}").Code; code != http.StatusNoContent {
+		t.Errorf("delete of a user only another replica has loaded = %d, want 204", code)
+	}
+	if env.boxes.released != fresh.ID || env.boxes.stateGone != fresh.ID {
+		t.Errorf("released %q and swept %q, want the live account %q released before its state goes", env.boxes.released, env.boxes.stateGone, fresh.ID)
+	}
 	env.boxes.stateGone = ""
 	if code := env.do(t, http.MethodDelete, "api/users/"+url.PathEscape("u-x/boxes"), root, "{}").Code; code != http.StatusNotFound {
 		t.Errorf("delete of a slash id = %d, want 404", code)
