@@ -282,7 +282,7 @@ func (s *Service) NewBoxDoor(authn Authenticator) *Door {
 	}}
 }
 
-// Accounts lists user's active connectors, the ones the consent page of an agent offers.
+// Accounts lists user's active connectors, the ones the consent page of an agent shows.
 func (s *Service) Accounts(ctx context.Context, user string) ([]Account, error) {
 	grants, err := s.store.grants(ctx, user)
 	if err != nil {

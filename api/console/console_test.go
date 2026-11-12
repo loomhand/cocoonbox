@@ -355,6 +355,15 @@ func TestADeleteRetriedAfterTheRowWentStillDeletesTheState(t *testing.T) {
 	}
 }
 
+func TestARetriedDeleteWhoseSweepFailsIsNotAlreadyGone(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	env.boxes.sweepErr = errors.New("store unavailable")
+	if code := env.do(t, http.MethodDelete, "api/users/u-000000000001", root, "{}").Code; code == http.StatusNotFound || code < http.StatusInternalServerError {
+		t.Errorf("delete of a user without a row whose sweep failed = %d, want a 5xx the admin retries", code)
+	}
+}
+
 func TestADeleteWhoseClientLeavesStillRemovesEverything(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
@@ -464,6 +473,7 @@ type fakeBoxes struct {
 	released      string
 	stateGone     string
 	stateErr      error
+	sweepErr      error
 	onRelease     func()
 	onDeleteState func()
 	calls         []string
@@ -507,7 +517,7 @@ func (f *fakeBoxes) DeleteState(ctx context.Context, user string) error {
 	if f.onDeleteState != nil {
 		f.onDeleteState()
 	}
-	return nil
+	return f.sweepErr
 }
 
 func capOf(gw *userstest.GW, owner string) string {
