@@ -23,6 +23,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Listen != "127.0.0.1:18200" || cfg.MCPListen != "127.0.0.1:18201" || cfg.AgentPort != 7443 {
 		t.Errorf("defaults = %+v", cfg)
 	}
+	if cfg.CPUProfile {
+		t.Error("the CPU profile is on by default")
+	}
 	if cfg.Flavor != (Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}) {
 		t.Errorf("flavor = %+v", cfg.Flavor)
 	}
@@ -40,6 +43,16 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.UserIdleHibernate != 0 {
 		t.Errorf("user idle hibernate = %s, want off", time.Duration(cfg.UserIdleHibernate))
+	}
+}
+
+func TestLoadCPUProfile(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"cpu_profile: true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.CPUProfile {
+		t.Error("cpu_profile: true left the CPU profile off")
 	}
 }
 

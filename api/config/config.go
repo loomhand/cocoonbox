@@ -236,9 +236,11 @@ func (w Wake) validate() error {
 
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
-	Sandboxd     Sandboxd `json:"sandboxd"`
-	Listen       string   `json:"listen"`
-	MCPListen    string   `json:"mcp_listen"`
+	Sandboxd  Sandboxd `json:"sandboxd"`
+	Listen    string   `json:"listen"`
+	MCPListen string   `json:"mcp_listen"`
+	// CPUProfile serves a fixed CPU capture on a loopback listener of its own.
+	CPUProfile   bool     `json:"cpu_profile"`
 	Image        string   `json:"image"`
 	RebaseImages []string `json:"rebase_images"`
 	AgentPort    int      `json:"agent_port"`

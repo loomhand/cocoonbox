@@ -89,6 +89,9 @@ func main() {
 	var draining atomic.Bool
 	ctx, cancel := drainAfter(signals, time.Duration(cfg.Cluster.Drain), &draining)
 	defer cancel()
+	if err = serveCPUProfile(signals, cfg.CPUProfile); err != nil {
+		logger.Fatalf(ctx, err, "serve the CPU profile on %s", cpuProfileAddr)
+	}
 
 	pool := dialer.NewPool()
 	defer pool.Close()
