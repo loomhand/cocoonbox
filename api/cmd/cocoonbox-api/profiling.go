@@ -13,21 +13,15 @@ import (
 )
 
 const (
-	cpuProfileAddr         = "127.0.0.1:18203"
 	cpuProfileDuration     = 10 * time.Second
 	cpuProfileWriteTimeout = 15 * time.Second
 )
 
-// serveCPUProfile serves one fixed CPU capture at a time on loopback when enabled, until signals ends; it never waits for the drain.
-func serveCPUProfile(signals context.Context, enabled bool) error {
-	if !enabled {
-		return nil
+// serveCPUProfile serves one fixed CPU capture at a time on addr, none when it is empty, until signals ends; it never waits for the drain.
+func serveCPUProfile(signals context.Context, addr string) (net.Addr, error) {
+	if addr == "" {
+		return nil, nil
 	}
-	_, err := listenCPUProfile(signals, cpuProfileAddr)
-	return err
-}
-
-func listenCPUProfile(signals context.Context, addr string) (net.Addr, error) {
 	var lc net.ListenConfig
 	listener, err := lc.Listen(signals, "tcp", addr)
 	if err != nil {
@@ -72,7 +66,7 @@ func listenCPUProfile(signals context.Context, addr string) (net.Addr, error) {
 	context.AfterFunc(signals, func() { _ = server.Close() })
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.WithFunc("main.listenCPUProfile").Error(signals, err, "serve the CPU profile")
+			log.WithFunc("main.serveCPUProfile").Error(signals, err, "serve the CPU profile")
 		}
 	}()
 	return listener.Addr(), nil

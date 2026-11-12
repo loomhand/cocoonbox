@@ -239,11 +239,11 @@ type Config struct {
 	Sandboxd  Sandboxd `json:"sandboxd"`
 	Listen    string   `json:"listen"`
 	MCPListen string   `json:"mcp_listen"`
-	// CPUProfile serves a fixed CPU capture on a loopback listener of its own.
-	CPUProfile   bool     `json:"cpu_profile"`
-	Image        string   `json:"image"`
-	RebaseImages []string `json:"rebase_images"`
-	AgentPort    int      `json:"agent_port"`
+	// CPUProfileListen serves a fixed CPU capture on this loopback ip:port; empty serves none.
+	CPUProfileListen string   `json:"cpu_profile_listen"`
+	Image            string   `json:"image"`
+	RebaseImages     []string `json:"rebase_images"`
+	AgentPort        int      `json:"agent_port"`
 	// Provision configures every box's identity file and gw key.
 	Provision Provision `json:"provision"`
 	Accounts  Accounts  `json:"accounts"`
@@ -388,10 +388,7 @@ func (c *Config) validate() error {
 	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != schemeHTTPS || u.Host == "" || strings.Trim(u.Path, "/") != "") {
 		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
 	}
-	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
-		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
-	}
-	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate())
+	errs = append(errs, c.validateListen(), c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate())
 	if c.OperatorSocket != "" && !filepath.IsAbs(c.OperatorSocket) {
 		errs = append(errs, fmt.Errorf("operator_socket must be an absolute path, got %q", c.OperatorSocket))
 	}
@@ -399,6 +396,17 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
 	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites), c.Identity.validate(), c.validateIdle())
+	return errors.Join(errs...)
+}
+
+func (c *Config) validateListen() error {
+	var errs []error
+	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
+		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
+	}
+	if ip, err := netip.ParseAddrPort(c.CPUProfileListen); c.CPUProfileListen != "" && (err != nil || !ip.Addr().IsLoopback() || ip.Port() == 0) {
+		errs = append(errs, fmt.Errorf("cpu_profile_listen must be a loopback ip:port, got %q", c.CPUProfileListen))
+	}
 	return errors.Join(errs...)
 }
 

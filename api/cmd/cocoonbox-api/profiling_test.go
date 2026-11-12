@@ -20,19 +20,19 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 	t.Cleanup(client.CloseIdleConnections)
 
 	t.Run("off opens nothing and an occupied port fails the start", func(t *testing.T) {
-		if err := serveCPUProfile(signals, false); err != nil {
-			t.Fatalf("off: %v", err)
+		if served, err := serveCPUProfile(signals, ""); served != nil || err != nil {
+			t.Fatalf("off = %v, %v", served, err)
 		}
 		occupied, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer occupied.Close()
-		if _, err := listenCPUProfile(signals, occupied.Addr().String()); err == nil {
+		if _, err := serveCPUProfile(signals, occupied.Addr().String()); err == nil {
 			t.Fatal("served despite the occupied port")
 		}
 	})
-	served, err := listenCPUProfile(signals, "127.0.0.1:0")
+	served, err := serveCPUProfile(signals, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

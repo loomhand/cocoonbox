@@ -23,8 +23,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Listen != "127.0.0.1:18200" || cfg.MCPListen != "127.0.0.1:18201" || cfg.AgentPort != 7443 {
 		t.Errorf("defaults = %+v", cfg)
 	}
-	if cfg.CPUProfile {
-		t.Error("the CPU profile is on by default")
+	if cfg.CPUProfileListen != "" {
+		t.Errorf("cpu_profile_listen = %q by default, want none", cfg.CPUProfileListen)
 	}
 	if cfg.Flavor != (Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}) {
 		t.Errorf("flavor = %+v", cfg.Flavor)
@@ -46,13 +46,12 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadCPUProfile(t *testing.T) {
-	cfg, err := Load(writeConfig(t, required+"cpu_profile: true\n"))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.CPUProfile {
-		t.Error("cpu_profile: true left the CPU profile off")
+func TestLoadCPUProfileListen(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:18203", "[::1]:18213"} {
+		cfg, err := Load(writeConfig(t, required+"cpu_profile_listen: \""+addr+"\"\n"))
+		if err != nil || cfg.CPUProfileListen != addr {
+			t.Errorf("cpu_profile_listen %q = %q, %v", addr, cfg.CPUProfileListen, err)
+		}
 	}
 }
 
@@ -100,6 +99,12 @@ func TestLoadRejects(t *testing.T) {
 		{name: "connect with a path", body: required + "connect:\n  public_url: https://cb.example/x\n", want: "connect.public_url must be an https origin"},
 		{name: "box door on every address", body: required + "connect:\n  public_url: https://cb.example\n  box_listen: 0.0.0.0:18091\n", want: "connect.box_listen must be an ip:port of one address"},
 		{name: "box door without connect", body: required + "connect:\n  box_listen: 10.203.0.1:18091\n", want: "connect.box_listen must be an ip:port of one address"},
+		{name: "cpu profile on every address", body: required + "cpu_profile_listen: \"0.0.0.0:18203\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
+		{name: "cpu profile off loopback", body: required + "cpu_profile_listen: \"10.0.0.5:18203\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
+		{name: "cpu profile without a host", body: required + "cpu_profile_listen: \":18203\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
+		{name: "cpu profile by host name", body: required + "cpu_profile_listen: \"localhost:18203\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
+		{name: "cpu profile without a port", body: required + "cpu_profile_listen: \"127.0.0.1\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
+		{name: "cpu profile on port 0", body: required + "cpu_profile_listen: \"127.0.0.1:0\"\n", want: "cpu_profile_listen must be a loopback ip:port"},
 		{name: "negative wake floor", body: required + "wake:\n  floor: -1h\n", want: "wake.max_schedules and wake.floor must not be negative"},
 		{name: "wake awake under a minute", body: required + "wake:\n  max_awake_for: 30s\n", want: "wake.max_awake_for must be at least 1m"},
 		{name: "oauth over http", body: required + "oauth:\n  public_url: http://cb.example\n", want: "oauth.public_url must be an https origin"},
