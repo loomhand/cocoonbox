@@ -2,6 +2,7 @@
 package console
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"encoding/json/v2"
@@ -534,7 +535,7 @@ func (s *Server) disable(ctx context.Context, id string) error {
 	case existsErr != nil:
 		return existsErr
 	case !exists:
-		return errors.Join(err, s.boxes.DeleteState(ctx, id))
+		return cmp.Or(s.boxes.DeleteState(ctx, id), err)
 	}
 	if err = s.users.SyncUser(ctx, id); err != nil {
 		return err
