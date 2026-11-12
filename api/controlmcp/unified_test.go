@@ -415,7 +415,7 @@ func TestRootTransport(t *testing.T) {
 	}
 }
 
-func TestRootServesOnlyTheTickedAccountsToolsOfAGrant(t *testing.T) {
+func TestRootServesTheToolsOfTheAccountsAGrantReaches(t *testing.T) {
 	srv, _, _, lists := newUnifiedServer(t)
 	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(boxTools)})
 	accounts := newFakeConnectors()
@@ -425,11 +425,11 @@ func TestRootServesOnlyTheTickedAccountsToolsOfAGrant(t *testing.T) {
 		tools, _ := decode(t, serveRoot(srv, http.MethodPost, token, "", listRequest)).Result["tools"].([]any)
 		return listedNames(tools)
 	}
-	srv.EnableGrants(fakeGrants{connectors: []string{"cg-mock"}})
+	srv.EnableGrants(fakeGrants{allAccounts: true})
 	if got := names(grantToken); len(got) != controlTools+4 || !slices.Equal(got[controlTools:], []string{"shell", "gui_plan", "mock_list_items", "mock_create_item"}) {
 		t.Fatalf("a grant with an account lists %v, want the control and box tools, then the account's tools a control or box tool does not shadow", got)
 	}
-	if got := accounts.listed(); !slices.Equal(got, []string{"alice cg-mock"}) {
+	if got := accounts.listed(); !slices.Equal(got, []string{"alice true"}) {
 		t.Errorf("listed the tools of %v", got)
 	}
 	if got := names(aliceToken); slices.Contains(got, "mock_list_items") {
@@ -447,12 +447,12 @@ func TestRootCallOfAnAccountToolGoesToConnectAndWakesNoBox(t *testing.T) {
 	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(boxTools)})
 	accounts := newFakeConnectors()
 	srv.EnableConnectors(accounts)
-	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, connectors: []string{"cg-mock"}})
+	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, allAccounts: true})
 
 	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callAccount)).Result); text != "mock_list_items done" {
 		t.Fatalf("account call = %q", text)
 	}
-	if got := accounts.calledWith(); !slices.Equal(got, []string{`alice Agent [cg-mock] mock_list_items {"q":"x"}`}) {
+	if got := accounts.calledWith(); !slices.Equal(got, []string{`alice Agent true mock_list_items {"q":"x"}`}) {
 		t.Errorf("Connect calls = %v", got)
 	}
 	if len(agents.recorded()) != 0 || slices.ContainsFunc(fake.recorded(), func(c fakeCall) bool { return c.method == "Ensure" }) {
@@ -473,7 +473,7 @@ func TestAccountRoutingErrorsDoNotWakeOrCallABox(t *testing.T) {
 			lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(boxTools)})
 			accounts := newFakeConnectors()
 			srv.EnableConnectors(accounts)
-			srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, connectors: []string{"cg-mock"}})
+			srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, allAccounts: true})
 			if source == "connector" {
 				accounts.err = errors.New("connector query failed")
 			} else {
@@ -498,9 +498,9 @@ func TestAccountRoutingErrorsDoNotWakeOrCallABox(t *testing.T) {
 func TestRootCallOfAShadowedAccountToolGoesToTheBox(t *testing.T) {
 	srv, _, agents, lists := newUnifiedServer(t)
 	accounts := newFakeConnectors()
-	accounts.owned["shell"] = "cg-shell"
+	accounts.owned["shell"] = true
 	srv.EnableConnectors(accounts)
-	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, connectors: []string{"cg-mock", "cg-shell"}})
+	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}, allAccounts: true})
 	shadowed := strings.Replace(callShell, `"shell"`, `"shell_x"`, 1)
 	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(`[{"name":"shell_x"}]`)})
 
@@ -515,14 +515,14 @@ func TestRootCallOfAShadowedAccountToolGoesToTheBox(t *testing.T) {
 func TestAGrantWithAccountsWhoseBoxesFailToReadStillAnnouncesListChanged(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	srv.EnableConnectors(newFakeConnectors())
-	srv.EnableGrants(fakeGrants{connectors: []string{"cg-mock"}, boxesErr: errors.New("db down")})
+	srv.EnableGrants(fakeGrants{allAccounts: true, boxesErr: errors.New("db down")})
 	caps, _ := decode(t, serveRoot(srv, http.MethodPost, grantToken, "", initialize)).Result["capabilities"].(map[string]any)
 	if tools, _ := caps["tools"].(map[string]any); tools["listChanged"] != true {
 		t.Errorf("a grant with accounts whose boxes fail to read announces %v", caps)
 	}
 }
 
-func TestRootStreamsListChangedToAGrantWithAccounts(t *testing.T) {
+func TestRootStreamsListChangedToAGrantOfAllAccounts(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	accounts := newFakeConnectors()
 	srv.EnableConnectors(accounts)
@@ -535,10 +535,10 @@ func TestRootStreamsListChangedToAGrantWithAccounts(t *testing.T) {
 		t.Errorf("a grant without accounts announces %v", caps)
 	}
 
-	srv.EnableGrants(fakeGrants{connectors: []string{"cg-mock"}})
+	srv.EnableGrants(fakeGrants{allAccounts: true})
 	caps, _ = decode(t, serveRoot(srv, http.MethodPost, grantToken, "", initialize)).Result["capabilities"].(map[string]any)
 	if tools, _ := caps["tools"].(map[string]any); tools["listChanged"] != true {
-		t.Errorf("a grant with accounts announces %v", caps)
+		t.Errorf("a grant of all accounts announces %v", caps)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, RootPath, nil)
@@ -562,14 +562,16 @@ func TestRootStreamsListChangedToAGrantWithAccounts(t *testing.T) {
 }
 
 type fakeGrants struct {
-	boxes      []string
-	chosen     []string
-	connectors []string
-	boxesErr   error
+	boxes       []string
+	chosen      []string
+	allAccounts bool
+	boxesErr    error
 }
 
 func (g fakeGrants) Authenticate(context.Context, string) (oauth.Grant, error) {
-	return oauth.Grant{ID: "g1", User: "alice", ClientName: "Agent", MaxBoxes: 2, MaxRunning: 1, Boxes: g.boxes, Chosen: g.chosen, Connectors: g.connectors}, nil
+	return oauth.Grant{
+		ID: "g1", User: "alice", ClientName: "Agent", MaxBoxes: 2, MaxRunning: 1, Boxes: g.boxes, Chosen: g.chosen, AllAccounts: g.allAccounts,
+	}, nil
 }
 
 func (g fakeGrants) Boxes(context.Context, string) ([]string, error) { return g.boxes, g.boxesErr }
@@ -686,7 +688,7 @@ type fakeConnectors struct {
 	changed chan struct{}
 
 	mu      sync.Mutex
-	owned   map[string]string
+	owned   map[string]bool
 	lists   []string
 	calls   []string
 	watches []string
@@ -694,30 +696,29 @@ type fakeConnectors struct {
 }
 
 func newFakeConnectors() *fakeConnectors {
-	return &fakeConnectors{changed: make(chan struct{}), owned: map[string]string{"mock": "cg-mock"}}
+	return &fakeConnectors{changed: make(chan struct{}), owned: map[string]bool{"mock": true}}
 }
 
-func (f *fakeConnectors) Reaches(_ context.Context, _ string, grants []string, name string) (bool, error) {
+func (f *fakeConnectors) Reaches(_ context.Context, _ string, accounts bool, name string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	connector, _, _ := strings.Cut(name, "_")
-	grant, ok := f.owned[connector]
-	return ok && slices.Contains(grants, grant), f.err
+	return accounts && f.owned[connector], f.err
 }
 
-func (f *fakeConnectors) GrantedTools(_ context.Context, user string, grants []string) ([]map[string]jsontext.Value, error) {
+func (f *fakeConnectors) GrantedTools(_ context.Context, user string, accounts bool) ([]map[string]jsontext.Value, error) {
 	f.mu.Lock()
-	f.lists = append(f.lists, user+" "+strings.Join(grants, ","))
+	f.lists = append(f.lists, fmt.Sprintf("%s %t", user, accounts))
 	f.mu.Unlock()
 	var tools []map[string]jsontext.Value
 	err := json.Unmarshal([]byte(accountTools), &tools)
 	return tools, err
 }
 
-func (f *fakeConnectors) CallGranted(_ context.Context, user, client string, grants []string, name string, args jsontext.Value) (any, error) {
+func (f *fakeConnectors) CallGranted(_ context.Context, user, client string, accounts bool, name string, args jsontext.Value) (any, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, fmt.Sprintf("%s %s %v %s %s", user, client, grants, name, args))
+	f.calls = append(f.calls, fmt.Sprintf("%s %s %t %s %s", user, client, accounts, name, args))
 	return map[string]any{"content": []any{map[string]any{"type": "text", "text": name + " done"}}}, nil
 }
 

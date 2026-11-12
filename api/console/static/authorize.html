@@ -42,7 +42,7 @@
     <p id="client-id" class="muted"></p>
     <p id="client-trust"></p>
     <p id="redirect"></p>
-    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete the boxes it creates. Their programs use your model budget. The boxes it creates get none of your saved keys or connected accounts. They do not count against your own box limit: the limits below bound them, and they hibernate when no one uses them. It cannot see or touch your shares, any of your boxes you do not choose below, or any connected account you do not tick below. You can revoke it, or change the boxes it may use, on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
+    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete the boxes it creates. Their programs use your model budget. The boxes it creates get none of your saved keys or connected accounts. They do not count against your own box limit: the limits below bound them, and they hibernate when no one uses them. It cannot see or touch your shares or any of your boxes you do not choose below. You can revoke it, or change the boxes it may use, on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
     <p id="existing" hidden>This agent already has access. Allowing it again keeps its boxes and replaces its limits, its chosen boxes, its connected accounts and its expiry.</p>
     <form id="consent-form">
       <fieldset id="choices" hidden>
@@ -52,8 +52,8 @@
       </fieldset>
       <fieldset id="connectors" hidden>
         <legend>Your connected accounts it may use</legend>
-        <p>On an account you tick, the agent acts as you on that account with its tools. The per-tool policies on the <a href="/cb/connect">Connect</a> page apply: a tool that is off is not offered, and a tool set to ask runs after the agent's own confirmation prompt, not a CocoonBox approval. Access follows the connector: if you reconnect it to another account, the agent uses that one; disconnecting it removes the agent's access. Tick none to keep the agent off your accounts.</p>
-        <div id="connector-list"></div>
+        <p>The agent asks for your connected accounts. If you allow it, it acts as you with the tools of every account you have connected, and of every account you connect later. The per-tool policies on the <a href="/cb/connect">Connect</a> page apply: a tool that is off is not offered, and a tool set to ask runs after the agent's own confirmation prompt, not a CocoonBox approval. Disconnecting an account removes the agent's access to it. If you do not want that, deny the request.</p>
+        <ul id="connector-list"></ul>
       </fieldset>
       <label>Boxes it may create <input type="number" name="max_boxes" min="1" max="16" required></label>
       <label>Running at once <input type="number" name="max_running" min="1" max="16" required></label>

@@ -20,9 +20,8 @@ const (
 	migrationLock = 0x63626f61 // "cboa"
 
 	grantColumns = `g.id, g.user_id, g.client_id, g.client_name, g.client_host, g.max_boxes, g.max_running, g.created_at, g.expires_at,
-		g.used_at, g.seen, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id),
-		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id),
-		ARRAY(SELECT n.connect_grant FROM oauth_connectors n WHERE n.grant_id = g.id ORDER BY n.connect_grant)`
+		g.used_at, g.seen, g.all_accounts, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id),
+		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id)`
 )
 
 var (
@@ -41,7 +40,7 @@ type code struct {
 	challenge    string
 	caps         Caps
 	chosen       []string
-	connectors   []string
+	allAccounts  bool
 	label        string
 	grantExpires time.Time
 	expiresAt    time.Time
@@ -91,10 +90,10 @@ func (s *store) addCode(ctx context.Context, c code) error {
 			return fmt.Errorf("prune codes: %w", err)
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO oauth_codes (code_sha256, user_id, client_id, client_name, client_host, redirect_uri,
-			code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen, connectors)
+			code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen, all_accounts)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			c.codeSHA256, c.user, c.client.id, c.client.name, c.client.host, c.redirectURI, c.challenge, c.caps.MaxBoxes, c.caps.MaxRunning,
-			c.grantExpires, c.expiresAt, c.client.firstParty, c.label, c.chosen, c.connectors)
+			c.grantExpires, c.expiresAt, c.client.firstParty, c.label, c.chosen, c.allAccounts)
 		if err != nil {
 			return fmt.Errorf("add code: %w", err)
 		}
@@ -108,10 +107,10 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 	var refused error
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `DELETE FROM oauth_codes WHERE code_sha256 = $1 RETURNING user_id, client_id, client_name, client_host,
-			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen, connectors`, codeSHA256).Scan(
+			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen, all_accounts`, codeSHA256).Scan(
 			&stored.user, &stored.client.id, &stored.client.name, &stored.client.host, &stored.redirectURI, &stored.challenge,
 			&stored.caps.MaxBoxes, &stored.caps.MaxRunning, &stored.grantExpires, &stored.expiresAt, &stored.client.firstParty, &stored.label,
-			&stored.chosen, &stored.connectors)
+			&stored.chosen, &stored.allAccounts)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errInvalidGrant
 		}
@@ -130,12 +129,13 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		}
 		if existing != "" {
 			grantID = existing
-			_, err = tx.Exec(ctx, `UPDATE oauth_grants SET client_name = $2, client_host = $3, max_boxes = $4, max_running = $5, expires_at = $6
-				WHERE id = $1`, grantID, stored.client.name, stored.client.host, stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires)
+			_, err = tx.Exec(ctx, `UPDATE oauth_grants SET client_name = $2, client_host = $3, max_boxes = $4, max_running = $5, expires_at = $6,
+				all_accounts = $7 WHERE id = $1`, grantID, stored.client.name, stored.client.host, stored.caps.MaxBoxes, stored.caps.MaxRunning,
+				stored.grantExpires, stored.allAccounts)
 		} else {
-			_, err = tx.Exec(ctx, `INSERT INTO oauth_grants (id, user_id, client_id, client_name, client_host, max_boxes, max_running, expires_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, grantID, stored.user, stored.client.id, stored.client.name, stored.client.host,
-				stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires)
+			_, err = tx.Exec(ctx, `INSERT INTO oauth_grants (id, user_id, client_id, client_name, client_host, max_boxes, max_running, expires_at, all_accounts)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, grantID, stored.user, stored.client.id, stored.client.name, stored.client.host,
+				stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires, stored.allAccounts)
 		}
 		if err != nil {
 			return fmt.Errorf("add grant: %w", err)
@@ -143,19 +143,16 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		if err = choose(ctx, tx, stored.user, grantID, stored.chosen); err != nil {
 			return err
 		}
-		if err = chooseConnectors(ctx, tx, grantID, stored.connectors); err != nil {
-			return err
-		}
 		return insertTokens(ctx, tx, grantID, tokens, stored.grantExpires)
 	})
 	return stored, cmp.Or(err, refused)
 }
 
-// refresh spends the refresh token, issues tokens in its place and reports whether its grant holds accounts; the one spent last, sent again, revokes its grant and returns its id.
+// refresh spends the refresh token, issues tokens in its place and reports whether its grant reaches accounts; the one spent last, sent again, revokes its grant and returns its id.
 func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (string, bool, error) {
 	var (
-		replayed   string
-		connectors bool
+		replayed string
+		accounts bool
 	)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var (
@@ -163,9 +160,9 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 			spent           bool
 			expiresAt       time.Time
 		)
-		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, EXISTS (SELECT 1 FROM oauth_connectors n WHERE n.grant_id = g.id)
+		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, g.all_accounts
 			FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.sha256 = $1 AND t.refresh FOR UPDATE OF g, t`, refreshSHA256).Scan(
-			&grantID, &client, &spent, &expiresAt, &connectors)
+			&grantID, &client, &spent, &expiresAt, &accounts)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return errInvalidGrant
@@ -196,7 +193,7 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 	case replayed != "":
 		return replayed, false, errInvalidGrant
 	}
-	return "", connectors, nil
+	return "", accounts, nil
 }
 
 func (s *store) liveGrant(ctx context.Context, user, client string) (string, error) {
@@ -320,14 +317,6 @@ func (s *store) chosen(ctx context.Context, id string) ([]string, error) {
 	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
-func (s *store) chosenConnectors(ctx context.Context, id string) ([]string, error) {
-	rows, err := s.pool.Query(ctx, "SELECT connect_grant FROM oauth_connectors WHERE grant_id = $1 ORDER BY connect_grant", id)
-	if err != nil {
-		return nil, fmt.Errorf("list chosen connectors: %w", err)
-	}
-	return pgx.CollectRows(rows, pgx.RowTo[string])
-}
-
 func (s *store) grantBoxes(ctx context.Context, id string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, "SELECT box_id FROM oauth_boxes WHERE grant_id = $1 ORDER BY box_id", id)
 	if err != nil {
@@ -367,17 +356,6 @@ func choose(ctx context.Context, tx pgx.Tx, user, id string, boxes []string) err
 	return nil
 }
 
-// chooseConnectors makes connectors the Connect grants grant id may use; the console checked they are its user's active ones.
-func chooseConnectors(ctx context.Context, tx pgx.Tx, id string, connectors []string) error {
-	if _, err := tx.Exec(ctx, "DELETE FROM oauth_connectors WHERE grant_id = $1", id); err != nil {
-		return fmt.Errorf("clear chosen connectors: %w", err)
-	}
-	if _, err := tx.Exec(ctx, "INSERT INTO oauth_connectors (grant_id, connect_grant) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING", id, connectors); err != nil {
-		return fmt.Errorf("choose connectors: %w", err)
-	}
-	return nil
-}
-
 func endedIn(ctx context.Context, tx pgx.Tx, ids []string) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, id) FROM unnest($2::text[]) AS id", users.EndedChannel, ids); err != nil {
 		return fmt.Errorf("notify %s: %w", users.EndedChannel, err)
@@ -401,6 +379,6 @@ func insertTokens(ctx context.Context, tx pgx.Tx, grantID string, tokens issued,
 func scanGrant(row pgx.CollectableRow) (Grant, error) {
 	var g Grant
 	err := row.Scan(&g.ID, &g.User, &g.ClientID, &g.ClientName, &g.ClientHost, &g.MaxBoxes, &g.MaxRunning, &g.CreatedAt, &g.ExpiresAt,
-		&g.UsedAt, &g.Seen, &g.Boxes, &g.Chosen, &g.Connectors)
+		&g.UsedAt, &g.Seen, &g.AllAccounts, &g.Boxes, &g.Chosen)
 	return g, err
 }

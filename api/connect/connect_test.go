@@ -50,8 +50,8 @@ var (
 		return keyring.Key{ID: "k-" + user, Secret: []byte(strings.Repeat(user[len(user)-1:], keyring.KeySize))}, nil
 	})
 
-	modeB = caller{user: alice, door: DoorMCP, name: "mcp:test"}
-	modeA = caller{user: alice, door: doorBox, name: "box:test"}
+	modeB = caller{user: alice, door: DoorMCP, name: "mcp:test", accounts: true}
+	modeA = caller{user: alice, door: doorBox, name: "box:test", accounts: true}
 )
 
 func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
@@ -355,53 +355,50 @@ func TestModeBServesAskToolsAsDestructiveWithoutAGate(t *testing.T) {
 	}
 }
 
-func TestAnAgentGrantReachesOnlyTheAccountsItHolds(t *testing.T) {
+func TestAnAgentGrantReachesEveryAccountOrNone(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
 	if _, err := env.svc.Start(t.Context(), StartRequest{User: alice, Connector: kindCustom, Name: "other", URL: env.vendor.KeyedURL(), Header: "X-Api-Key", Key: connecttest.Key}); err != nil {
 		t.Fatalf("Start other: %v", err)
 	}
-	mock := env.grant(t)
 	env.exec(t, "UPDATE connect_grants SET status = $1 WHERE connector = 'other'", statusReconnect)
 	accounts, err := env.svc.Accounts(t.Context(), alice)
-	if err != nil || len(accounts) != 1 || accounts[0] != (Account{Grant: mock.id, ID: mockName, Name: mockName}) {
+	if err != nil || len(accounts) != 1 || accounts[0] != (Account{ID: mockName, Name: mockName}) {
 		t.Fatalf("Accounts = %+v, %v, want the active connector only", accounts, err)
 	}
 	env.exec(t, "UPDATE connect_grants SET status = $1 WHERE connector = 'other'", statusActive)
 
-	tools, err := env.svc.GrantedTools(t.Context(), alice, []string{mock.id})
-	var names []string
-	for _, tl := range tools {
-		var name string
-		_ = json.Unmarshal(tl["name"], &name)
-		names = append(names, name)
+	if got, _ := env.svc.Reaches(t.Context(), alice, false, listItems); got {
+		t.Error("Reaches without accounts = true")
 	}
-	if err != nil || len(names) != 2 || !slices.Contains(names, listItems) || !slices.Contains(names, createItem) {
-		t.Fatalf("GrantedTools = %v, %v, want mock's tools only", names, err)
+	if names := grantedToolNames(t, env.svc, false); len(names) != 0 {
+		t.Errorf("GrantedTools without accounts = %v", names)
 	}
-	for name, want := range map[string]bool{listItems: true, "other_list_items": false, "mock": false, "Bad_x": false} {
-		if got, err := env.svc.Reaches(t.Context(), alice, []string{mock.id}, name); got != want || err != nil {
+	if _, err := env.svc.CallGranted(t.Context(), alice, "Agent", false, listItems, nil); err == nil || !strings.Contains(err.Error(), "unknown tool") {
+		t.Errorf("a call without accounts = %v, want unknown tool", err)
+	}
+
+	if names := grantedToolNames(t, env.svc, true); len(names) != 4 || !slices.Contains(names, "other_list_items") || !slices.Contains(names, createItem) {
+		t.Errorf("GrantedTools with accounts = %v, want both accounts' tools", names)
+	}
+	for name, want := range map[string]bool{listItems: true, "other_list_items": true, "mock": false, "Bad_x": false, "gone_list_items": false} {
+		if got, err := env.svc.Reaches(t.Context(), alice, true, name); got != want || err != nil {
 			t.Errorf("Reaches %s = %t, %v, want %t", name, got, err, want)
 		}
 	}
-	if got, _ := env.svc.Reaches(t.Context(), alice, nil, listItems); got {
-		t.Error("Reaches with no grant = true")
-	}
-	if tools, _ := env.svc.GrantedTools(t.Context(), alice, nil); len(tools) != 0 {
-		t.Errorf("GrantedTools of no grant = %d tools", len(tools))
-	}
-	if _, err := env.svc.CallGranted(t.Context(), alice, "Agent", []string{mock.id}, "other_list_items", nil); err == nil || !strings.Contains(err.Error(), "unknown tool") {
-		t.Errorf("a call of an account the grant does not hold = %v", err)
-	}
-	out, err := env.svc.CallGranted(t.Context(), alice, "Agent", []string{mock.id}, createItem, jsontext.Value(`{"title":"x"}`))
+	out, err := env.svc.CallGranted(t.Context(), alice, "Agent", true, createItem, jsontext.Value(`{"title":"x"}`))
 	if result, _ := out.(map[string]jsontext.Value); err != nil || !strings.Contains(string(result["content"]), "create_item done") {
 		t.Fatalf("CallGranted = %v, %v", out, err)
 	}
-	if _, _, calls := env.vendor.Snapshot(); len(calls) != 1 || calls[0].Tool != "create_item" {
-		t.Errorf("vendor calls = %+v, want the ask tool run without an approval", calls)
+	out, err = env.svc.CallGranted(t.Context(), alice, "Agent", true, "other_list_items", nil)
+	if result, _ := out.(map[string]jsontext.Value); err != nil || !strings.Contains(string(result["content"]), "list_items done") {
+		t.Errorf("CallGranted other_list_items = %v, %v", out, err)
+	}
+	if _, _, calls := env.vendor.Snapshot(); len(calls) != 2 || calls[0].Tool != "create_item" {
+		t.Errorf("vendor calls = %+v, want the ask tool run without an approval, then the other account's", calls)
 	}
 	activity, _ := env.svc.Activity(auth.WithUser(t.Context(), alice), &controlv1.ActivityRequest{})
-	if entries := activity.GetEntries(); len(entries) != 2 || entries[0].GetCaller() != "mcp:Agent" || entries[1].GetDecision() != policyOff {
+	if entries := activity.GetEntries(); len(entries) != 2 || entries[0].GetCaller() != "mcp:Agent" || entries[1].GetCaller() != "mcp:Agent" {
 		t.Errorf("activity = %v", entries)
 	}
 }
@@ -1556,6 +1553,21 @@ func TestGoogleTasksRefreshesOnA401AndReportsWhatGoogleRefused(t *testing.T) {
 	if len(api.all()) != before {
 		t.Error("a call without its task reached Google")
 	}
+}
+
+func grantedToolNames(t *testing.T, svc *Service, accounts bool) []string {
+	t.Helper()
+	tools, err := svc.GrantedTools(t.Context(), alice, accounts)
+	if err != nil {
+		t.Fatalf("GrantedTools: %v", err)
+	}
+	var names []string
+	for _, tl := range tools {
+		var name string
+		_ = json.Unmarshal(tl["name"], &name)
+		names = append(names, name)
+	}
+	return names
 }
 
 type env struct {

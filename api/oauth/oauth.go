@@ -33,7 +33,7 @@ const (
 	RevokePath = "/cocoonbox.oauth/revoke"
 	// Scope is the scope every agent gets: manage the boxes the grant creates.
 	Scope = "boxes"
-	// ConnectScope lets an agent ask for the user's connected accounts; the grant holds only those the user ticks at consent.
+	// ConnectScope lets an agent ask for the user's connected accounts; an approval lets it use all of them, now and later.
 	ConnectScope = "connect"
 	// AccountScope is the scope of a first-party client: the whole account, through a device token.
 	AccountScope = "account"
@@ -119,23 +119,23 @@ func (c Caps) check() error {
 	return nil
 }
 
-// Grant is one client's access for one user; Boxes are the boxes it created that still exist, Chosen the user's own boxes the user chose for it, Connectors the Connect grants of the accounts the user ticked for it.
+// Grant is one client's access for one user; Boxes are the boxes it created that still exist, Chosen the user's own boxes the user chose for it; AllAccounts lets it use every connected account of the user, now and later.
 type Grant struct {
 	ID         string `json:"id"`
 	User       string `json:"-"`
 	ClientID   string `json:"client_id"`
 	ClientName string `json:"client_name"`
 	// ClientHost is the host of the client's metadata document URL, empty for a self-registered client.
-	ClientHost string     `json:"client_host"`
-	MaxBoxes   int        `json:"max_boxes"`
-	MaxRunning int        `json:"max_running"`
-	Boxes      []string   `json:"boxes"`
-	Chosen     []string   `json:"chosen"`
-	Connectors []string   `json:"-"`
-	CreatedAt  time.Time  `json:"created_at"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	UsedAt     *time.Time `json:"used_at"`
-	Seen       bool       `json:"seen"`
+	ClientHost  string     `json:"client_host"`
+	MaxBoxes    int        `json:"max_boxes"`
+	MaxRunning  int        `json:"max_running"`
+	Boxes       []string   `json:"boxes"`
+	Chosen      []string   `json:"chosen"`
+	AllAccounts bool       `json:"-"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"`
+	UsedAt      *time.Time `json:"used_at"`
+	Seen        bool       `json:"seen"`
 }
 
 // Reaches reports whether the grant may use box: one it created or one the user chose for it.

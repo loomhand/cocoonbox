@@ -2,7 +2,6 @@ package oauth
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"net/url"
 	"slices"
@@ -45,7 +44,7 @@ func ParseRequest(q url.Values) Request {
 	}
 }
 
-// Consent is what the consent page shows of a request: Existing marks a live grant the approval renews, Chosen its boxes, Connectors its Connect grants, Connect a request for ConnectScope, Account a whole-account first-party client.
+// Consent is what the consent page shows of a request: Existing marks a live grant the approval renews, Chosen its boxes, Connect a request for ConnectScope, Account a whole-account first-party client.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
@@ -55,7 +54,6 @@ type Consent struct {
 	Loopback     bool     `json:"loopback"`
 	Existing     bool     `json:"existing"`
 	Chosen       []string `json:"chosen"`
-	Connectors   []string `json:"-"`
 	Connect      bool     `json:"connect"`
 	Account      bool     `json:"account"`
 	DeviceName   string   `json:"device_name"`
@@ -71,14 +69,14 @@ type AuthorizeError struct {
 
 func (e *AuthorizeError) Error() string { return e.Description }
 
-// Check validates req of user and returns what the consent page shows.
-func (s *Service) Check(ctx context.Context, user string, req Request) (Consent, error) {
+// Check validates req of user and returns what the consent page shows; accounts tells whether the api serves connected accounts.
+func (s *Service) Check(ctx context.Context, user string, req Request, accounts bool) (Consent, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return Consent{}, err
 	}
 	var existing string
-	var chosen, connectors []string
+	var chosen []string
 	if !c.firstParty {
 		if existing, err = s.store.liveGrant(ctx, user, c.id); err != nil {
 			return Consent{}, err
@@ -88,37 +86,32 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 		if chosen, err = s.store.chosen(ctx, existing); err != nil {
 			return Consent{}, err
 		}
-		if connectors, err = s.store.chosenConnectors(ctx, existing); err != nil {
-			return Consent{}, err
-		}
 	}
 	host, loopback := redirectHost(req.RedirectURI)
 	connect, _ := agentScope(req.Scope)
 	return Consent{
 		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
-		Connectors: connectors, Connect: connect && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
+		Connect: connect && accounts && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
 		Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil
 }
 
-// Approve records user's consent to req within caps, the user's own boxes of chosen and the Connect grants connectors (none for a first-party client), and returns where the browser takes the code.
-func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen, connectors []string) (string, error) {
+// Approve records user's consent to req within caps and the user's own boxes of chosen, with every connected account of the user when req asks for ConnectScope and accounts is set (none for a first-party client), and returns where the browser takes the code.
+func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string, accounts bool) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	if c.firstParty {
-		caps, chosen, connectors = Caps{}, nil, nil
+		caps, chosen = Caps{}, nil
 	} else if err := caps.check(); err != nil {
 		return "", err
 	}
-	if connect, _ := agentScope(req.Scope); len(connectors) != 0 && !connect {
-		return "", fmt.Errorf("%w: connected accounts need the %s scope", ErrInvalid, ConnectScope)
-	}
+	connect, _ := agentScope(req.Scope)
 	value := utils.RandomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
-		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, connectors: connectors, label: req.DeviceName,
+		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, allAccounts: connect && accounts && !c.firstParty, label: req.DeviceName,
 		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: utils.HashHex(value),
 	}); err != nil {
 		return "", err
@@ -200,8 +193,8 @@ func agentScope(scope string) (connect, ok bool) {
 	return slices.Contains(fields, ConnectScope), len(fields) == 0 || slices.Contains(fields, Scope)
 }
 
-func grantedScope(connectors bool) string {
-	if connectors {
+func grantedScope(accounts bool) string {
+	if accounts {
 		return agentScopes
 	}
 	return Scope

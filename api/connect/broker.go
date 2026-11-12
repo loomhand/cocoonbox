@@ -53,16 +53,12 @@ func (t tool) effective(choice string) string {
 	}
 }
 
-// caller is who calls a door; grants, when set, are the only grants whose tools it reaches.
+// caller is who calls a door and whether it reaches the user's accounts; the zero caller reaches none.
 type caller struct {
-	user   string
-	door   string
-	name   string
-	grants []string
-}
-
-func (c caller) reaches(grant string) bool {
-	return c.grants == nil || slices.Contains(c.grants, grant)
+	user     string
+	door     string
+	name     string
+	accounts bool
 }
 
 type callResult struct {
@@ -82,6 +78,9 @@ type toolCall struct {
 }
 
 func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontext.Value, error) {
+	if !c.accounts {
+		return nil, nil
+	}
 	grants, err := s.store.grants(ctx, c.user)
 	if err != nil {
 		return nil, err
@@ -90,7 +89,7 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(listFanout)
 	for i, g := range grants {
-		if g.status != statusActive || g.mcpURL == "" || !c.reaches(g.id) {
+		if g.status != statusActive || g.mcpURL == "" {
 			continue
 		}
 		eg.Go(func() error {
@@ -114,7 +113,7 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 // doorCall returns the upstream result without its _meta, so an upstream cannot forge an approval request.
 func (s *Service) doorCall(ctx context.Context, c caller, name string, args jsontext.Value, approvalID string) (any, error) {
 	connector, toolName, ok := strings.Cut(name, "_")
-	if !ok || !connectorPattern.MatchString(connector) {
+	if !ok || !c.accounts || !connectorPattern.MatchString(connector) {
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
 	}
 	if len(args) == 0 || string(args) == "null" {
@@ -133,9 +132,6 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 		}
 	}()
 	g, err := s.store.grant(ctx, c.user, connector)
-	if err == nil && !c.reaches(g.id) {
-		err = errNoGrant
-	}
 	if errors.Is(err, errNoGrant) {
 		rec.decision, rec.outcome = policyOff, outcomeError
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
