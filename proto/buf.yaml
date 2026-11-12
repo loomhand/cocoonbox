@@ -3,3 +3,10 @@ breaking:
   use:
     # a field may go once its number and name are reserved; FILE would forbid deleting it at all
     - WIRE_JSON
+    - RPC_NO_DELETE
+    - PACKAGE_SERVICE_NO_DELETE
+  ignore_only:
+    RPC_NO_DELETE:
+      - cocoonbox/control
+    PACKAGE_SERVICE_NO_DELETE:
+      - cocoonbox/control
