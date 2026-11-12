@@ -1,0 +1,38 @@
+name: proto
+
+on:
+  pull_request:
+    paths:
+      - "proto/**"
+      - ".github/workflows/proto.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  breaking:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install buf
+        env:
+          BUF_VERSION: 1.75.0
+          BUF_SHA256: fad1e38d6909bbb583a4da81d8c02a01046e2cd663bde7e337dd24277393764b
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/buf" "https://github.com/bufbuild/buf/releases/download/v$BUF_VERSION/buf-Linux-x86_64"
+          echo "$BUF_SHA256  $RUNNER_TEMP/bin/buf" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/bin/buf"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Check against the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_SHA"
+          base="$RUNNER_TEMP/base"
+          rm -rf "$base" && mkdir -p "$base"
+          git archive "$BASE_SHA" proto | tar -x -C "$base"
+          buf breaking proto --against "$base/proto"

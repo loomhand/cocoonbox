@@ -1,0 +1,5 @@
+version: v2
+breaking:
+  use:
+    # a field may go once its number and name are reserved; FILE would forbid deleting it at all
+    - WIRE_JSON
