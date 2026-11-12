@@ -23,10 +23,15 @@ func serveCPUProfile(signals context.Context, enabled bool) error {
 	if !enabled {
 		return nil
 	}
+	_, err := listenCPUProfile(signals, cpuProfileAddr)
+	return err
+}
+
+func listenCPUProfile(signals context.Context, addr string) (net.Addr, error) {
 	var lc net.ListenConfig
-	listener, err := lc.Listen(signals, "tcp", cpuProfileAddr)
+	listener, err := lc.Listen(signals, "tcp", addr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var capture sync.Mutex
 	mux := http.NewServeMux()
@@ -67,8 +72,8 @@ func serveCPUProfile(signals context.Context, enabled bool) error {
 	context.AfterFunc(signals, func() { _ = server.Close() })
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.WithFunc("main.serveCPUProfile").Error(signals, err, "serve the CPU profile")
+			log.WithFunc("main.listenCPUProfile").Error(signals, err, "serve the CPU profile")
 		}
 	}()
-	return nil
+	return listener.Addr(), nil
 }

@@ -19,22 +19,24 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 	client := &http.Client{Timeout: cpuProfileWriteTimeout}
 	t.Cleanup(client.CloseIdleConnections)
 
-	t.Run("off binds nothing and on refuses an occupied port", func(t *testing.T) {
-		occupied, err := net.Listen("tcp", cpuProfileAddr)
+	t.Run("off opens nothing and an occupied port fails the start", func(t *testing.T) {
+		if err := serveCPUProfile(signals, false); err != nil {
+			t.Fatalf("off: %v", err)
+		}
+		occupied, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer occupied.Close()
-		if err := serveCPUProfile(signals, false); err != nil {
-			t.Fatalf("off: %v", err)
-		}
-		if err := serveCPUProfile(signals, true); err == nil {
-			t.Fatal("on served despite the occupied port")
+		if _, err := listenCPUProfile(signals, occupied.Addr().String()); err == nil {
+			t.Fatal("served despite the occupied port")
 		}
 	})
-	if err := serveCPUProfile(signals, true); err != nil {
+	served, err := listenCPUProfile(signals, "127.0.0.1:0")
+	if err != nil {
 		t.Fatal(err)
 	}
+	addr := served.String()
 
 	for _, tc := range []struct {
 		method, path string
@@ -53,7 +55,7 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 		{http.MethodGet, "/debug/pprof/profile?unknown=value", http.StatusBadRequest},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
-			resp := profileRequest(t, client, tc.method, tc.path)
+			resp := profileRequest(t, client, addr, tc.method, tc.path)
 			defer resp.Body.Close()
 			if resp.StatusCode != tc.status {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tc.status)
@@ -67,7 +69,7 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 	t.Run("a disconnect ends its capture before the timer", func(t *testing.T) {
 		ctx, disconnect := context.WithCancel(t.Context())
 		defer disconnect()
-		active := competingCaptures(t, ctx, client)
+		active := competingCaptures(t, ctx, client, addr)
 		disconnect()
 		if stopped := <-active; stopped.resp != nil {
 			_ = stopped.resp.Body.Close()
@@ -77,7 +79,7 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 
 	t.Run("a capture runs ten seconds and go tool pprof reads it", func(t *testing.T) {
 		start := time.Now()
-		resp := admittedCapture(t, client)
+		resp := admittedCapture(t, client, addr)
 		if resp.Header.Get("Content-Type") != "application/octet-stream" || resp.Header.Get("Cache-Control") != "no-store" {
 			t.Errorf("profile headers = %v", resp.Header)
 		}
@@ -99,7 +101,7 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 	})
 
 	t.Run("the signal ends a capture, stops the profiler and closes the listener", func(t *testing.T) {
-		active := competingCaptures(t, t.Context(), client)
+		active := competingCaptures(t, t.Context(), client, addr)
 		signal()
 		select {
 		case stopped := <-active:
@@ -117,7 +119,7 @@ func TestTheCPUProfileServesOneFixedCaptureAtATimeUntilTheSignal(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		pprof.StopCPUProfile()
-		if conn, err := net.DialTimeout("tcp", cpuProfileAddr, time.Second); err == nil {
+		if conn, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 			_ = conn.Close()
 			t.Fatal("the listener stayed open after the signal")
 		}
@@ -129,9 +131,9 @@ type captureResult struct {
 	err  error
 }
 
-func profileRequest(t *testing.T, client *http.Client, method, path string) *http.Response {
+func profileRequest(t *testing.T, client *http.Client, addr, method, path string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), method, "http://"+cpuProfileAddr+path, nil)
+	req, err := http.NewRequestWithContext(t.Context(), method, "http://"+addr+path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,12 +144,11 @@ func profileRequest(t *testing.T, client *http.Client, method, path string) *htt
 	return resp
 }
 
-// competingCaptures starts two captures, checks that one is refused with 409 and returns the admitted one's result.
-func competingCaptures(t *testing.T, ctx context.Context, client *http.Client) <-chan captureResult {
+func competingCaptures(t *testing.T, ctx context.Context, client *http.Client, addr string) <-chan captureResult {
 	t.Helper()
 	results := make(chan captureResult, 2)
 	for range 2 {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+cpuProfileAddr+"/debug/pprof/profile", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/debug/pprof/profile", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -167,11 +168,11 @@ func competingCaptures(t *testing.T, ctx context.Context, client *http.Client) <
 	return results
 }
 
-func admittedCapture(t *testing.T, client *http.Client) *http.Response {
+func admittedCapture(t *testing.T, client *http.Client, addr string) *http.Response {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		resp := profileRequest(t, client, http.MethodGet, "/debug/pprof/profile")
+		resp := profileRequest(t, client, addr, http.MethodGet, "/debug/pprof/profile")
 		if resp.StatusCode == http.StatusOK {
 			return resp
 		}
