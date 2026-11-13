@@ -59,6 +59,14 @@ type ToolLists interface {
 	Get(id string) (users.User, error)
 }
 
+// AgentSessionStore keeps, for every api process, the agent session each client holds on a box.
+type AgentSessionStore interface {
+	AgentSession(ctx context.Context, client, box string) (string, error)
+	PutAgentSession(ctx context.Context, client, box, upstream string) (string, error)
+	DropAgentSession(ctx context.Context, client, box, upstream string) error
+	DropAgentSessions(ctx context.Context, client string) (map[string]string, error)
+}
+
 // Connectors serves the tools of the connected accounts a grant reaches, as Connect's mode B door does, and tells when the user's tools change.
 type Connectors interface {
 	Reaches(ctx context.Context, user string, accounts bool, name string) (bool, error)
@@ -113,6 +121,7 @@ type Server struct {
 	connectors Connectors
 
 	accounts *users.Service
+	held     AgentSessionStore
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -129,8 +138,9 @@ func (s *Server) EnableGrants(grants Grants) {
 	s.grants = grants
 }
 
-func (s *Server) EnableShared(accounts *users.Service) {
-	s.accounts = accounts
+// EnableShared runs with the other api processes: grants sync their users through accounts, and every process uses the agent sessions held records.
+func (s *Server) EnableShared(accounts *users.Service, held AgentSessionStore) {
+	s.accounts, s.held = accounts, held
 }
 
 // EnableBoxTools serves RootPath: the control tools and the tools of the default box, which agents reach and lists keep while the box sleeps.

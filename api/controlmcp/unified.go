@@ -34,6 +34,8 @@ const (
 	sessionIdle   = 24 * time.Hour
 	maxSessions   = 16
 	closeBound    = 10 * time.Second
+	// rereadEvery picks up an agent session another api process opened instead, and keeps the record from the idle purge.
+	rereadEvery = time.Hour
 	// maxInstructions is the Mac bridge's cap on a server's instructions, within every agent CLI's limit.
 	maxInstructions = 2048
 	maxAnswer       = 32 << 20
@@ -54,17 +56,28 @@ var (
 
 // agentSessions are the agent sessions held open, one per box: a user's client session's own, or the ones every client session of a grant shares.
 type agentSessions struct {
+	client string
+	held   AgentSessionStore
+
 	mu       sync.Mutex
 	upstream map[string]string
+	read     map[string]time.Time
 }
 
-func (a *agentSessions) drop(box, upstream string) bool {
+func newAgentSessions(client string, held AgentSessionStore) *agentSessions {
+	return &agentSessions{client: client, held: held, upstream: map[string]string{}, read: map[string]time.Time{}}
+}
+
+func (a *agentSessions) drop(ctx context.Context, box, upstream string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.upstream[box] != upstream {
 		return false
 	}
 	delete(a.upstream, box)
+	if a.held != nil {
+		log.WithFunc("controlmcp.agentSessions.drop").Error(ctx, a.held.DropAgentSession(ctx, a.client, box, upstream), "drop the shared agent session")
+	}
 	return true
 }
 
@@ -80,8 +93,8 @@ type session struct {
 }
 
 // reset drops box's agent session while it is still upstream, and then the default box when it is box, so the next call finds both again.
-func (s *session) reset(box, upstream string) {
-	if !s.agents.drop(box, upstream) {
+func (s *session) reset(ctx context.Context, box, upstream string) {
+	if !s.agents.drop(ctx, box, upstream) {
 		return
 	}
 	s.mu.Lock()
@@ -121,21 +134,21 @@ func (s *Server) keepSession(ctx context.Context, caller, id string, sess *sessi
 	if len(held) >= maxSessions {
 		delete(s.sessions, slices.MinFunc(held, func(a, b string) int { return s.sessions[a].used.Compare(s.sessions[b].used) }))
 	}
-	sess.used, sess.agents = now, s.agentsOf(ctx)
+	sess.used, sess.agents = now, s.agentsOf(ctx, caller, id)
 	s.sessions[caller+"\n"+id] = sess
 	return sess
 }
 
-// agentsOf returns the agent sessions of a new client session: its own for a user token, and for a grant the grant's, closed when the grant ends; s.mu is held.
-func (s *Server) agentsOf(ctx context.Context) *agentSessions {
+// agentsOf returns the agent sessions of caller's new client session id: its own for a user token, and for a grant the grant's, closed when the grant ends; s.mu is held.
+func (s *Server) agentsOf(ctx context.Context, caller, id string) *agentSessions {
 	g := grantOf(ctx)
 	if g == nil {
-		return &agentSessions{upstream: map[string]string{}}
+		return newAgentSessions(sessionClient(caller, id), s.held)
 	}
 	if a := s.shared[g.ID]; a != nil {
 		return a
 	}
-	a := &agentSessions{upstream: map[string]string{}}
+	a := newAgentSessions(grantClient(g.ID), s.held)
 	s.shared[g.ID] = a
 	life, stop := s.authn.Bind(context.Background(), g.User, g.ID)
 	context.AfterFunc(life, func() {
@@ -158,7 +171,7 @@ func (s *Server) closeShared(id, user string, a *agentSessions) {
 	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), closeBound)
 	defer cancel()
-	s.closeAgents(ctx, user, upstreams)
+	s.closeAgents(ctx, user, s.dropHeld(ctx, a.client, upstreams))
 }
 
 // closeAgents ends user's agent sessions upstreams, keyed by box.
@@ -174,13 +187,30 @@ func (s *Server) endSession(ctx context.Context, user, caller, id string) {
 	sess := s.sessions[caller+"\n"+id]
 	delete(s.sessions, caller+"\n"+id)
 	s.mu.Unlock()
-	if sess == nil || grantOf(ctx) != nil {
+	if grantOf(ctx) != nil {
 		return
 	}
-	sess.agents.mu.Lock()
-	upstreams := maps.Clone(sess.agents.upstream)
-	sess.agents.mu.Unlock()
-	s.closeAgents(ctx, user, upstreams)
+	upstreams := map[string]string{}
+	if sess != nil {
+		sess.agents.mu.Lock()
+		upstreams = maps.Clone(sess.agents.upstream)
+		sess.agents.mu.Unlock()
+	}
+	s.closeAgents(ctx, user, s.dropHeld(ctx, sessionClient(caller, id), upstreams))
+}
+
+// dropHeld adds to upstreams the shared agent sessions of client, which it forgets, so another process's are closed too.
+func (s *Server) dropHeld(ctx context.Context, client string, upstreams map[string]string) map[string]string {
+	if s.held == nil {
+		return upstreams
+	}
+	held, err := s.held.DropAgentSessions(ctx, client)
+	if err != nil {
+		log.WithFunc("controlmcp.Server.dropHeld").Error(ctx, err, "drop the shared agent sessions")
+		return upstreams
+	}
+	maps.Copy(upstreams, held)
+	return upstreams
 }
 
 // initializeUnified answers an initialize on RootPath, opening the agent session of the default box when it runs; the instructions add the box's own when they fit.
@@ -346,7 +376,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) error {
 	res, err := s.ensure(ctx, box, true, progress)
 	if err == nil {
-		sess.agents.drop(res.BoxID, stale)
+		sess.agents.drop(ctx, res.BoxID, stale)
 	}
 	return err
 }
@@ -382,7 +412,7 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, ref st
 		if !forgot && (retried || status.Code(err) != codes.NotFound) {
 			return box, upstream, err
 		}
-		sess.reset(box, upstream)
+		sess.reset(ctx, box, upstream)
 	}
 }
 
@@ -394,17 +424,44 @@ func (s *Server) connect(ctx context.Context, user string, sess *session, ref st
 	if err != nil {
 		return "", "", err
 	}
+	upstream, err := s.upstream(ctx, user, sess, box, image)
+	return box, upstream, err
+}
+
+// upstream returns the session's agent session on box: the one held here, else the one another api process recorded, else a new one.
+func (s *Server) upstream(ctx context.Context, user string, sess *session, box, image string) (string, error) {
 	a := sess.agents
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.upstream[box] == "" {
-		upstream, err := s.open(ctx, user, box, image, sess.params)
-		if err != nil {
-			return box, "", err
-		}
-		a.upstream[box] = upstream
+	if upstream := a.upstream[box]; upstream != "" && (a.held == nil || time.Since(a.read[box]) < rereadEvery) {
+		return upstream, nil
 	}
-	return box, a.upstream[box], nil
+	if a.held != nil {
+		upstream, err := a.held.AgentSession(ctx, a.client, box)
+		if err != nil {
+			return "", err
+		}
+		if upstream != "" {
+			a.upstream[box], a.read[box] = upstream, time.Now()
+			return upstream, nil
+		}
+	}
+	upstream, err := s.open(ctx, user, box, image, sess.params)
+	if err != nil {
+		return "", err
+	}
+	if a.held != nil {
+		kept, err := a.held.PutAgentSession(ctx, a.client, box, upstream)
+		if err != nil {
+			return "", err
+		}
+		if kept != upstream {
+			s.closeAgents(ctx, user, map[string]string{box: upstream})
+		}
+		upstream, a.read[box] = kept, time.Now()
+	}
+	a.upstream[box] = upstream
+	return upstream, nil
 }
 
 // target returns the box ref names among the caller's, else the session's default box, found again once a grant no longer reaches it, and the image its agent runs; sess.mu is held.
@@ -630,6 +687,14 @@ func toolNames(tools []jsontext.Value) []string {
 }
 
 // failure is the tool result a box call that could not run answers.
+func sessionClient(caller, id string) string {
+	return "session " + caller + "\n" + id
+}
+
+func grantClient(id string) string {
+	return "grant " + id
+}
+
 func failure(err error) *toolResult {
 	if refusal, ok := errors.AsType[toolError](err); ok {
 		return errorText(refusal.Error())
