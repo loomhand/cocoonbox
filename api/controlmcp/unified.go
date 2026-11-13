@@ -422,10 +422,14 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, ref st
 				return use(resp)
 			})
 		}
-		if !forgot && (retried || status.Code(err) != codes.NotFound) {
+		switch {
+		case forgot:
+			sess.agents.retire(ctx, box, upstream)
+		case retried || status.Code(err) != codes.NotFound:
 			return box, upstream, err
+		default:
+			sess.reset(ctx, box, upstream)
 		}
-		sess.reset(ctx, box, upstream)
 	}
 }
 

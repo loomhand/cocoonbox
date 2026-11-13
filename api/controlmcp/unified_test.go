@@ -714,6 +714,27 @@ func TestAFailedRecordReadHidesTheStoreAndARereadFailureKeepsTheHeldSession(t *t
 	}
 }
 
+func TestAColdWakeWithASharedRecordKeepsTheSessionsDefaultBox(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	made := boxes.BoxID("alice")
+	srv.EnableGrants(fakeGrants{boxes: []string{made}})
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
+		t.Fatalf("first call = %q", text)
+	}
+	fake.mu.Lock()
+	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-picked", Name: "picked", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
+	fake.mu.Unlock()
+	srv.EnableGrants(fakeGrants{boxes: []string{made}, chosen: []string{"cb-picked"}})
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	agents.forget()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
+		t.Fatalf("the call that woke the session's default box anew ran as %q, want on %s", text, made)
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string
