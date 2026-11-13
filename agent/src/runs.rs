@@ -126,7 +126,7 @@ async fn finish_run(
     Ok(out)
 }
 
-/// A plan's result as compact JSON, with a screenshot only after an escalation or on request.
+/// A plan's result as compact JSON, with a screenshot on request, else after an error or an escalation that shows its outline.
 async fn finish_plan(
     mut report: Value,
     screenshot: Option<bool>,
@@ -141,7 +141,7 @@ async fn finish_plan(
         }
         None => report["result"].take(),
     };
-    if screenshot.unwrap_or(body["ok"] != true) {
+    if screenshot.unwrap_or(body["ok"] != true && shows_outline(&body)) {
         match shots.shot(max_edge, false).await {
             Ok(shot) => out.image_b64 = shot.map(|s| s.image_b64),
             Err(e) if body.is_object() => body["screenshot_error"] = e.into(),
@@ -150,6 +150,10 @@ async fn finish_plan(
     }
     out.text = body.to_string();
     Ok(out)
+}
+
+fn shows_outline(body: &Value) -> bool {
+    !body["escalate"].is_object() || body["escalate"].get("outline").is_some()
 }
 
 fn timeout_of(timeout_s: Option<u64>) -> Duration {
@@ -360,6 +364,47 @@ mod tests {
         assert_eq!(
             (&body["error"]["kind"], &body["screenshot_error"]),
             (&json!("exception"), &json!("no screen"))
+        );
+    }
+
+    struct Screen;
+
+    impl Shots for Screen {
+        async fn shot(&self, _: Option<u32>, _: bool) -> Result<Option<Shot>, String> {
+            Ok(Some(Shot {
+                image_b64: "png".to_owned(),
+                path: None,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn an_escalation_without_its_outline_takes_no_default_screenshot() {
+        let stopped = json!({"result": {"ok": false, "done": 1, "escalate": {"step": 1, "plan_step": {"type": "{{password}}\n", "secret": true}, "reason": "the password showed in \"Terminal\", so it was not submitted", "window": "Terminal"}}});
+        let unconfirmed = json!({"result": {"ok": false, "done": 2, "escalate": {"step": 2, "reason": "step 2 (type) was sent but not confirmed", "window": "Terminal"}}});
+        let shown = json!({"result": {"ok": false, "done": 0, "escalate": {"step": 0, "plan_step": {"click": "OK"}, "reason": "no OK", "window": "App", "outline": "button Cancel"}}});
+        for (name, report) in [("stopped", &stopped), ("unconfirmed", &unconfirmed)] {
+            let out = finish_plan(report.clone(), None, None, &Screen)
+                .await
+                .unwrap();
+            assert!(out.image_b64.is_none(), "{name}: a default screenshot");
+            let out = finish_plan(report.clone(), Some(true), None, &Screen)
+                .await
+                .unwrap();
+            assert!(out.image_b64.is_some(), "{name}: screenshot true took none");
+        }
+        let out = finish_plan(shown, None, None, &Screen).await.unwrap();
+        assert!(
+            out.image_b64.is_some(),
+            "an escalation with its outline took no screenshot"
+        );
+        let ok = json!({"result": {"ok": true, "done": 1}});
+        assert!(
+            finish_plan(ok, None, None, &Screen)
+                .await
+                .unwrap()
+                .image_b64
+                .is_none()
         );
     }
 
