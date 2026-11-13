@@ -735,6 +735,22 @@ func TestAColdWakeWithASharedRecordKeepsTheSessionsDefaultBox(t *testing.T) {
 	}
 }
 
+func TestAnExpiredSessionOnAnUpgradedBoxRecordsTheNewImagesTools(t *testing.T) {
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+
+	fake.mu.Lock()
+	fake.images["alice"] = "img:2"
+	fake.mu.Unlock()
+	agents.forget()
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	if l := lists.get("img:2"); l.Image != "img:2" {
+		t.Errorf("tool list of the upgraded image = %+v, want it recorded when the session opened again", l)
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string

@@ -117,6 +117,14 @@ func (s *session) reset(ctx context.Context, box, upstream string) {
 	}
 }
 
+func (s *session) reimage(box string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.box == box {
+		s.image = ""
+	}
+}
+
 func (s *Server) openSession(ctx context.Context, caller, id string, params jsontext.Value) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -424,7 +432,9 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, ref st
 		}
 		switch {
 		case forgot:
-			sess.agents.retire(ctx, box, upstream)
+			if sess.agents.retire(ctx, box, upstream) {
+				sess.reimage(box)
+			}
 		case retried || status.Code(err) != codes.NotFound:
 			return box, upstream, err
 		default:
@@ -501,6 +511,17 @@ func (s *Server) target(ctx context.Context, sess *session, ref string) (string,
 	}
 	if g := grantOf(ctx); g != nil && sess.box != "" && !g.Reaches(sess.box) {
 		sess.box, sess.image = "", ""
+	}
+	if sess.box != "" && sess.image == "" {
+		box, err := s.box(ctx, sess.box)
+		switch {
+		case status.Code(err) == codes.NotFound:
+			sess.box = ""
+		case err != nil:
+			return "", "", err
+		default:
+			sess.image = cmp.Or(box.GetImage(), box.GetLatestImage())
+		}
 	}
 	if sess.box == "" {
 		box, image, err := s.defaultBox(ctx)
