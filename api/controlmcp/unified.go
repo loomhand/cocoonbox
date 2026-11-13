@@ -349,7 +349,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, wakeBound)
 	defer cancel()
-	if err = s.wake(wakeCtx, sess, cmp.Or(box, ref), stale, progress); err == nil {
+	if err = s.wake(wakeCtx, user, sess, cmp.Or(box, ref), stale, progress); err == nil {
 		err = s.ready(wakeCtx, user, sess, ref)
 	}
 	if stream != nil {
@@ -373,10 +373,10 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 }
 
 // wake starts or wakes box, the user's first box made anew when it is empty, waits for it within ctx, and drops its agent session while it is still stale.
-func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) error {
+func (s *Server) wake(ctx context.Context, user string, sess *session, box, stale string, progress progressFunc) error {
 	res, err := s.ensure(ctx, box, true, progress)
-	if err == nil {
-		sess.agents.drop(ctx, res.BoxID, stale)
+	if err == nil && sess.agents.drop(ctx, res.BoxID, stale) && sess.agents.held != nil {
+		s.closeAgents(ctx, user, map[string]string{res.BoxID: stale})
 	}
 	return err
 }

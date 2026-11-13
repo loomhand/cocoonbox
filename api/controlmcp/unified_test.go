@@ -365,10 +365,10 @@ func TestRootWakeDropsOnlyTheStaleAgentSession(t *testing.T) {
 	sess := srv.openSession(t.Context(), "alice", "s1", nil)
 	sess.agents.upstream[box] = "newer"
 	ctx := auth.WithUser(t.Context(), "alice")
-	if err := srv.wake(ctx, sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
+	if err := srv.wake(ctx, "alice", sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
 		t.Fatalf("a wake that saw an older agent session: %v, left %q, want the newer one kept", err, sess.agents.upstream[box])
 	}
-	if err := srv.wake(ctx, sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
+	if err := srv.wake(ctx, "alice", sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
 		t.Fatalf("a wake that saw the held agent session: %v, left %q, want it dropped", err, sess.agents.upstream[box])
 	}
 }
@@ -591,8 +591,9 @@ func TestRootCallsOnTwoApiProcessesReachOneAgentSession(t *testing.T) {
 		t.Fatalf("agent saw %v, want one initialize per client", agents.recorded())
 	}
 
-	if rec := serveRoot(srv, http.MethodDelete, aliceToken, mine, ""); rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE on the process that never saw the session = %d", rec.Code)
+	third := newPeerServer(srv, fake, agents, lists, held)
+	if rec := serveRoot(third, http.MethodDelete, aliceToken, mine, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE on a process that never saw the session = %d", rec.Code)
 	}
 	if got := agents.recorded(); got[len(got)-1] != http.MethodDelete {
 		t.Fatalf("agent saw %v, want the other process's agent session closed", got)
@@ -636,6 +637,25 @@ func TestAnAgentSessionGoneOnOneApiProcessMovesBothToItsSuccessor(t *testing.T) 
 	}
 	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 2 {
 		t.Fatalf("agent saw %v, want one successor in all", agents.recorded())
+	}
+}
+
+func TestAWakeOnOneApiProcessMovesTheOtherOffTheSessionThatOutlivedTheSleep(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, callShell))
+
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate)).Result); text != "opened https://example.com" {
+		t.Fatalf("the call that woke the box = %q", text)
+	}
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the other process after the wake = %q, want the page the woken session opened", text)
 	}
 }
 
