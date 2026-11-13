@@ -87,8 +87,9 @@ pub async fn script(
 /// `gui_plan` on shuttle; the saved-flows listing is the caller's.
 pub async fn plan(shuttle: &Client, shots: &impl Shots, args: Value) -> Result<Output, String> {
     let a: PlanArgs = rpc::parse(args)?;
+    let steps = a.params.get("steps").cloned().unwrap_or_default();
     let report = plan_report(shuttle, Value::Object(a.params), timeout_of(a.timeout_s)).await?;
-    finish_plan(report, a.screenshot, a.max_edge, shots).await
+    finish_plan(report, &steps, a.screenshot, a.max_edge, shots).await
 }
 
 /// The report of shuttle's plan executor with `params`: the plan's result only.
@@ -126,14 +127,16 @@ async fn finish_run(
     Ok(out)
 }
 
-/// A plan's result as compact JSON, with a screenshot only after an escalation or on request.
+/// A plan's result as compact JSON, with a screenshot on request, else after an error or an escalation not at a password step.
 async fn finish_plan(
     mut report: Value,
+    steps: &Value,
     screenshot: Option<bool>,
     max_edge: Option<u32>,
     shots: &impl Shots,
 ) -> Result<Output, String> {
     let mut out = Output::default();
+    let at_password = stopped_at_password(&report, steps);
     let mut body = match report.get_mut("error").filter(|e| !e.is_null()) {
         Some(error) => {
             out.is_error = true;
@@ -141,7 +144,7 @@ async fn finish_plan(
         }
         None => report["result"].take(),
     };
-    if screenshot.unwrap_or(body["ok"] != true) {
+    if screenshot.unwrap_or(body["ok"] != true && !at_password) {
         match shots.shot(max_edge, false).await {
             Ok(shot) => out.image_b64 = shot.map(|s| s.image_b64),
             Err(e) if body.is_object() => body["screenshot_error"] = e.into(),
@@ -150,6 +153,20 @@ async fn finish_plan(
     }
     out.text = body.to_string();
     Ok(out)
+}
+
+fn stopped_at_password(report: &Value, steps: &Value) -> bool {
+    let escalate = match &report["escalate"] {
+        Value::Object(_) => &report["escalate"],
+        _ => &report["result"]["escalate"],
+    };
+    let step = match (&escalate["plan_step"], escalate["step"].as_u64()) {
+        (Value::Object(_), _) => &escalate["plan_step"],
+        (_, Some(i)) if steps.is_array() => &steps[i as usize],
+        (_, Some(_)) => return true,
+        (_, None) => return false,
+    };
+    !matches!(step["secret"], Value::Null | Value::Bool(false)) || step["focus"]["secure"] == true
 }
 
 fn timeout_of(timeout_s: Option<u64>) -> Duration {
@@ -360,6 +377,62 @@ mod tests {
         assert_eq!(
             (&body["error"]["kind"], &body["screenshot_error"]),
             (&json!("exception"), &json!("no screen"))
+        );
+    }
+
+    struct Screen;
+
+    impl Shots for Screen {
+        async fn shot(&self, _: Option<u32>, _: bool) -> Result<Option<Shot>, String> {
+            Ok(Some(Shot {
+                image_b64: "png".to_owned(),
+                path: None,
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_plan_that_stopped_at_a_password_step_takes_no_default_screenshot() {
+        let steps = json!([{"app": "Terminal"}, {"type": "{{password}}\n", "secret": true}, {"type": "{{pin}}", "focus": {"secure": true}}, {"key": "Return"}]);
+        let echoed = json!({"result": {"ok": false, "done": 1, "escalate": {"step": 1, "plan_step": {"type": "the password", "secret": true}, "reason": "the password showed in \"Terminal\", so it was not submitted", "window": "Terminal"}}});
+        let late = json!({"ok": false, "done": 1, "error": "the password showed in \"Terminal\" after its Return was sent", "escalate": {"step": 1, "plan_step": {"type": "the password", "secret": true}, "reason": "the password showed in \"Terminal\" after its Return was sent"}, "stopped": {"step": 1}});
+        let unconfirmed = json!({"result": {"ok": false, "done": 2, "escalate": {"step": 2, "reason": "step 2 (type) was sent but not confirmed", "window": "Terminal"}}});
+        let saved_flow = json!({"result": {"ok": false, "done": 2, "escalate": {"step": 2, "reason": "step 2 (type) was sent but not confirmed"}}});
+        for (name, report, plan) in [
+            ("echoed", &echoed, &steps),
+            ("late, as an error", &late, &steps),
+            ("unconfirmed", &unconfirmed, &steps),
+            ("a saved flow's", &saved_flow, &Value::Null),
+        ] {
+            let out = finish_plan(report.clone(), plan, None, None, &Screen)
+                .await
+                .unwrap();
+            assert!(out.image_b64.is_none(), "{name}: a default screenshot");
+            let out = finish_plan(report.clone(), plan, Some(true), None, &Screen)
+                .await
+                .unwrap();
+            assert!(out.image_b64.is_some(), "{name}: screenshot true took none");
+        }
+        let no_outline = json!({"result": {"ok": false, "done": 3, "escalate": {"step": 3, "plan_step": {"key": "Return"}, "reason": "the window stopped answering", "window": "Calc"}}});
+        let unconfirmed_key = json!({"result": {"ok": false, "done": 3, "escalate": {"step": 3, "reason": "step 3 (key) was sent but not confirmed"}}});
+        let after_the_plan = json!({"result": {"ok": false, "done": 4, "escalate": {"step": 4, "reason": "the plan ended with \"Alert\" still in front", "outline": "button OK"}}});
+        for (name, report) in [
+            ("no outline", no_outline),
+            ("an unconfirmed key", unconfirmed_key),
+            ("after the plan", after_the_plan),
+        ] {
+            let out = finish_plan(report, &steps, None, None, &Screen)
+                .await
+                .unwrap();
+            assert!(out.image_b64.is_some(), "{name}: took no screenshot");
+        }
+        let ok = json!({"result": {"ok": true, "done": 1}});
+        assert!(
+            finish_plan(ok, &steps, None, None, &Screen)
+                .await
+                .unwrap()
+                .image_b64
+                .is_none()
         );
     }
 
