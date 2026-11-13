@@ -192,7 +192,7 @@ func main() {
 	httpMux.HandleFunc("GET /healthz", healthz(&draining))
 	control := controlmcp.New(svc, authn)
 	if cfg.Cluster.Shared {
-		control.EnableShared(accounts)
+		control.EnableShared(accounts, shared)
 	}
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)

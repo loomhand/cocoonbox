@@ -345,6 +345,56 @@ func TestAPinHoldsItsSnapshotUntilDeletedOrExpired(t *testing.T) {
 	}
 }
 
+func TestTheFirstRecordedAgentSessionWinsUntilItIsDroppedOrIdle(t *testing.T) {
+	st, dsn := clustertest.OpenDSN(t)
+	ctx := t.Context()
+	if up, err := st.AgentSession(ctx, "grant g1", "cb-1"); err != nil || up != "" {
+		t.Fatalf("AgentSession before any = %q, %v", up, err)
+	}
+	if kept, err := st.PutAgentSession(ctx, "grant g1", "cb-1", "up-a"); err != nil || kept != "up-a" {
+		t.Fatalf("first PutAgentSession = %q, %v", kept, err)
+	}
+	if kept, err := st.PutAgentSession(ctx, "grant g1", "cb-1", "up-b"); err != nil || kept != "up-a" {
+		t.Fatalf("second PutAgentSession = %q, %v, want the first kept", kept, err)
+	}
+	if err := st.DropAgentSession(ctx, "grant g1", "cb-1", "up-b"); err != nil {
+		t.Fatalf("DropAgentSession of another: %v", err)
+	}
+	if up, err := st.AgentSession(ctx, "grant g1", "cb-1"); err != nil || up != "up-a" {
+		t.Fatalf("after dropping a session it does not hold = %q, %v", up, err)
+	}
+	if err := st.DropAgentSession(ctx, "grant g1", "cb-1", "up-a"); err != nil {
+		t.Fatalf("DropAgentSession: %v", err)
+	}
+	if kept, err := st.PutAgentSession(ctx, "grant g1", "cb-1", "up-c"); err != nil || kept != "up-c" {
+		t.Fatalf("PutAgentSession after the drop = %q, %v", kept, err)
+	}
+	if _, err := st.PutAgentSession(ctx, "grant g1", "cb-2", "up-d"); err != nil {
+		t.Fatalf("PutAgentSession cb-2: %v", err)
+	}
+	if held, err := st.DropAgentSessions(ctx, "grant g1"); err != nil || len(held) != 2 || held["cb-1"] != "up-c" || held["cb-2"] != "up-d" {
+		t.Fatalf("DropAgentSessions = %v, %v", held, err)
+	}
+
+	if _, err := st.PutAgentSession(ctx, "session s1", "cb-1", "up-old"); err != nil {
+		t.Fatalf("PutAgentSession s1: %v", err)
+	}
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(ctx, "UPDATE agent_sessions SET read_at = now() - interval '25 hours'"); err != nil {
+		t.Fatalf("age the record: %v", err)
+	}
+	if _, err := st.PutAgentSession(ctx, "session s2", "cb-1", "up-new"); err != nil {
+		t.Fatalf("PutAgentSession s2: %v", err)
+	}
+	if up, err := st.AgentSession(ctx, "session s1", "cb-1"); err != nil || up != "" {
+		t.Errorf("a record unread for a day after the next put = %q, %v, want it purged", up, err)
+	}
+}
+
 func TestLongLocksLeaveTheShortLocksTheirConnections(t *testing.T) {
 	st := clustertest.Open(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

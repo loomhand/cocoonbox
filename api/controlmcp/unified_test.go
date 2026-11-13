@@ -22,6 +22,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
@@ -37,6 +38,8 @@ const (
 	listRequest  = `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`
 	shellAnswer  = "ran shell on "
 	controlTools = 9
+	navigate     = `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"browser_navigate","arguments":{"url":"https://example.com"}}}`
+	snapshot     = `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"browser_snapshot","arguments":{}}}`
 	accountTools = `[{"name":"mock_list_items","annotations":{"readOnlyHint":true}},{"name":"mock_create_item","annotations":{"destructiveHint":true}},{"name":"shell"},{"name":"box_list"}]`
 	callAccount  = `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"mock_list_items","arguments":{"q":"x"}}}`
 )
@@ -561,6 +564,205 @@ func TestRootStreamsListChangedToAGrantOfAllAccounts(t *testing.T) {
 	}
 }
 
+func TestRootCallsOnTwoApiProcessesReachOneAgentSession(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	grants := fakeGrants{boxes: []string{boxes.BoxID("alice")}}
+	srv.EnableGrants(grants)
+	peer.EnableGrants(grants)
+
+	session := serveRoot(srv, http.MethodPost, grantToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, session, navigate)).Result); text != "opened https://example.com" {
+		t.Fatalf("navigate on the first process = %q", text)
+	}
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, grantToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("a grant's snapshot on the other process = %q, want the page the navigate opened", text)
+	}
+
+	mine := serveRoot(peer, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, mine, navigate))
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, mine, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("a user token's snapshot on the other process = %q", text)
+	}
+	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 2 {
+		t.Fatalf("agent saw %v, want one initialize per client", agents.recorded())
+	}
+
+	third := newPeerServer(srv, fake, agents, lists, held)
+	if rec := serveRoot(third, http.MethodDelete, aliceToken, mine, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("DELETE on a process that never saw the session = %d", rec.Code)
+	}
+	if got := agents.recorded(); got[len(got)-1] != http.MethodDelete {
+		t.Fatalf("agent saw %v, want the other process's agent session closed", got)
+	}
+	if up, err := held.AgentSession(t.Context(), sessionClient("alice", mine), boxes.BoxID("alice")); err != nil || up != "" {
+		t.Errorf("record after DELETE = %q, %v, want none", up, err)
+	}
+}
+
+func TestTwoApiProcessesOpeningAtOnceKeepTheFirstRecordedAgentSession(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, &missOnce{AgentSessionStore: held})
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate))
+
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the process that lost the race read %q, want the recorded session's page", text)
+	}
+	if want := []string{"initialize", "tools/call", "initialize", "DELETE", "tools/call"}; !slices.Equal(agents.recorded(), want) {
+		t.Fatalf("agent saw %v, want the losing process to close its own session, %v", agents.recorded(), want)
+	}
+}
+
+func TestAnAgentSessionGoneOnOneApiProcessMovesBothToItsSuccessor(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, callShell))
+
+	agents.forget()
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate))
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the other process after the session went = %q, want the successor's page", text)
+	}
+	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 2 {
+		t.Fatalf("agent saw %v, want one successor in all", agents.recorded())
+	}
+}
+
+func TestAWakeOnOneApiProcessKeepsBothOnTheSessionThatOutlivedTheSleep(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, callShell))
+
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate)).Result); text != "opened https://example.com" {
+		t.Fatalf("the call that woke the box = %q", text)
+	}
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the other process after the wake = %q, want the page the woken session opened", text)
+	}
+	if calls := agents.calledOn(); len(slices.Compact(calls)) != 1 {
+		t.Errorf("calls went to agent sessions %v, want the one that outlived the sleep", calls)
+	}
+	if got := agents.recorded(); !slices.Contains(got, http.MethodDelete) {
+		t.Errorf("agent saw %v, want the probe session the wake opened closed", got)
+	}
+}
+
+func TestAColdWakeOnOneApiProcessMovesBothToANewSession(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, callShell))
+
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	agents.forget()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate)).Result); text != "opened https://example.com" {
+		t.Fatalf("the call that woke the box anew = %q", text)
+	}
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the other process after a cold wake = %q, want the new session's page", text)
+	}
+}
+
+func TestAFailedRecordReadHidesTheStoreAndARereadFailureKeepsTheHeldSession(t *testing.T) {
+	held := &flakyStore{AgentSessionStore: clustertest.Open(t), fail: errors.New("failed to connect to `user=cocoonbox database=cluster`: 10.1.2.3:5432")}
+	srv, _, _, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	if got := refusal(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))); got != status.Convert(errSessionStore).Message() {
+		t.Fatalf("a call whose record read failed = %q, want the store hidden", got)
+	}
+
+	held.set(nil)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	held.set(errors.New("connection reset"))
+	srv.mu.Lock()
+	sess := srv.sessions["alice\n"+session]
+	srv.mu.Unlock()
+	sess.agents.mu.Lock()
+	sess.agents.read[boxes.BoxID("alice")] = time.Now().Add(-2 * rereadEvery)
+	sess.agents.mu.Unlock()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
+		t.Fatalf("a call whose hourly reread failed = %q, want the held session used", text)
+	}
+	before := held.readCount()
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	if after := held.readCount(); after != before {
+		t.Errorf("the call after a failed reread read the record %d more times, want it to wait for the next hour", after-before)
+	}
+}
+
+func TestAColdWakeWithASharedRecordKeepsTheSessionsDefaultBox(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	made := boxes.BoxID("alice")
+	srv.EnableGrants(fakeGrants{boxes: []string{made}})
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
+		t.Fatalf("first call = %q", text)
+	}
+	fake.mu.Lock()
+	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-picked", Name: "picked", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
+	fake.mu.Unlock()
+	srv.EnableGrants(fakeGrants{boxes: []string{made}, chosen: []string{"cb-picked"}})
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	agents.forget()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result); text != shellAnswer+made {
+		t.Fatalf("the call that woke the session's default box anew ran as %q, want on %s", text, made)
+	}
+}
+
+func TestAnExpiredSessionOnAnUpgradedBoxRecordsTheNewImagesTools(t *testing.T) {
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+
+	fake.mu.Lock()
+	fake.images["alice"] = "img:2"
+	fake.mu.Unlock()
+	agents.forget()
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	if l := lists.get("img:2"); l.Image != "img:2" {
+		t.Errorf("tool list of the upgraded image = %+v, want it recorded when the session opened again", l)
+	}
+}
+
+func TestAPinnedBoxGoneBeforeItsImageIsReadAgainFallsBackToTheDefaultBox(t *testing.T) {
+	srv, _, _, _ := newUnifiedServer(t)
+	sess := srv.openSession(t.Context(), "alice", "s1", nil)
+	sess.mu.Lock()
+	sess.box = "cb-gone"
+	box, image, err := srv.target(auth.WithUser(t.Context(), "alice"), sess, "")
+	sess.mu.Unlock()
+	if err != nil || box != boxes.BoxID("alice") || image != "img:1" {
+		t.Fatalf("target with a pinned box that went = %q, %q, %v, want the default box", box, image, err)
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string
@@ -588,6 +790,7 @@ type fakeAgents struct {
 	posted   []string
 	called   []string
 	sessions map[string]bool
+	pages    map[string]string
 	deaf     bool
 	lost     bool
 	hold     *sync.WaitGroup
@@ -650,7 +853,22 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{"tools":`+boxTools+`}}`))
 	default:
 		a.called = append(a.called, session)
-		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":`+string(msg.ID)+`,"result":{"content":[{"type":"text","text":"`+shellAnswer+box+`"}]}}`))
+		text := shellAnswer + box
+		var call struct {
+			Params callParams `json:"params"`
+		}
+		_ = json.Unmarshal(body, &call)
+		switch call.Params.Name {
+		case "browser_navigate":
+			var args struct {
+				URL string `json:"url"`
+			}
+			_ = json.Unmarshal(call.Params.Arguments, &args)
+			a.pages[session], text = args.URL, "opened "+args.URL
+		case "browser_snapshot":
+			text = "page " + a.pages[session]
+		}
+		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":`+string(msg.ID)+`,"result":{"content":[{"type":"text","text":"`+text+`"}]}}`))
 	}
 }
 
@@ -682,6 +900,63 @@ func (a *fakeAgents) recorded() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return slices.Clone(a.sent)
+}
+
+// missOnce reads no record once, as a process that looked before another recorded its session.
+type missOnce struct {
+	AgentSessionStore
+	missed bool
+}
+
+func (m *missOnce) AgentSession(ctx context.Context, client, box string) (string, error) {
+	if !m.missed {
+		m.missed = true
+		return "", nil
+	}
+	return m.AgentSessionStore.AgentSession(ctx, client, box)
+}
+
+type flakyStore struct {
+	AgentSessionStore
+
+	mu    sync.Mutex
+	fail  error
+	reads int
+}
+
+func (f *flakyStore) AgentSession(ctx context.Context, client, box string) (string, error) {
+	f.mu.Lock()
+	f.reads++
+	f.mu.Unlock()
+	if err := f.failure(); err != nil {
+		return "", err
+	}
+	return f.AgentSessionStore.AgentSession(ctx, client, box)
+}
+
+func (f *flakyStore) PutAgentSession(ctx context.Context, client, box, upstream string) (string, error) {
+	if err := f.failure(); err != nil {
+		return "", err
+	}
+	return f.AgentSessionStore.PutAgentSession(ctx, client, box, upstream)
+}
+
+func (f *flakyStore) set(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail = err
+}
+
+func (f *flakyStore) readCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
+}
+
+func (f *flakyStore) failure() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail
 }
 
 type fakeConnectors struct {
@@ -800,10 +1075,17 @@ func (f *fakeLists) get(image string) users.ToolList {
 func newUnifiedServer(t *testing.T) (*Server, *fakeBoxes, *fakeAgents, *fakeLists) {
 	t.Helper()
 	srv, fake := newTestServer(t)
-	agents := &fakeAgents{boxes: fake, sessions: map[string]bool{}}
+	agents := &fakeAgents{boxes: fake, sessions: map[string]bool{}, pages: map[string]string{}}
 	lists := &fakeLists{lists: map[string]users.ToolList{}}
 	srv.EnableBoxTools(agents, lists)
 	return srv, fake, agents, lists
+}
+
+func newPeerServer(srv *Server, fake *fakeBoxes, agents *fakeAgents, lists *fakeLists, held AgentSessionStore) *Server {
+	peer := New(fake, srv.authn)
+	peer.EnableBoxTools(agents, lists)
+	peer.EnableShared(nil, held)
+	return peer
 }
 
 func serveRoot(srv *Server, method, token, session, body string) *httptest.ResponseRecorder {
