@@ -47,7 +47,8 @@ const (
 )
 
 var (
-	errNoBoxYet = status.Error(codes.Unavailable, "the user has no box yet")
+	errNoBoxYet     = status.Error(codes.Unavailable, "the user has no box yet")
+	errSessionStore = status.Error(codes.Internal, "the api could not read its record of the box's agent session; try again")
 
 	boxField = []byte(`"box"`)
 
@@ -62,13 +63,25 @@ type agentSessions struct {
 	mu       sync.Mutex
 	upstream map[string]string
 	read     map[string]time.Time
+	probe    map[string]bool
 }
 
 func newAgentSessions(client string, held AgentSessionStore) *agentSessions {
-	return &agentSessions{client: client, held: held, upstream: map[string]string{}, read: map[string]time.Time{}}
+	return &agentSessions{client: client, held: held, upstream: map[string]string{}, read: map[string]time.Time{}, probe: map[string]bool{}}
 }
 
-func (a *agentSessions) drop(ctx context.Context, box, upstream string) bool {
+func (a *agentSessions) drop(box, upstream string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.upstream[box] != upstream {
+		return false
+	}
+	delete(a.upstream, box)
+	a.probe[box] = true
+	return true
+}
+
+func (a *agentSessions) retire(ctx context.Context, box, upstream string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.upstream[box] != upstream {
@@ -76,7 +89,7 @@ func (a *agentSessions) drop(ctx context.Context, box, upstream string) bool {
 	}
 	delete(a.upstream, box)
 	if a.held != nil {
-		log.WithFunc("controlmcp.agentSessions.drop").Error(ctx, a.held.DropAgentSession(ctx, a.client, box, upstream), "drop the shared agent session")
+		log.WithFunc("controlmcp.agentSessions.retire").Error(ctx, a.held.DropAgentSession(ctx, a.client, box, upstream), "drop the shared agent session")
 	}
 	return true
 }
@@ -94,7 +107,7 @@ type session struct {
 
 // reset drops box's agent session while it is still upstream, and then the default box when it is box, so the next call finds both again.
 func (s *session) reset(ctx context.Context, box, upstream string) {
-	if !s.agents.drop(ctx, box, upstream) {
+	if !s.agents.retire(ctx, box, upstream) {
 		return
 	}
 	s.mu.Lock()
@@ -349,7 +362,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, wakeBound)
 	defer cancel()
-	if err = s.wake(wakeCtx, user, sess, cmp.Or(box, ref), stale, progress); err == nil {
+	if err = s.wake(wakeCtx, sess, cmp.Or(box, ref), stale, progress); err == nil {
 		err = s.ready(wakeCtx, user, sess, ref)
 	}
 	if stream != nil {
@@ -373,10 +386,10 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 }
 
 // wake starts or wakes box, the user's first box made anew when it is empty, waits for it within ctx, and drops its agent session while it is still stale.
-func (s *Server) wake(ctx context.Context, user string, sess *session, box, stale string, progress progressFunc) error {
+func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) error {
 	res, err := s.ensure(ctx, box, true, progress)
-	if err == nil && sess.agents.drop(ctx, res.BoxID, stale) && sess.agents.held != nil {
-		s.closeAgents(ctx, user, map[string]string{res.BoxID: stale})
+	if err == nil {
+		sess.agents.drop(res.BoxID, stale)
 	}
 	return err
 }
@@ -430,18 +443,24 @@ func (s *Server) connect(ctx context.Context, user string, sess *session, ref st
 
 // upstream returns the session's agent session on box: the one held here, else the one another api process recorded, else a new one.
 func (s *Server) upstream(ctx context.Context, user string, sess *session, box, image string) (string, error) {
+	logger := log.WithFunc("controlmcp.Server.upstream")
 	a := sess.agents
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if upstream := a.upstream[box]; upstream != "" && (a.held == nil || time.Since(a.read[box]) < rereadEvery) {
-		return upstream, nil
+	held := a.upstream[box]
+	if held != "" && (a.held == nil || time.Since(a.read[box]) < rereadEvery) {
+		return held, nil
 	}
-	if a.held != nil {
+	if a.held != nil && !a.probe[box] {
 		upstream, err := a.held.AgentSession(ctx, a.client, box)
-		if err != nil {
-			return "", err
-		}
-		if upstream != "" {
+		switch {
+		case err != nil && held != "":
+			logger.Error(ctx, err, "read the shared agent session again")
+			return held, nil
+		case err != nil:
+			logger.Error(ctx, err, "read the shared agent session")
+			return "", errSessionStore
+		case upstream != "":
 			a.upstream[box], a.read[box] = upstream, time.Now()
 			return upstream, nil
 		}
@@ -450,10 +469,12 @@ func (s *Server) upstream(ctx context.Context, user string, sess *session, box, 
 	if err != nil {
 		return "", err
 	}
+	delete(a.probe, box)
 	if a.held != nil {
 		kept, err := a.held.PutAgentSession(ctx, a.client, box, upstream)
 		if err != nil {
-			return "", err
+			logger.Error(ctx, err, "record the shared agent session")
+			return "", errSessionStore
 		}
 		if kept != upstream {
 			s.closeAgents(ctx, user, map[string]string{box: upstream})

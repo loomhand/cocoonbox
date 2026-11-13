@@ -138,7 +138,7 @@ func (s *Server) EnableGrants(grants Grants) {
 	s.grants = grants
 }
 
-// EnableShared runs with the other api processes: grants sync their users through accounts, and every process uses the agent sessions held records.
+// EnableShared runs alongside other api processes: grants sync their users through accounts, and held shares each client's agent sessions between the processes.
 func (s *Server) EnableShared(accounts *users.Service, held AgentSessionStore) {
 	s.accounts, s.held = accounts, held
 }

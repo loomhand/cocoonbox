@@ -365,10 +365,10 @@ func TestRootWakeDropsOnlyTheStaleAgentSession(t *testing.T) {
 	sess := srv.openSession(t.Context(), "alice", "s1", nil)
 	sess.agents.upstream[box] = "newer"
 	ctx := auth.WithUser(t.Context(), "alice")
-	if err := srv.wake(ctx, "alice", sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
+	if err := srv.wake(ctx, sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
 		t.Fatalf("a wake that saw an older agent session: %v, left %q, want the newer one kept", err, sess.agents.upstream[box])
 	}
-	if err := srv.wake(ctx, "alice", sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
+	if err := srv.wake(ctx, sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
 		t.Fatalf("a wake that saw the held agent session: %v, left %q, want it dropped", err, sess.agents.upstream[box])
 	}
 }
@@ -640,7 +640,7 @@ func TestAnAgentSessionGoneOnOneApiProcessMovesBothToItsSuccessor(t *testing.T) 
 	}
 }
 
-func TestAWakeOnOneApiProcessMovesTheOtherOffTheSessionThatOutlivedTheSleep(t *testing.T) {
+func TestAWakeOnOneApiProcessKeepsBothOnTheSessionThatOutlivedTheSleep(t *testing.T) {
 	held := clustertest.Open(t)
 	srv, fake, agents, lists := newUnifiedServer(t)
 	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
@@ -656,6 +656,56 @@ func TestAWakeOnOneApiProcessMovesTheOtherOffTheSessionThatOutlivedTheSleep(t *t
 	}
 	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
 		t.Fatalf("the other process after the wake = %q, want the page the woken session opened", text)
+	}
+	if calls := agents.calledOn(); len(slices.Compact(calls)) != 1 {
+		t.Errorf("calls went to agent sessions %v, want the one that outlived the sleep", calls)
+	}
+	if got := agents.recorded(); !slices.Contains(got, http.MethodDelete) {
+		t.Errorf("agent saw %v, want the probe session the wake opened closed", got)
+	}
+}
+
+func TestAColdWakeOnOneApiProcessMovesBothToANewSession(t *testing.T) {
+	held := clustertest.Open(t)
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	peer := newPeerServer(srv, fake, agents, lists, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, callShell))
+
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	agents.forget()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, navigate)).Result); text != "opened https://example.com" {
+		t.Fatalf("the call that woke the box anew = %q", text)
+	}
+	if text := callText(t, decode(t, serveRoot(peer, http.MethodPost, aliceToken, session, snapshot)).Result); text != "page https://example.com" {
+		t.Fatalf("the other process after a cold wake = %q, want the new session's page", text)
+	}
+}
+
+func TestAFailedRecordReadHidesTheStoreAndARereadFailureKeepsTheHeldSession(t *testing.T) {
+	held := &flakyStore{AgentSessionStore: clustertest.Open(t), fail: errors.New("failed to connect to `user=cocoonbox database=cluster`: 10.1.2.3:5432")}
+	srv, _, _, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
+	srv.EnableShared(nil, held)
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	if got := refusal(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))); got != status.Convert(errSessionStore).Message() {
+		t.Fatalf("a call whose record read failed = %q, want the store hidden", got)
+	}
+
+	held.set(nil)
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	held.set(errors.New("connection reset"))
+	srv.mu.Lock()
+	sess := srv.sessions["alice\n"+session]
+	srv.mu.Unlock()
+	sess.agents.mu.Lock()
+	sess.agents.read[boxes.BoxID("alice")] = time.Now().Add(-2 * rereadEvery)
+	sess.agents.mu.Unlock()
+	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
+		t.Fatalf("a call whose hourly reread failed = %q, want the held session used", text)
 	}
 }
 
@@ -810,6 +860,39 @@ func (m *missOnce) AgentSession(ctx context.Context, client, box string) (string
 		return "", nil
 	}
 	return m.AgentSessionStore.AgentSession(ctx, client, box)
+}
+
+type flakyStore struct {
+	AgentSessionStore
+
+	mu   sync.Mutex
+	fail error
+}
+
+func (f *flakyStore) AgentSession(ctx context.Context, client, box string) (string, error) {
+	if err := f.failure(); err != nil {
+		return "", err
+	}
+	return f.AgentSessionStore.AgentSession(ctx, client, box)
+}
+
+func (f *flakyStore) PutAgentSession(ctx context.Context, client, box, upstream string) (string, error) {
+	if err := f.failure(); err != nil {
+		return "", err
+	}
+	return f.AgentSessionStore.PutAgentSession(ctx, client, box, upstream)
+}
+
+func (f *flakyStore) set(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail = err
+}
+
+func (f *flakyStore) failure() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.fail
 }
 
 type fakeConnectors struct {
