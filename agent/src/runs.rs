@@ -395,7 +395,7 @@ mod tests {
     async fn a_plan_that_stopped_at_a_password_step_takes_no_default_screenshot() {
         let steps = json!([{"app": "Terminal"}, {"type": "{{password}}\n", "secret": true}, {"type": "{{pin}}", "focus": {"secure": true}}, {"key": "Return"}]);
         let echoed = json!({"result": {"ok": false, "done": 1, "escalate": {"step": 1, "plan_step": {"type": "the password", "secret": true}, "reason": "the password showed in \"Terminal\", so it was not submitted", "window": "Terminal"}}});
-        let late = json!({"ok": false, "done": 1, "error": "the password showed in \"Terminal\" after its Return was sent", "escalate": {"step": 1, "plan_step": {"type": "the password", "secret": true}, "reason": "the password showed in \"Terminal\" after its Return was sent"}});
+        let late = json!({"ok": false, "done": 1, "error": "the password showed in \"Terminal\" after its Return was sent", "escalate": {"step": 1, "plan_step": {"type": "the password", "secret": true}, "reason": "the password showed in \"Terminal\" after its Return was sent"}, "stopped": {"step": 1}});
         let unconfirmed = json!({"result": {"ok": false, "done": 2, "escalate": {"step": 2, "reason": "step 2 (type) was sent but not confirmed", "window": "Terminal"}}});
         let saved_flow = json!({"result": {"ok": false, "done": 2, "escalate": {"step": 2, "reason": "step 2 (type) was sent but not confirmed"}}});
         for (name, report, plan) in [
