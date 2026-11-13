@@ -48,7 +48,7 @@ const (
 
 var (
 	errNoBoxYet     = status.Error(codes.Unavailable, "the user has no box yet")
-	errSessionStore = status.Error(codes.Internal, "the api could not read its record of the box's agent session; try again")
+	errSessionStore = status.Error(codes.Internal, "the api could not use its record of the box's agent session; try again")
 
 	boxField = []byte(`"box"`)
 
