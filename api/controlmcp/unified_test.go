@@ -707,6 +707,11 @@ func TestAFailedRecordReadHidesTheStoreAndARereadFailureKeepsTheHeldSession(t *t
 	if text := callText(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result); text != shellAnswer+boxes.BoxID("alice") {
 		t.Fatalf("a call whose hourly reread failed = %q, want the held session used", text)
 	}
+	before := held.readCount()
+	decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	if after := held.readCount(); after != before {
+		t.Errorf("the call after a failed reread read the record %d more times, want it to wait for the next hour", after-before)
+	}
 }
 
 type fakeGrants struct {
@@ -865,11 +870,15 @@ func (m *missOnce) AgentSession(ctx context.Context, client, box string) (string
 type flakyStore struct {
 	AgentSessionStore
 
-	mu   sync.Mutex
-	fail error
+	mu    sync.Mutex
+	fail  error
+	reads int
 }
 
 func (f *flakyStore) AgentSession(ctx context.Context, client, box string) (string, error) {
+	f.mu.Lock()
+	f.reads++
+	f.mu.Unlock()
 	if err := f.failure(); err != nil {
 		return "", err
 	}
@@ -887,6 +896,12 @@ func (f *flakyStore) set(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fail = err
+}
+
+func (f *flakyStore) readCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads
 }
 
 func (f *flakyStore) failure() error {

@@ -456,6 +456,7 @@ func (s *Server) upstream(ctx context.Context, user string, sess *session, box, 
 		switch {
 		case err != nil && held != "":
 			logger.Error(ctx, err, "read the shared agent session again")
+			a.read[box] = time.Now()
 			return held, nil
 		case err != nil:
 			logger.Error(ctx, err, "read the shared agent session")
