@@ -687,19 +687,19 @@ func toolNames(tools []jsontext.Value) []string {
 }
 
 // failure is the tool result a box call that could not run answers.
+func failure(err error) *toolResult {
+	if refusal, ok := errors.AsType[toolError](err); ok {
+		return errorText(refusal.Error())
+	}
+	return errorText(status.Convert(err).Message())
+}
+
 func sessionClient(caller, id string) string {
 	return "session " + caller + "\n" + id
 }
 
 func grantClient(id string) string {
 	return "grant " + id
-}
-
-func failure(err error) *toolResult {
-	if refusal, ok := errors.AsType[toolError](err); ok {
-		return errorText(refusal.Error())
-	}
-	return errorText(status.Convert(err).Message())
 }
 
 func agentRequest(ctx context.Context, method string, body []byte, upstream, accept string) *http.Request {
