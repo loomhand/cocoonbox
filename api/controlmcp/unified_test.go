@@ -751,6 +751,18 @@ func TestAnExpiredSessionOnAnUpgradedBoxRecordsTheNewImagesTools(t *testing.T) {
 	}
 }
 
+func TestAPinnedBoxGoneBeforeItsImageIsReadAgainFallsBackToTheDefaultBox(t *testing.T) {
+	srv, _, _, _ := newUnifiedServer(t)
+	sess := srv.openSession(t.Context(), "alice", "s1", nil)
+	sess.mu.Lock()
+	sess.box = "cb-gone"
+	box, image, err := srv.target(auth.WithUser(t.Context(), "alice"), sess, "")
+	sess.mu.Unlock()
+	if err != nil || box != boxes.BoxID("alice") || image != "img:1" {
+		t.Fatalf("target with a pinned box that went = %q, %q, %v, want the default box", box, image, err)
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string

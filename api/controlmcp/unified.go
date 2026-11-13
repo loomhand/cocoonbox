@@ -513,14 +513,14 @@ func (s *Server) target(ctx context.Context, sess *session, ref string) (string,
 		sess.box, sess.image = "", ""
 	}
 	if sess.box != "" && sess.image == "" {
-		box, err := s.box(ctx, sess.box)
-		switch {
-		case status.Code(err) == codes.NotFound:
-			sess.box = ""
-		case err != nil:
+		list, err := s.visible(ctx)
+		if err != nil {
 			return "", "", err
-		default:
-			sess.image = cmp.Or(box.GetImage(), box.GetLatestImage())
+		}
+		if i := slices.IndexFunc(list, func(b *controlv1.Box) bool { return b.GetId() == sess.box }); i >= 0 {
+			sess.image = cmp.Or(list[i].GetImage(), list[i].GetLatestImage())
+		} else {
+			sess.box = ""
 		}
 	}
 	if sess.box == "" {
