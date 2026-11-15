@@ -10,7 +10,7 @@ This box is an Ubuntu 24.04 VM without a desktop that runs Android 16 (720x1280)
 ## GUI plans and scripts
 
 - gui_plan and script_run use the desk API of `/opt/desk/lib/desk.mts`; on this box its calls act on Android.
-- A window is an app's activity or dialog, titled `<title> - <package>`, such as `Settings - com.android.settings`; `{app: "<package>"}` opens an app; it stops when a listed window of the app is not in front, since a device brings a window to the front only by launching its app.
+- A window is an app's activity or dialog, titled `<title> - <package>`, such as `Settings - com.android.settings`; `{app: "<package>"}` opens an app; a listed window of it that is not in front stops the step, since a device brings a window to the front only by launching its app: dismiss what is in front (`{key: "back"}`) or launch the app.
 - Elements are the accessibility nodes on the screen: a list row is named by its text, a row with a switch is one check box. A press scrolls an element in a scrollable list into view, also from under the navigation bar or the keyboard; any other element off the screen escalates. A list row that Android has not loaded yet is not in the tree: swipe the list first.
 - Keys keep their desktop meaning (`home` and `end` move in a text field); the phone's keys are `back`, `home_screen` and `recents`.
 - One accessibility client runs at a time: while shuttle's UI server runs, `uiautomator dump` fails; use computer_state or `desk snapshot`.
