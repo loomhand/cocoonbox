@@ -35,7 +35,7 @@ func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
 	clustertest.WaitFor(t, "b takes a's save as ended", func() bool {
 		var err error
 		op, err = b.svc.SaveState(b.ctx, &controlv1.BoxRef{BoxId: aliceBox})
-		return err == nil
+		return err == nil && b.svc.ops.runsHere(op.GetId())
 	})
 	if events := watch(t, b.svc, b.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("b's save ended with %v", events[len(events)-1])
@@ -47,7 +47,7 @@ func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
 	clustertest.WaitFor(t, "a takes b's save as ended", func() bool {
 		var err error
 		op, err = a.svc.SaveState(a.ctx, &controlv1.BoxRef{BoxId: aliceBox})
-		return err == nil
+		return err == nil && a.svc.ops.runsHere(op.GetId())
 	})
 	if events := watch(t, a.svc, a.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("a's save ended with %v", events[len(events)-1])
