@@ -564,7 +564,7 @@ fn desk_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("desk"),
         description: Cow::Borrowed(
-            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?, since?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\", repeat?}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. x, y, w, h and bounds are screen pixels, unlike computer_act's screenshot pixels. snapshot with since: true answers only what changed since your last snapshot of that window, or the whole tree with diff: false. key with repeat sends the keys 1 to 256 times. A key or type error that counts the presses or lines sent before it may have taken effect: read the screen before you send the rest. For GUI work of several steps use gui_plan.",
+            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?, since?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\", repeat?}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. x, y, w, h and bounds are screen pixels, unlike computer_act's screenshot pixels. snapshot with since: true answers only what changed since your last since snapshot of that window, or the whole tree with diff: false. key with repeat sends the keys 1 to 256 times. A key or type error that counts the presses or lines sent before it may have taken effect: read the screen before you send the rest. For GUI work of several steps use gui_plan.",
         ),
         parameters: json!({
             "type": "object",
@@ -577,7 +577,7 @@ fn desk_tool() -> ToolSpec {
                 "action": {"type": "string"},
                 "keys": {"type": "string"},
                 "text": {"description": "type: the text; snapshot and read: true for text"},
-                "since": {"type": "boolean", "description": "snapshot: only the changes since your last snapshot of the window"},
+                "since": {"type": "boolean", "description": "snapshot: only the changes since your last since snapshot of the window"},
                 "repeat": {"type": "integer", "description": "key: how many times to send the keys, 1 to 256, default 1"},
                 "x": {"type": "number"},
                 "y": {"type": "number"},
