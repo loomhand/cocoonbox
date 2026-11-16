@@ -120,6 +120,7 @@ type Registry interface {
 	AccountDisabled(ctx context.Context, owner string) (bool, error)
 	AccountExists(ctx context.Context, owner string) (bool, error)
 	OnBoxes(fn func(owner string))
+	SyncUser(ctx context.Context, owner string) error
 }
 
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
@@ -529,9 +530,12 @@ func (s *Service) lockShared(ctx context.Context, user string) (func(), error) {
 	return s.lockStarts(ctx, user)
 }
 
-// syncUser reads user's operations and heads from the shared table, so a start under the user's lock never acts on what this process's cache has yet to learn.
+// syncUser reads user's operations, boxes and heads from the shared tables, so a start under the user's lock never acts on what this process's cache has yet to learn.
 func (s *Service) syncUser(ctx context.Context, user string) error {
 	if err := s.ops.reload(ctx, user); err != nil {
+		return err
+	}
+	if err := s.registry.SyncUser(ctx, user); err != nil {
 		return err
 	}
 	if s.state != nil {

@@ -494,6 +494,10 @@ func (r *fakeRegistry) AccountExists(context.Context, string) (bool, error) {
 	return true, nil
 }
 
+func (r *fakeRegistry) SyncUser(context.Context, string) error {
+	return nil
+}
+
 func (r *fakeRegistry) HasBox(owner, id string) bool {
 	return slices.ContainsFunc(r.Boxes(owner), func(b users.Box) bool { return b.ID == id })
 }
@@ -588,31 +592,32 @@ type credCall struct {
 
 // fakeMachines keeps machines in memory; each pushed event reaches exactly one live Watch.
 type fakeMachines struct {
-	mu          sync.Mutex
-	machines    map[string]machines.Machine
-	deleted     []string
-	clock       int64
-	specs       []machines.Spec
-	pending     []machines.Machine
-	pushed      chan struct{}
-	changed     chan struct{}
-	lists       int
-	revision    int64
-	ensureErr   error
-	deleteErr   error
-	onDeliver   func()
-	addr        string
-	addrErr     error
-	execErr     error
-	execs       []execCall
-	egress      []string
-	creds       []credCall
-	keyPushes   []credCall
-	credErr     error
-	held        map[string]map[string]string
-	drops       int
-	keepMissing bool
-	strictAddr  bool
+	mu           sync.Mutex
+	machines     map[string]machines.Machine
+	deleted      []string
+	clock        int64
+	specs        []machines.Spec
+	pending      []machines.Machine
+	pushed       chan struct{}
+	changed      chan struct{}
+	lists        int
+	revision     int64
+	ensureErr    error
+	deleteErr    error
+	beforeDelete func(id string)
+	onDeliver    func()
+	addr         string
+	addrErr      error
+	execErr      error
+	execs        []execCall
+	egress       []string
+	creds        []credCall
+	keyPushes    []credCall
+	credErr      error
+	held         map[string]map[string]string
+	drops        int
+	keepMissing  bool
+	strictAddr   bool
 }
 
 func newFakeMachines() *fakeMachines {
@@ -821,6 +826,9 @@ func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {
 }
 
 func (f *fakeMachines) Delete(_ context.Context, id string) error {
+	if f.beforeDelete != nil {
+		f.beforeDelete(id)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.deleteErr != nil {
