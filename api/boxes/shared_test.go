@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
@@ -208,6 +210,29 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 	})
 	if restore := e.agent.lastRestore(); len(restore.reqs) == 0 || restore.reqs[0].GetManifest().GetChunkId() != snapshotID(2) {
 		t.Errorf("b restored %v, want the park's snapshot", restore.reqs)
+	}
+}
+
+func TestAnEnsureInAnotherProcessRightAfterADeleteFindsNoBox(t *testing.T) {
+	a, b, _ := newSharedPair(t, t.Context())
+	lagging := &laggingRegistry{fakeRegistry: a.svc.registry.(*fakeRegistry), boxes: map[string][]users.Box{}}
+	if err := lagging.SyncUser(t.Context(), alice); err != nil {
+		t.Fatalf("SyncUser: %v", err)
+	}
+	b.svc.registry = lagging
+	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 2})
+	op, err := a.svc.Delete(a.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if events := watch(t, a.svc, a.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("delete ended with %v", events[len(events)-1])
+	}
+	if !lagging.HasBox(alice, aliceBox) {
+		t.Fatal("b's cache already lost the box; the test needs it stale")
+	}
+	if _, err := b.svc.Ensure(b.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Fatalf("Ensure on b after a's delete = %v, want NotFound", err)
 	}
 }
 
@@ -541,4 +566,28 @@ func cachedHead(env *stateEnv, p statePath) head {
 	env.svc.state.mu.Lock()
 	defer env.svc.state.mu.Unlock()
 	return env.svc.state.heads[p]
+}
+
+type laggingRegistry struct {
+	*fakeRegistry
+	mu    sync.Mutex
+	boxes map[string][]users.Box
+}
+
+func (r *laggingRegistry) SyncUser(_ context.Context, owner string) error {
+	list := r.fakeRegistry.Boxes(owner)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.boxes[owner] = list
+	return nil
+}
+
+func (r *laggingRegistry) Boxes(owner string) []users.Box {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.boxes[owner])
+}
+
+func (r *laggingRegistry) HasBox(owner, id string) bool {
+	return slices.ContainsFunc(r.Boxes(owner), func(b users.Box) bool { return b.ID == id })
 }

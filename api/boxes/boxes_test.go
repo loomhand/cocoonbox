@@ -494,6 +494,10 @@ func (r *fakeRegistry) AccountExists(context.Context, string) (bool, error) {
 	return true, nil
 }
 
+func (r *fakeRegistry) SyncUser(context.Context, string) error {
+	return nil
+}
+
 func (r *fakeRegistry) HasBox(owner, id string) bool {
 	return slices.ContainsFunc(r.Boxes(owner), func(b users.Box) bool { return b.ID == id })
 }
