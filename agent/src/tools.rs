@@ -452,7 +452,7 @@ fn desktop_tools() -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("computer_act"),
             description: Cow::Borrowed(
-                "Perform one input action, then return a fresh screenshot. Target an element by index from the latest computer_state, or screen coordinates x,y.",
+                "Perform one input action, then return a fresh screenshot. Target an element by index from the latest computer_state, or screen coordinates x,y. A result that says the screen did not change states a fact, not a failure.",
             ),
             parameters: json!({
                 "type": "object",
@@ -488,7 +488,7 @@ fn android_tools() -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("computer_state"),
             description: Cow::Borrowed(
-                "Screenshot of the whole 720x1280 Android screen and its UI elements [index]: role, name, center x,y, states (checked, disabled, focused, selected) and a text field's value.",
+                "Screenshot of the whole 720x1280 Android screen and its UI elements [index]: role, name, center x,y, states (checked, disabled, focused, selected, protected for a password field, which carries no value) and a text field's value.",
             ),
             parameters: json!({
                 "type": "object",
@@ -564,7 +564,7 @@ fn desk_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("desk"),
         description: Cow::Borrowed(
-            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\"}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. x, y, w, h and bounds are screen pixels, unlike computer_act's screenshot pixels. For GUI work of several steps use gui_plan.",
+            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?, since?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\", repeat?}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. x, y, w, h and bounds are screen pixels, unlike computer_act's screenshot pixels. snapshot with since: true (not with text) answers only what changed since your last since snapshot of that window, or the whole tree with diff: false when there is no earlier since snapshot or the diff would not be shorter. key with repeat sends the keys 1 to 256 times. A key or type error that counts the presses or lines sent before it may have taken effect: read the screen before you send the rest. For GUI work of several steps use gui_plan.",
         ),
         parameters: json!({
             "type": "object",
@@ -577,6 +577,8 @@ fn desk_tool() -> ToolSpec {
                 "action": {"type": "string"},
                 "keys": {"type": "string"},
                 "text": {"description": "type: the text; snapshot and read: true for text"},
+                "since": {"type": "boolean", "description": "snapshot: only the changes since your last since snapshot of the window"},
+                "repeat": {"type": "integer", "description": "key: how many times to send the keys, 1 to 256, default 1"},
                 "x": {"type": "number"},
                 "y": {"type": "number"},
                 "w": {"type": "number"},
@@ -596,7 +598,7 @@ fn gui_plan_tool() -> ToolSpec {
         description: Cow::Borrowed(
             "Run a desktop-app GUI plan in ONE call: the box runs each step on the accessibility tree (0.1-0.5 s), checks it, and stops at the first surprise. Use it for GUI work in desktop apps (menus, toggles, dialogs, Preferences, Save As, settings). Write the whole plan at once, without looking first.\n\
 One op per step; optional window: title text of the window the step acts in (waited for):\n\
-{app: \"mousepad\"} focus or launch; {menu: \"Edit > Preferences\"} (an approximate path is fine); {menu: \"Document > Word Wrap\", on: true} set a menu toggle (read first, never toggled twice); {click: \"Save\"}; {check: \"Show line numbers\", on: false} a check box or switch; {set: \"font size\", value: \"14\"} a text, spin or combo field; {type: \"text\"}; {key: \"ctrl+s\"}; {wait: \"Save As\"} a window title; {verify: \"Name\", value: \"x\"} (or on, enabled); {close: true} close the focused dialog.\n\
+{app: \"mousepad\"} focus or launch; {menu: \"Edit > Preferences\"} (an approximate path is fine); {menu: \"Document > Word Wrap\", on: true} set a menu toggle (read first, never toggled twice); {click: \"Save\"}; {check: \"Show line numbers\", on: false} a check box or switch; {set: \"font size\", value: \"14\"} a text, spin or combo field; {type: \"text\"}; {key: \"ctrl+s\"}; {wait: \"Save As\"} a window title; {verify: \"Name\", value: \"x\"} (or on, enabled; timeout_ms rereads until the element shows and holds them; gone: true checks that no shown element has exactly that name, and waits for that only with timeout_ms); {close: true} close the focused dialog.\n\
 Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified, so add no checks or screenshots, except for the steps in caveats: read their effect first. On escalate, handle the reason, then call again with only the remaining steps. Close the dialogs you open. A path for a file dialog may end in \\n to submit it. Name targets by their visible label.\n\
 A passing plan that starts with an app step is saved as a flow: name it with save: \"app-action\" and write values a later request changes as {{name}} with params: {name: value}. To save a plan that already ran, or the steps that passed before an escalation, call {save: \"app-action\"} alone: it does not run them again. Replay a flow with {flow: \"name\", params: {...}}: one call, no model. Check saved flows with {flows: true} before planning a task you may have done before. screenshot: true adds a screenshot (default: after an error or an escalation, never after a stop at a password step).",
         ),
@@ -623,7 +625,7 @@ fn android_plan_tool() -> ToolSpec {
         description: Cow::Borrowed(
             "Run an Android GUI plan in ONE call: the box runs each step on the accessibility tree, checks it, and stops at the first surprise. Use it for app UI work (settings, toggles, forms, several taps in a row). Write the whole plan at once, without looking first.\n\
 One op per step; optional window: title text of the window the step acts in (waited for). Windows are titled \"<title> - <package>\":\n\
-{app: \"com.android.settings\"} open or bring up an app by package; {click: \"Display\"} tap an element by its label; {check: \"Dark theme\", on: true} a switch or check box; {set: \"Name\", value: \"x\"} a text field; {type: \"text\"} into the focused field; {key: \"back\"} (back, home_screen, recents, return, tab, ctrl+a); {wait: \"Display\"} a window title; {verify: \"Dark theme\", on: true} (or value); {close: true} back out of the focused dialog.\n\
+{app: \"com.android.settings\"} open an app by package; a listed window of it that is not in front stops the step: dismiss what is in front (key back) or use launch_app; {click: \"Display\"} tap an element by its label; {check: \"Dark theme\", on: true} a switch or check box; {set: \"Name\", value: \"x\"} a text field; {type: \"text\"} into the focused field; {key: \"back\"} (back, home_screen, recents, return, tab, ctrl+a); {wait: \"Display\"} a window title; {verify: \"Dark theme\", on: true} (or value; timeout_ms rereads until the element shows and holds them; gone: true checks that no shown element has exactly that name, and waits for that only with timeout_ms); {close: true} back out of the focused dialog.\n\
 Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified, except the steps in caveats: read their effect first. On escalate, handle the reason, then call again with only the remaining steps. A press scrolls an element in a scrollable list into view, also from under a system bar; any other element off the screen escalates. A passing plan that starts with an app step can be saved with save: \"app-action\" and replayed with {flow: \"name\", params: {...}}; {flows: true} lists them. screenshot: true adds a screenshot (default: after an error or an escalation, never after a stop at a password step).",
         ),
         parameters: gui_plan_tool().parameters,

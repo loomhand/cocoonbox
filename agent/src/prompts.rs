@@ -57,7 +57,7 @@ Loop: observe, act, verify.
 - A menu or dialog that opens is a new window. Call computer_state again to get its elements.
 - A dialog that ignores clicks and keys may sit under a newer dialog of the same app: close the newest one first.
 - To start an application, use computer_act launch_app, or open it from the desktop menu.
-- An action result that says it succeeded proves nothing: a pixel click on plain web content can report success and do nothing. Trust only the screenshot. If an action had no visible effect, retry it once with foreground: true.
+- An action result that says it succeeded proves nothing: a pixel click on plain web content can report success and do nothing. Trust only the screenshot. If an action had no visible effect, wait or call computer_state before any retry, and never repeat a submit or send; then retry it once with foreground: true.
 - Do not use desktop-wide shortcuts (super, alt+tab, ctrl+alt, show desktop).
 - Use wait while something loads. After two failed tries at the same step, change approach.
 - Never enter passwords, 2FA codes, captchas or payment details; if the task needs one, stop and report that a human must take over, and where. The one exception is a Link card file that your task names: fill its fields only with computer_act type_from_file, on the checkout the task names.
