@@ -236,6 +236,36 @@ func TestAnEnsureInAnotherProcessRightAfterADeleteFindsNoBox(t *testing.T) {
 	}
 }
 
+func TestAnEnsureInAnotherProcessDuringADeleteNeverStartsTheBox(t *testing.T) {
+	a, b, _ := newSharedPair(t, t.Context())
+	lagging := &laggingRegistry{fakeRegistry: a.svc.registry.(*fakeRegistry), boxes: map[string][]users.Box{}}
+	b.svc.registry = lagging
+	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Revision: 2})
+	removing := make(chan struct{})
+	a.fake.beforeDelete = func(string) { <-removing }
+	op, err := a.svc.Delete(a.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	var once sync.Once
+	lagging.mu.Lock()
+	lagging.afterSync = func() {
+		once.Do(func() {
+			close(removing)
+			for deadline := time.Now().Add(time.Second); time.Now().Before(deadline) && b.svc.ops.activeFor(aliceBox) != nil; {
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
+	lagging.mu.Unlock()
+	if _, err := b.svc.Ensure(b.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err == nil {
+		t.Fatal("Ensure on b while a deleted the box succeeded")
+	}
+	if events := watch(t, a.svc, a.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("delete ended with %v", events[len(events)-1])
+	}
+}
+
 func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	a.saveEach(t, []string{"c1"}, []string{"c2"})
@@ -570,15 +600,20 @@ func cachedHead(env *stateEnv, p statePath) head {
 
 type laggingRegistry struct {
 	*fakeRegistry
-	mu    sync.Mutex
-	boxes map[string][]users.Box
+	mu        sync.Mutex
+	boxes     map[string][]users.Box
+	afterSync func()
 }
 
 func (r *laggingRegistry) SyncUser(_ context.Context, owner string) error {
 	list := r.fakeRegistry.Boxes(owner)
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.boxes[owner] = list
+	after := r.afterSync
+	r.mu.Unlock()
+	if after != nil {
+		after()
+	}
 	return nil
 }
 
