@@ -1,10 +1,10 @@
 #!/bin/bash
 # Pins the shuttle archive (desk daemon and runtime) and installs it; sourced by the desk and Android provisioning, or run as
 # `shuttle.sh fetch DIR` to download it into DIR (image/desk/vendor for a cut). SHUTTLE_ARCH (x64 or arm64) overrides the machine's architecture.
-SHUTTLE_VERSION=v0.1.56
+SHUTTLE_VERSION=v0.1.57
 case ${SHUTTLE_ARCH:-$(uname -m)} in
-aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=9944c4c2a0bb19bb91a86ea5f8aa514172f5a2789199e5bb6ba5c57365c4cf51 ;;
-*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=a56d27bb4e17ba2231b22ce49dba16646a1c0b9d7db845bfa00239dfbd7ed7a6 ;;
+aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=e06c1cc87738a236baa664129ab2202d7bc3c3d406ba76176e441ad3ae527652 ;;
+*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=78d9045b888b496fcbd0325126e4c1b4ea631b59300454a746e77e54e77cd582 ;;
 esac
 SHUTTLE_TARBALL="shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
