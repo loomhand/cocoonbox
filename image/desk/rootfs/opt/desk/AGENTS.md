@@ -25,7 +25,7 @@ Windows and elements come from the accessibility tree (AT-SPI), roles named as i
 | `outline(window?)` | the same tree as text, one `- role "name" [checked] [id=ID]: "value"` line per element |
 | `find(name, {role?, window?})` | the elements named `name` (else containing it), ignoring case and punctuation |
 | `read(id, {text?})` | one element read again; `text: true` returns its whole text as `value` |
-| `press(id)` | presses an element as a user would: selects a tab or list row, opens the menus above a hidden menu entry, clicks a shown control, else runs its accessibility action |
+| `press(id)` | presses an element as a user would: selects a tab or list row, opens the menus above a hidden menu entry, clicks a shown control that no other window covers, else runs its accessibility action |
 | `act(id, 'click' \| 'action' \| 'select' \| 'focus')` | one of those ways only |
 | `at(x, y, window?)` | the element at a screen point and the elements above it |
 | `key('ctrl+shift+s')`, `typeText('text')`, `click(x, y, {button?, count?})` | desktop input to the focused window; `typeText` turns each newline into Return and returns once the focused field holds the text (at most 0.1 s more) |
@@ -138,8 +138,9 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
 ## Traps on this desktop
 
 - A modal dialog opened by an element's accessibility action blocks its app, and the first key
-  then deadlocks it. `press` clicks a shown control instead; for a dialog behind a hidden entry,
-  use its shortcut.
+  then deadlocks it. `press` clicks a shown control instead, but runs the action when another
+  window covers it, even a window or title bar of the same app: close that window first. For a
+  dialog behind a hidden entry, use its shortcut.
 - When an app hangs, its accessibility calls fail after 3 s with "AT-SPI peer … is not responding"
   and the app is skipped for 10 s. An action that timed out may still take effect once the app
   answers: check it before you send it again. Close its window with `close` (or kill its pid) and
