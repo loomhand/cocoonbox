@@ -96,7 +96,7 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1
 	}
 	defer unlock()
 	if active := s.ops.activeFor(box); active != nil {
-		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", active.id)
+		return nil, stillRunning(active.id)
 	}
 	logger := log.WithFunc("boxes.Service.Delete").WithField("box", box)
 	cur, err := s.current(ctx, user, box)

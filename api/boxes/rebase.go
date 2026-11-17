@@ -55,7 +55,7 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if !started {
-		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", op.id)
+		return nil, stillRunning(op.id)
 	}
 	go s.runRebase(op, user, m, image, resize)
 	log.WithFunc("boxes.Service.Rebase").WithField("box", box).Infof(ctx, "rebasing from %s (%s) to %s as operation %s", m.ID, m.Image, image, op.id)

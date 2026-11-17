@@ -110,8 +110,8 @@ final class ControlMCP: Sendable {
                 ["box_id": box.id, "state": box.state.name, "operation_id": op]
             }
         case "box_hibernate", "box_save":
-            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(box.state.name).")) }
             let hibernate = name == "box_hibernate"
+            guard box.state == .running else { return .rpcResult(id, Self.failure(Self.notRunning(box.state, wake: !hibernate))) }
             let op = hibernate ? await world.hibernate(box.id) : await world.saveState(box.id)
             return await wait(op.id, box: box.id, id: id, token: token, verb: hibernate ? "Hibernate" : "Save") { box, op in
                 hibernate
@@ -122,7 +122,7 @@ final class ControlMCP: Sendable {
             guard arguments["confirm"] as? Bool == true else {
                 return .rpcResult(id, Self.failure("Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."))
             }
-            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(box.state.name).")) }
+            guard box.state == .running else { return .rpcResult(id, Self.failure(Self.notRunning(box.state, wake: true))) }
             guard box.latestImage != box.image else { return .rpcResult(id, Self.failure("Already on the latest image.")) }
             let op = await world.rebase(box.id, image: box.latestImage)
             return await wait(op.id, box: box.id, id: id, token: token, verb: "Upgrade") { box, op in
@@ -204,6 +204,10 @@ final class ControlMCP: Sendable {
 
     private static func failure(_ text: String) -> [String: Any] {
         ["isError": true, "content": [["type": "text", "text": text]]]
+    }
+
+    private static func notRunning(_ state: Cocoonbox_Control_V1_BoxState, wake: Bool) -> String {
+        wake && state == .hibernated ? "The box is hibernated. Call box_ensure to wake it first." : "The box is \(state.name)."
     }
 
     private static func phase(_ phase: Cocoonbox_Control_V1_Phase) -> String {

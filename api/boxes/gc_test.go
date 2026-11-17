@@ -480,8 +480,8 @@ func TestGCKeepsABoxWhoseDeleteIsStillSaving(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	<-uploading
-	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("SaveState during the delete = %v, want FailedPrecondition", err)
+	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "wait for it to end") {
+		t.Errorf("SaveState during the delete = %v, want FailedPrecondition saying to wait", err)
 	}
 	opts := GCOptions{DeleteBatch: 1000}
 	during := make(chan gcReport)

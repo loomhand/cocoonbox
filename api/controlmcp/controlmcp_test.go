@@ -394,9 +394,13 @@ func TestSaveReportsBytesAndRefusals(t *testing.T) {
 		t.Fatalf("failed save = %q", got)
 	}
 	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
-	for _, tool := range []string{"box_save", "box_hibernate"} {
-		if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+tool+`"}}`)); got != "The box is hibernated." {
-			t.Fatalf("%s of a hibernated box = %q", tool, got)
+	for tool, want := range map[string]string{
+		`"box_save"`: string(errAsleep),
+		`"box_upgrade","arguments":{"confirm":true}`: string(errAsleep),
+		`"box_hibernate"`: "The box is hibernated.",
+	} {
+		if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":`+tool+`}}`)); got != want {
+			t.Fatalf("%s of a hibernated box = %q, want %q", tool, got, want)
 		}
 	}
 	if got := refusal(t, post(t, srv, carolToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_hibernate"}}`)); got != "The box is absent." {
