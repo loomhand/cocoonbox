@@ -237,12 +237,12 @@ func TestADisableOrDeleteOnOneApiEndsTheUsersCallsSharesAndGrantsOnAnother(t *te
 			clustertest.WaitFor(t, "the listener ends the user's calls, share streams and grants", func() bool {
 				return userLife.Err() != nil && grantLife.Err() != nil && closed(live.Cut) && asked.Load()
 			})
-			b.mu.RLock()
-			_, tomb := b.tombs["grant-1"]
-			b.mu.RUnlock()
-			if !tomb {
-				t.Error("the user's ended grant can bind again")
-			}
+			clustertest.WaitFor(t, "the user's ended grant cannot bind again", func() bool {
+				b.mu.RLock()
+				defer b.mu.RUnlock()
+				_, tomb := b.tombs["grant-1"]
+				return tomb
+			})
 			if n := loads.n.Load(); n != 1 {
 				t.Errorf("the listener reloaded fully %d times, want none", n-1)
 			}
