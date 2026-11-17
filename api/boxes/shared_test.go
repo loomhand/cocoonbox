@@ -213,6 +213,22 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 	}
 }
 
+func TestCreateUsesTheUserImageReadUnderTheStartLock(t *testing.T) {
+	_, b, _ := newSharedPair(t, t.Context())
+	registry := b.svc.registry.(*fakeRegistry)
+	const image = "desktop:v3"
+	b.svc.registry = &laggingRegistry{
+		fakeRegistry: registry, boxes: map[string][]users.Box{},
+		afterSync: func() { registry.setPolicy(bob, users.Policy{Image: image}) },
+	}
+	if _, err := b.svc.Create(auth.WithUser(t.Context(), bob), &controlv1.CreateBoxRequest{Name: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.fake.lastSpec().Image; got != image {
+		t.Fatalf("Create sent image %q to the backend, want %q", got, image)
+	}
+}
+
 func TestAnEnsureInAnotherProcessRightAfterADeleteFindsNoBox(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	lagging := &laggingRegistry{fakeRegistry: a.svc.registry.(*fakeRegistry), boxes: map[string][]users.Box{}}
