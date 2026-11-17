@@ -387,7 +387,8 @@ The api serves the lifecycle of the caller's own boxes as MCP tools, so a local 
 - `box_delete` without `confirm: true`: `Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true.`
 - `box_delete` without `box`: `Name the box to delete in box.`
 - A `box` that is neither the name nor the id of one of the caller's boxes: `You have no box "<box>"; box_list lists your boxes.`
-- `box_hibernate`, `box_save` or `box_upgrade` when the box is not running: `The box is <state>.`
+- `box_save` or `box_upgrade` when the box is hibernated: `The box is hibernated. Call box_ensure to wake it first.`; when it is in any other state but running: `The box is <state>.`
+- `box_hibernate` when the box is neither running nor failed (a failed box it hibernates): `The box is <state>.`
 - An operation that ends in `PHASE_FAILED`: `<Tool verb> failed: <detail of the failed event>`.
 - A grant's `box_ensure` without `box` when the grant may use no box (it created none and the user chose none for it): `This client has created no box yet; box_create creates one.`
 - A grant's `box_delete` of a box the user chose for it: `This client may delete only the boxes it created.`
