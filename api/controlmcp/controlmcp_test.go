@@ -328,8 +328,14 @@ func TestABoxWithoutAMachineIsAbsent(t *testing.T) {
 	if got["state"] != "absent" || got["upgrade_available"] != false || got["name"] != "main" {
 		t.Fatalf("status of a box without a machine = %v", got)
 	}
-	if text := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_save"}}`)); text != "The box is absent." {
-		t.Fatalf("save of a box without a machine = %q", text)
+	for tool, want := range map[string]string{
+		`"box_save"`: string(errAbsent),
+		`"box_upgrade","arguments":{"confirm":true}`: string(errAbsent),
+		`"box_hibernate"`: "The box is absent.",
+	} {
+		if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":`+tool+`}}`)); got != want {
+			t.Fatalf("%s of a box without a machine = %q, want %q", tool, got, want)
+		}
 	}
 }
 

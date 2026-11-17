@@ -28,6 +28,7 @@ const (
 	errUpgradeUnconfirmed toolError = "Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."
 	errUpgradeCurrent     toolError = "Already on the latest image."
 	errAsleep             toolError = "The box is hibernated. Call box_ensure to wake it first."
+	errAbsent             toolError = "The box is absent. Call box_ensure to bring it up first."
 	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."
 	errDeleteUnnamed      toolError = "Name the box to delete in box."
 	errNoGrantBox         toolError = "This client has created no box yet; box_create creates one."
@@ -449,6 +450,8 @@ func (s *Server) runningBox(ctx context.Context, ref string, also ...controlv1.B
 		return nil, toolError("The box is " + stateAbsent + ".")
 	case box.GetState() == controlv1.BoxState_BOX_STATE_HIBERNATED && len(also) == 0:
 		return nil, errAsleep
+	case box.GetState() == controlv1.BoxState_BOX_STATE_UNSPECIFIED && len(also) == 0:
+		return nil, errAbsent
 	case box.GetState() != controlv1.BoxState_BOX_STATE_RUNNING && !slices.Contains(also, box.GetState()):
 		return nil, toolError("The box is " + stateName(box.GetState()) + ".")
 	}

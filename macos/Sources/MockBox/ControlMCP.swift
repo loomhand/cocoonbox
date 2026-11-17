@@ -207,7 +207,11 @@ final class ControlMCP: Sendable {
     }
 
     private static func notRunning(_ state: Cocoonbox_Control_V1_BoxState, wake: Bool) -> String {
-        wake && state == .hibernated ? "The box is hibernated. Call box_ensure to wake it first." : "The box is \(state.name)."
+        switch (wake, state) {
+        case (true, .hibernated): "The box is hibernated. Call box_ensure to wake it first."
+        case (true, .unspecified): "The box is absent. Call box_ensure to bring it up first."
+        default: "The box is \(state.name)."
+        }
     }
 
     private static func phase(_ phase: Cocoonbox_Control_V1_Phase) -> String {
