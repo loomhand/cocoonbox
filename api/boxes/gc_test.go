@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"bytes"
+	"context"
 	"maps"
 	"math/rand/v2"
 	"slices"
@@ -406,6 +407,18 @@ func TestGCSkipsTheUsersWhosePolicySaysSo(t *testing.T) {
 	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, bob}, time.Now().Add(40*24*time.Hour))
 	if env.store.has(alice + "/chunks/" + hexID("c1")) {
 		t.Error("a pass for every user kept alice's dropped chunk")
+	}
+}
+
+func TestGCStopsWhenItsContextEnds(t *testing.T) {
+	env := newStateEnv(t)
+	env.saveEach(t, []string{"c1"}, []string{"c2"})
+	before := len(env.store.objects)
+	ctx, cancel := context.WithCancel(env.ctx)
+	cancel()
+	env.svc.collectGarbage(ctx, GCOptions{DeleteBatch: 1000}, []string{alice, bob}, time.Now().Add(40*24*time.Hour))
+	if len(env.store.objects) != before || len(env.store.deleted) != 0 {
+		t.Errorf("a pass on an ended context deleted %v", env.store.deleted)
 	}
 }
 

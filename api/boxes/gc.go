@@ -66,6 +66,9 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 		verb = "dry run, would remove"
 	}
 	for _, user := range users {
+		if ctx.Err() != nil {
+			return
+		}
 		if s.registry.Policy(user).NoGC {
 			continue
 		}
