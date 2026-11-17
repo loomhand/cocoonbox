@@ -142,6 +142,7 @@ func (s *Service) serveDevice(w http.ResponseWriter, r *http.Request, c code) {
 	token, err := s.accounts.IssueDevice(r.Context(), c.user, c.client.id, c.label)
 	switch {
 	case errors.Is(err, users.ErrNotFound):
+		log.WithFunc("oauth.Service.serveDevice").Warnf(r.Context(), "refused the device token of client %q: user %s is disabled or gone", c.client.id, c.user)
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the account is disabled or gone")
 		return
 	case err != nil:
