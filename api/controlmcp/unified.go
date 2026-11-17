@@ -356,15 +356,15 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
 		return
 	}
-	replyLost := func(err error) bool {
+	replyLost := func(box string, err error) bool {
 		if !errors.Is(err, errReplyLost) {
 			return false
 		}
-		log.WithFunc("controlmcp.Server.callBox").Warnf(ctx, "tool %s on box %q: %v", call.Name, ref, err)
+		log.WithFunc("controlmcp.Server.callBox").Warnf(ctx, "tool %s on box %s: %v", call.Name, box, err)
 		return true
 	}
 	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, nil) })
-	if replyLost(err) {
+	if replyLost(box, err) {
 		return
 	}
 	if status.Code(err) != codes.Unavailable {
@@ -389,11 +389,11 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	switch {
 	case err == nil:
-		_, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
+		box, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
-	if err == nil || replyLost(err) {
+	if err == nil || replyLost(box, err) {
 		return
 	}
 	reply := newResponse(id, failure(err), nil)
