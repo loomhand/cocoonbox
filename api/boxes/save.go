@@ -98,7 +98,7 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 		return machines.Machine{}, status.Errorf(codes.FailedPrecondition, "box is %s, not running", boxStates[m.State])
 	}
 	if active := s.ops.activeFor(box); active != nil {
-		return machines.Machine{}, status.Errorf(codes.FailedPrecondition, "operation %s is still running", active.id)
+		return machines.Machine{}, stillRunning(active.id)
 	}
 	return m, nil
 }
@@ -158,4 +158,8 @@ func consistencyName(c agentv1.Consistency) string {
 		return "quiesced"
 	}
 	return "live"
+}
+
+func stillRunning(id string) error {
+	return status.Errorf(codes.FailedPrecondition, "operation %s is still running on the box; wait for it to end, then try again", id)
 }
