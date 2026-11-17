@@ -22,15 +22,15 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, err
 	}
-	image, ok := s.defaults.offered(cmp.Or(req.GetImage(), s.ownImage(user)))
-	if !ok {
-		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered; choose %s", req.GetImage(), s.defaults.choices())
-	}
 	unlock, err := s.admitStart(ctx, user)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	image, ok := s.defaults.offered(cmp.Or(req.GetImage(), s.ownImage(user)))
+	if !ok {
+		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered; choose %s", req.GetImage(), s.defaults.choices())
+	}
 	logger := log.WithFunc("boxes.Service.Create").WithField("user", user)
 	current, err := s.currentMachines(ctx, user)
 	if err != nil {
