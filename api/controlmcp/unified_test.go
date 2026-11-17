@@ -763,6 +763,37 @@ func TestAPinnedBoxGoneBeforeItsImageIsReadAgainFallsBackToTheDefaultBox(t *test
 	}
 }
 
+func TestRelayReportsAReplyTheClientDidNotTake(t *testing.T) {
+	err := relay(flushFails{httptest.NewRecorder()}, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), nil)
+	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
+		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
+	}
+}
+
+func TestRelayIntoAStreamReportsAReplyTheClientDidNotTake(t *testing.T) {
+	stream := newEventStream(flushFails{httptest.NewRecorder()}, jsontext.Value(`1`))
+	stream.close()
+	err := relay(stream.w, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), stream)
+	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
+		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
+	}
+}
+
+func TestACallWhoseReplyTheClientDoesNotTakeGetsNoSecondReply(t *testing.T) {
+	for name, state := range map[string]controlv1.BoxState{"running": controlv1.BoxState_BOX_STATE_RUNNING, "woken": controlv1.BoxState_BOX_STATE_HIBERNATED} {
+		t.Run(name, func(t *testing.T) {
+			srv, fake, _, _ := newUnifiedServer(t)
+			fake.setState("alice", state)
+			w := &refusingWriter{ResponseRecorder: httptest.NewRecorder()}
+			srv.ServeHTTP(w, rootRequest(http.MethodPost, aliceToken, "s1", callShell))
+			i := slices.IndexFunc(w.attempts, func(b string) bool { return strings.Contains(b, shellAnswer) })
+			if i < 0 || i != len(w.attempts)-1 {
+				t.Errorf("writes attempted = %q, want the box's reply last", w.attempts)
+			}
+		})
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string
@@ -1089,6 +1120,12 @@ func newPeerServer(srv *Server, fake *fakeBoxes, agents *fakeAgents, lists *fake
 }
 
 func serveRoot(srv *Server, method, token, session, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, rootRequest(method, token, session, body))
+	return rec
+}
+
+func rootRequest(method, token, session, body string) *http.Request {
 	req := httptest.NewRequest(method, RootPath, strings.NewReader(body))
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -1098,9 +1135,7 @@ func serveRoot(srv *Server, method, token, session, body string) *httptest.Respo
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	rec := httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	return rec
+	return req
 }
 
 func answer(code int, session, body string) *http.Response {
@@ -1126,4 +1161,20 @@ func listedNames(tools []any) (names []string) {
 		names = append(names, tool.(map[string]any)["name"].(string))
 	}
 	return names
+}
+
+type flushFails struct {
+	*httptest.ResponseRecorder
+}
+
+func (flushFails) FlushError() error { return errors.New("client gone") }
+
+type refusingWriter struct {
+	*httptest.ResponseRecorder
+	attempts []string
+}
+
+func (w *refusingWriter) Write(b []byte) (int, error) {
+	w.attempts = append(w.attempts, string(b))
+	return 0, errors.New("client gone")
 }

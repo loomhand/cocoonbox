@@ -49,6 +49,7 @@ const (
 var (
 	errNoBoxYet     = status.Error(codes.Unavailable, "the user has no box yet")
 	errSessionStore = status.Error(codes.Internal, "the api could not use its record of the box's agent session; try again")
+	errReplyLost    = errors.New("write the box's reply to the client")
 
 	boxField = []byte(`"box"`)
 
@@ -355,7 +356,17 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
 		return
 	}
+	replyLost := func(box string, err error) bool {
+		if !errors.Is(err, errReplyLost) {
+			return false
+		}
+		log.WithFunc("controlmcp.Server.callBox").Warnf(ctx, "tool %s on box %s: %v", call.Name, box, err)
+		return true
+	}
 	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, nil) })
+	if replyLost(box, err) {
+		return
+	}
 	if status.Code(err) != codes.Unavailable {
 		if err != nil {
 			writeJSON(w, http.StatusOK, newResponse(id, failure(err), nil))
@@ -378,11 +389,11 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	switch {
 	case err == nil:
-		_, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
+		box, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
-	if err == nil {
+	if err == nil || replyLost(box, err) {
 		return
 	}
 	reply := newResponse(id, failure(err), nil)
@@ -615,7 +626,9 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) erro
 		if err != nil {
 			return err
 		}
-		stream.write(mcpwire.Event(bytes.TrimSpace(data)))
+		if err := stream.write(mcpwire.Event(bytes.TrimSpace(data))); err != nil {
+			return fmt.Errorf("%w: %w", errReplyLost, err)
+		}
 		return nil
 	}
 	if stream == nil {
@@ -632,9 +645,11 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) erro
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			if _, werr := w.Write(buf[:n]); werr != nil {
-				return nil
+				return fmt.Errorf("%w: %w", errReplyLost, werr)
 			}
-			_ = rc.Flush()
+			if ferr := rc.Flush(); ferr != nil {
+				return fmt.Errorf("%w: %w", errReplyLost, ferr)
+			}
 		}
 		if err != nil {
 			return nil
