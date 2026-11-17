@@ -22,7 +22,8 @@ cp "$bin/CocoonBox" "$app/Contents/MacOS/CocoonBox"
 cp "$bin/cocoonbox-cli" "$app/Contents/Helpers/cocoonbox"
 cp -R "$bin/GhosttyKit_GhosttyTerminal.bundle" "$app/Contents/Resources/"
 cp Resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
-version="$(git describe --tags --always 2>/dev/null || echo dev)"
+short="$(git describe --tags --always 2>/dev/null | sed -nE 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')"
+short="${short:-0.0.0}"
 
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -35,8 +36,8 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>CocoonBox</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleShortVersionString</key><string>${short}</string>
+  <key>CFBundleVersion</key><string>${short}</string>
   <key>CBEndpoint</key><string>${endpoint}</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
