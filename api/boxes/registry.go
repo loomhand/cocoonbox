@@ -104,10 +104,11 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1
 		return nil, serviceError(ctx, logger, err, "get box")
 	}
 	save := err == nil && s.state != nil && s.ready(cur)
-	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_DELETING, cur.Revision, stateTimeout)
-	if started {
-		go s.runDelete(op, user, cur, save)
+	op, err := s.ops.startIfIdle(ctx, user, box, controlv1.Phase_PHASE_DELETING, cur.Revision)
+	if err != nil {
+		return nil, err
 	}
+	go s.runDelete(op, user, cur, save)
 	logger.Infof(ctx, "deleting box as operation %s, saving first: %t", op.id, save)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }

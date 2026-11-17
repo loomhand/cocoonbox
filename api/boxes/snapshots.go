@@ -131,9 +131,9 @@ func (s *Service) RestorePaths(ctx context.Context, req *controlv1.RestorePathsR
 	if err != nil {
 		return nil, snapshotError(ctx, box, err, "read snapshot")
 	}
-	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_RESTORING_FILES, m.Revision, stateTimeout)
-	if !started {
-		return nil, stillRunning(op.id)
+	op, err := s.ops.startIfIdle(ctx, user, box, controlv1.Phase_PHASE_RESTORING_FILES, m.Revision)
+	if err != nil {
+		return nil, err
 	}
 	go s.runRestorePaths(op, user, m, e, paths)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil

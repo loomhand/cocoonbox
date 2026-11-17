@@ -244,6 +244,14 @@ func (r *operations) start(base context.Context, user, boxID string, phase contr
 	return r.begin(base, &operation{user: user, boxID: boxID, phase: phase, gen: gen}, timeout)
 }
 
+func (r *operations) startIfIdle(ctx context.Context, user, box string, phase controlv1.Phase, revision int64) (*operation, error) {
+	op, started := r.begin(context.WithoutCancel(ctx), &operation{user: user, boxID: box, phase: phase, gen: revision, yield: true}, stateTimeout)
+	if !started {
+		return nil, stillRunning(op.id)
+	}
+	return op, nil
+}
+
 // begin returns the running operation of op's phase and kind on its box, or any running one when op yields, or else supersedes whatever runs there with op, whose context derives from base.
 func (r *operations) begin(base context.Context, op *operation, timeout time.Duration) (*operation, bool) {
 	r.mu.Lock()

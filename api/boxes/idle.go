@@ -104,8 +104,13 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 		logger.Infof(ctx, "idle box stays up: %s", reason)
 		return
 	}
-	op, started := s.ops.begin(context.WithoutCancel(ctx), &operation{user: m.Owner, boxID: box, phase: controlv1.Phase_PHASE_SAVING, gen: m.Revision, yield: true}, stateTimeout)
-	if !started {
+	unlock, err := s.lockShared(ctx, m.Owner)
+	if err != nil {
+		return
+	}
+	defer unlock()
+	op, err := s.ops.startIfIdle(ctx, m.Owner, box, controlv1.Phase_PHASE_SAVING, m.Revision)
+	if err != nil {
 		return
 	}
 	logger.Infof(ctx, "box of user %s idle for %s; saving it before it hibernates as operation %s", m.Owner, after, op.id)

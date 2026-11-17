@@ -47,15 +47,15 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	}
 	var resize *machines.Flavor
 	if raw := auth.OperatorFlavor(ctx); raw != "" {
-		flavor, err := parseFlavor(raw)
-		if err != nil {
-			return nil, status.Error(codes.InvalidArgument, err.Error())
+		flavor, parseErr := parseFlavor(raw)
+		if parseErr != nil {
+			return nil, status.Error(codes.InvalidArgument, parseErr.Error())
 		}
 		resize = &flavor
 	}
-	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
-	if !started {
-		return nil, stillRunning(op.id)
+	op, err := s.ops.startIfIdle(ctx, user, box, controlv1.Phase_PHASE_SAVING, m.Revision)
+	if err != nil {
+		return nil, err
 	}
 	go s.runRebase(op, user, m, image, resize)
 	log.WithFunc("boxes.Service.Rebase").WithField("box", box).Infof(ctx, "rebasing from %s (%s) to %s as operation %s", m.ID, m.Image, image, op.id)

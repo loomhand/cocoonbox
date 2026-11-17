@@ -604,6 +604,7 @@ type fakeMachines struct {
 	revision     int64
 	ensureErr    error
 	deleteErr    error
+	beforeList   func(context.Context)
 	beforeDelete func(id string)
 	onDeliver    func()
 	addr         string
@@ -660,7 +661,10 @@ func (f *fakeMachines) Get(_ context.Context, id string) (machines.Machine, erro
 	return m, nil
 }
 
-func (f *fakeMachines) List(_ context.Context, owner string) ([]machines.Machine, error) {
+func (f *fakeMachines) List(ctx context.Context, owner string) ([]machines.Machine, error) {
+	if f.beforeList != nil {
+		f.beforeList(ctx)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lists++

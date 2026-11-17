@@ -40,11 +40,20 @@ func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockShared(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	m, err := s.runningMachine(ctx, box, user)
 	if err != nil {
 		return nil, err
 	}
-	op := s.startSave(ctx, user, box, m, agentv1.Consistency_CONSISTENCY_QUIESCED, func() {})
+	op, err := s.ops.startIfIdle(ctx, user, box, controlv1.Phase_PHASE_SAVING, m.Revision)
+	if err != nil {
+		return nil, err
+	}
+	go s.runSave(op, user, m, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
@@ -67,15 +76,34 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
 		if err := s.state.scheduled.Acquire(ctx, 1); err != nil {
 			return
 		}
-		box := boxOfMachine(m.ID)
-		cur, err := s.current(ctx, m.Owner, box)
-		if err != nil || cur.ID != m.ID || !s.saveDue(ctx, cur, interval) {
-			s.state.scheduled.Release(1)
-			continue
-		}
-		op := s.startSave(ctx, cur.Owner, box, cur, agentv1.Consistency_CONSISTENCY_LIVE, func() { s.state.scheduled.Release(1) })
-		logger.Infof(ctx, "scheduled live save of %s as operation %s", box, op.id)
+		s.scheduleSave(ctx, m, interval)
 	}
+}
+
+func (s *Service) scheduleSave(ctx context.Context, m machines.Machine, interval time.Duration) {
+	release := func() { s.state.scheduled.Release(1) }
+	unlock, err := s.lockShared(ctx, m.Owner)
+	if err != nil {
+		release()
+		return
+	}
+	defer unlock()
+	box := boxOfMachine(m.ID)
+	cur, err := s.current(ctx, m.Owner, box)
+	if err != nil || cur.ID != m.ID || !s.saveDue(ctx, cur, interval) {
+		release()
+		return
+	}
+	op, err := s.ops.startIfIdle(ctx, cur.Owner, box, controlv1.Phase_PHASE_SAVING, cur.Revision)
+	if err != nil {
+		release()
+		return
+	}
+	go func() {
+		defer release()
+		s.runSave(op, cur.Owner, cur, agentv1.Consistency_CONSISTENCY_LIVE)
+	}()
+	log.WithFunc("boxes.Service.scheduleSave").Infof(ctx, "scheduled live save of %s as operation %s", box, op.id)
 }
 
 func (s *Service) saveDue(ctx context.Context, m machines.Machine, interval time.Duration) bool {
@@ -101,20 +129,6 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 		return machines.Machine{}, stillRunning(active.id)
 	}
 	return m, nil
-}
-
-// startSave runs a save of user's box from machine m as an operation and calls done when it ends, at once when another save runs.
-func (s *Service) startSave(ctx context.Context, user, box string, m machines.Machine, consistency agentv1.Consistency, done func()) *operation {
-	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
-	if !started {
-		done()
-		return op
-	}
-	go func() {
-		defer done()
-		s.runSave(op, user, m, consistency)
-	}()
-	return op
 }
 
 func (s *Service) runSave(op *operation, user string, m machines.Machine, consistency agentv1.Consistency) {

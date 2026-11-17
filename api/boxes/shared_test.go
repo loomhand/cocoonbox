@@ -329,7 +329,7 @@ func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
 	}
 }
 
-func TestAFileRestoreInOneProcessIsRefusedDuringARebaseElsewhere(t *testing.T) {
+func TestASaveOrFileRestoreInOneProcessIsRefusedDuringARebaseElsewhere(t *testing.T) {
 	bCtx, deaf := context.WithCancel(t.Context())
 	b, a, _ := newSharedPair(t, bCtx)
 	a.agent.files = sampleFiles()
@@ -346,11 +346,18 @@ func TestAFileRestoreInOneProcessIsRefusedDuringARebaseElsewhere(t *testing.T) {
 		t.Fatalf("Rebase: %v", err)
 	}
 	<-saving
-	b.svc.ops.mu.Lock()
-	if op := b.svc.ops.active[aliceBox]; op != nil && op.remote {
-		b.svc.ops.forgetLocked(op)
+	forgetRebase := func() {
+		b.svc.ops.mu.Lock()
+		if op := b.svc.ops.active[aliceBox]; op != nil && op.remote {
+			b.svc.ops.forgetLocked(op)
+		}
+		b.svc.ops.mu.Unlock()
 	}
-	b.svc.ops.mu.Unlock()
+	forgetRebase()
+	if _, err := b.svc.SaveState(b.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SaveState on b during a's rebase = %v, want FailedPrecondition", err)
+	}
+	forgetRebase()
 	_, err := b.svc.RestorePaths(b.ctx, &controlv1.RestorePathsRequest{BoxId: aliceBox, SnapshotId: first, Paths: []string{"/workspace/app/main.go"}})
 	close(gate)
 	if status.Code(err) != codes.FailedPrecondition {

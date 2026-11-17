@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -296,17 +297,36 @@ func TestDeleteRefusals(t *testing.T) {
 	if _, err := env.svc.Delete(auth.WithUser(t.Context(), bob), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("Delete by bob = %v, want NotFound", err)
 	}
+	ref := &controlv1.BoxRef{BoxId: aliceBox}
 	gate := make(chan struct{})
 	env.agent.onUpload = func(machines.Endpoint) { <-gate }
-	save, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox})
-	if err != nil {
-		t.Fatalf("SaveState: %v", err)
+	ctx, cancel := context.WithCancel(env.ctx)
+	defer cancel()
+	var save *controlv1.Operation
+	env.fake.beforeList = func(caller context.Context) {
+		if caller == ctx {
+			var err error
+			save, err = env.svc.SaveState(env.ctx, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	if _, err := env.svc.Delete(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), save.GetId()) {
-		t.Errorf("Delete during a save = %v, want FailedPrecondition naming %s", err, save.GetId())
+	deleted, err := env.svc.Delete(ctx, ref)
+	if _, retryErr := env.svc.Delete(env.ctx, ref); status.Code(retryErr) != codes.FailedPrecondition || !strings.Contains(retryErr.Error(), save.GetId()) {
+		t.Errorf("Delete while save %v is active returned %v", save, retryErr)
 	}
 	close(gate)
-	watch(t, env.svc, env.ctx, save.GetId(), "")
+	if deleted != nil {
+		watch(t, env.svc, env.ctx, deleted.GetId(), "")
+	}
+	if save == nil || status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), save.GetId()) {
+		t.Fatalf("Delete during save %v returned %v, %v", save, deleted, err)
+	}
+	events := watch(t, env.svc, env.ctx, save.GetId(), "")
+	if events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE || env.fake.deletedIDs() != "" {
+		t.Fatalf("save ended with %v, deleted %q", events[len(events)-1], env.fake.deletedIDs())
+	}
 }
 
 func TestEachBoxResolvesToItsOwnMachine(t *testing.T) {
