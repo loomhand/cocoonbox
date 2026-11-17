@@ -763,6 +763,22 @@ func TestAPinnedBoxGoneBeforeItsImageIsReadAgainFallsBackToTheDefaultBox(t *test
 	}
 }
 
+func TestRelayReportsAReplyTheClientDidNotTake(t *testing.T) {
+	err := relay(flushFails{httptest.NewRecorder()}, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), nil)
+	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
+		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
+	}
+}
+
+func TestRelayIntoAStreamReportsAReplyTheClientDidNotTake(t *testing.T) {
+	stream := newEventStream(flushFails{httptest.NewRecorder()}, jsontext.Value(`1`))
+	stream.close()
+	err := relay(stream.w, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), stream)
+	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
+		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
+	}
+}
+
 type fakeGrants struct {
 	boxes       []string
 	chosen      []string
@@ -1127,3 +1143,9 @@ func listedNames(tools []any) (names []string) {
 	}
 	return names
 }
+
+type flushFails struct {
+	*httptest.ResponseRecorder
+}
+
+func (flushFails) FlushError() error { return errors.New("client gone") }

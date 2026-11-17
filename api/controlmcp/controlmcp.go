@@ -331,7 +331,7 @@ func (e *eventStream) send(msg any) {
 	if err != nil {
 		return
 	}
-	e.write(mcpwire.Event(data))
+	_ = e.write(mcpwire.Event(data))
 }
 
 func (e *eventStream) close() {
@@ -348,17 +348,18 @@ func (e *eventStream) keepalive() {
 		case <-e.stop:
 			return
 		case <-ticker.C:
-			e.write([]byte(mcpwire.KeepaliveComment))
+			_ = e.write([]byte(mcpwire.KeepaliveComment))
 		}
 	}
 }
 
-func (e *eventStream) write(b []byte) {
+func (e *eventStream) write(b []byte) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, err := e.w.Write(b); err == nil { //nolint:gosec // an event stream of JSON-RPC, never HTML
-		_ = e.rc.Flush()
+	if _, err := e.w.Write(b); err != nil { //nolint:gosec // an event stream of JSON-RPC, never HTML
+		return err
 	}
+	return e.rc.Flush()
 }
 
 func initializeResult(params jsontext.Value, name string) map[string]any {
