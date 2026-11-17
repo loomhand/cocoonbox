@@ -56,10 +56,9 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		}
 		accounts = redeemed.allAccounts
 	case refreshToken:
-		var replayed string
-		replayed, accounts, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
-		if replayed != "" {
-			s.accounts.EndCredential(r.Context(), replayed)
+		accounts, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
+		if refused, ok := errors.AsType[*refusal](err); ok && refused.reason == refusedReplayed {
+			s.accounts.EndCredential(r.Context(), refused.grant)
 		}
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
@@ -67,6 +66,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case errors.Is(err, errInvalidGrant):
+		log.WithFunc("oauth.Service.ServeToken").Warnf(r.Context(), "refused %s grant of client %q: %v", f.Get("grant_type"), clientID, err)
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "the code or refresh token is invalid, expired, spent, or for another client")
 		return
 	case err != nil:

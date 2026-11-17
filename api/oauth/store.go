@@ -22,6 +22,11 @@ const (
 	grantColumns = `g.id, g.user_id, g.client_id, g.client_name, g.client_host, g.max_boxes, g.max_running, g.created_at, g.expires_at,
 		g.used_at, g.seen, g.all_accounts, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id),
 		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id)`
+
+	refusedNotFound       = "not_found"
+	refusedClientMismatch = "client_mismatch"
+	refusedExpired        = "expired"
+	refusedReplayed       = "replayed"
 )
 
 var (
@@ -56,6 +61,21 @@ type issued struct {
 	access  string
 	refresh string
 }
+
+type refusal struct {
+	reason string
+	grant  string
+	user   string
+}
+
+func (r *refusal) Error() string {
+	if r.grant == "" {
+		return "reason=" + r.reason
+	}
+	return fmt.Sprintf("reason=%s grant=%s user=%s", r.reason, r.grant, r.user)
+}
+
+func (r *refusal) Unwrap() error { return errInvalidGrant }
 
 type store struct {
 	pool *pgxpool.Pool
@@ -148,36 +168,36 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 	return stored, cmp.Or(err, refused)
 }
 
-// refresh spends the refresh token, issues tokens in its place and reports whether its grant reaches accounts; the one spent last, sent again, revokes its grant and returns its id.
-func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (string, bool, error) {
+// refresh spends the refresh token, issues tokens in its place and reports whether its grant reaches accounts; a refused one is a *refusal, and the one spent last, sent again, revokes its grant.
+func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (bool, error) {
 	var (
-		replayed string
+		replayed *refusal
 		accounts bool
 	)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var (
-			grantID, client string
-			spent           bool
-			expiresAt       time.Time
+			grantID, client, user string
+			spent                 bool
+			expiresAt             time.Time
 		)
-		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, t.spent, g.expires_at, g.all_accounts
+		err := tx.QueryRow(ctx, `SELECT g.id, g.client_id, g.user_id, t.spent, g.expires_at, g.all_accounts
 			FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id WHERE t.sha256 = $1 AND t.refresh FOR UPDATE OF g, t`, refreshSHA256).Scan(
-			&grantID, &client, &spent, &expiresAt, &accounts)
+			&grantID, &client, &user, &spent, &expiresAt, &accounts)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
-			return errInvalidGrant
+			return &refusal{reason: refusedNotFound}
 		case err != nil:
 			return fmt.Errorf("read refresh token: %w", err)
 		case client != clientID:
-			return errInvalidGrant
+			return &refusal{reason: refusedClientMismatch, grant: grantID, user: user}
 		case spent:
-			replayed = grantID
+			replayed = &refusal{reason: refusedReplayed, grant: grantID, user: user}
 			if _, err = tx.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1", grantID); err != nil {
 				return err
 			}
 			return endedIn(ctx, tx, []string{grantID})
 		case !time.Now().Before(expiresAt):
-			return errInvalidGrant
+			return &refusal{reason: refusedExpired, grant: grantID, user: user}
 		}
 		if _, err := tx.Exec(ctx, "DELETE FROM oauth_tokens WHERE grant_id = $1 AND (spent OR (NOT refresh AND expires_at < now()))", grantID); err != nil {
 			return fmt.Errorf("prune tokens: %w", err)
@@ -189,11 +209,11 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 	})
 	switch {
 	case err != nil:
-		return "", false, err
-	case replayed != "":
-		return replayed, false, errInvalidGrant
+		return false, err
+	case replayed != nil:
+		return false, replayed
 	}
-	return "", accounts, nil
+	return accounts, nil
 }
 
 func (s *store) liveGrant(ctx context.Context, user, client string) (string, error) {

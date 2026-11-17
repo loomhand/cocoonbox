@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -138,6 +139,53 @@ func TestARevokeByTokenThatRollsBackNamesNoGrant(t *testing.T) {
 	}
 }
 
+func TestARefusedRefreshNamesWhyAndWhoseGrant(t *testing.T) {
+	dsn := clustertest.EmptyDSN(t)
+	writer := openUsers(t, dsn)
+	s, err := Open(t.Context(), Options{DSN: dsn, Issuer: "https://cb.example", Resource: "https://cb.example/mcp", Accounts: writer})
+	if err != nil {
+		t.Fatalf("open oauth: %v", err)
+	}
+	t.Cleanup(s.Close)
+	tests := []struct {
+		user   string
+		client string
+		spoil  func(t *testing.T, g *grantTokens)
+		want   string
+	}{
+		{"unknown", agentClient, func(_ *testing.T, g *grantTokens) { g.refresh = randomToken(refreshPrefix) }, refusedNotFound},
+		{"mismatch", "another-client", func(*testing.T, *grantTokens) {}, refusedClientMismatch},
+		{"expired", agentClient, func(t *testing.T, g *grantTokens) {
+			if _, err := s.store.pool.Exec(t.Context(), "UPDATE oauth_grants SET expires_at = now() - interval '1 minute' WHERE id = $1", g.id); err != nil {
+				t.Fatalf("expire the grant: %v", err)
+			}
+		}, refusedExpired},
+		{"replayed", agentClient, func(t *testing.T, g *grantTokens) {
+			if _, err := s.store.refresh(t.Context(), utils.HashHex(g.refresh), agentClient, newIssued()); err != nil {
+				t.Fatalf("the first refresh: %v", err)
+			}
+		}, refusedReplayed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			user, err := writer.Create(t.Context(), users.NewUser{Name: tt.user})
+			if err != nil {
+				t.Fatalf("create %s: %v", tt.user, err)
+			}
+			g := issueGrant(t, s, user.ID)
+			tt.spoil(t, &g)
+			want := refusal{reason: tt.want, grant: g.id, user: user.ID}
+			if tt.want == refusedNotFound {
+				want = refusal{reason: tt.want}
+			}
+			_, err = s.store.refresh(t.Context(), utils.HashHex(g.refresh), tt.client, newIssued())
+			if got, ok := errors.AsType[*refusal](err); !ok || *got != want || !errors.Is(err, errInvalidGrant) {
+				t.Errorf("refresh = %v, want the invalid grant %v", err, &want)
+			}
+		})
+	}
+}
+
 type grantTokens struct {
 	id, access, refresh string
 }
@@ -188,6 +236,10 @@ func issueGrant(t *testing.T, s *Service, user string) grantTokens {
 		t.Fatalf("redeem: %v", err)
 	}
 	return g
+}
+
+func newIssued() issued {
+	return issued{access: utils.HashHex(randomToken(AccessPrefix)), refresh: utils.HashHex(randomToken(refreshPrefix))}
 }
 
 func postForm(t *testing.T, serve http.HandlerFunc, form url.Values) int {
