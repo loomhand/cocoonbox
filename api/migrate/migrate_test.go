@@ -72,6 +72,30 @@ func TestARoleWithoutDDLOpensAMigratedDatabaseAndFailsOnAPendingMigration(t *tes
 	}
 }
 
+func TestTwoFilesOfOneVersionStopTheMigrationBeforeItWritesAnything(t *testing.T) {
+	dsn := clustertest.EmptyDSN(t)
+	set := migrate.Set{FS: fstest.MapFS{
+		"migrations/0001_a.sql":       {Data: []byte("CREATE TABLE a (x int)")},
+		"migrations/0002_b.sql":       {Data: []byte("CREATE TABLE b (x int)")},
+		"migrations/0002_b_again.sql": {Data: []byte("CREATE TABLE c (x int)")},
+	}, Table: "t_schema_migrations", Lock: 1}
+	if pool, err := migrate.Open(t.Context(), dsn, set); err == nil || !strings.Contains(err.Error(), "share version 2") {
+		if pool != nil {
+			pool.Close()
+		}
+		t.Errorf("Open = %v, want the shared version refused", err)
+	}
+	if err := migrate.Apply(t.Context(), dsn, set); err == nil || !strings.Contains(err.Error(), "share version 2") {
+		t.Errorf("Apply = %v, want the shared version refused", err)
+	}
+	if _, err := migrate.Pending(t.Context(), dsn, set); err == nil || !strings.Contains(err.Error(), "share version 2") {
+		t.Errorf("Pending = %v, want the shared version refused", err)
+	}
+	if tables := tableCount(t, dsn); tables != 0 {
+		t.Errorf("tables after the refused runs = %d, want none", tables)
+	}
+}
+
 func admin(t *testing.T, dsn, sql string) {
 	t.Helper()
 	ctx := context.WithoutCancel(t.Context())
