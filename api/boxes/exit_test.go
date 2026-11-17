@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"context"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -23,6 +24,20 @@ func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	}
 	if execs := fake.execCalls(); len(execs) != 2 {
 		t.Errorf("deliveries = %+v, want both boxes provisioned", execs)
+	}
+}
+
+func TestProvisioningStopsWhenItsContextEnds(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	svc := newService(fake, testDefaults, newFakeRegistry())
+	svc.EnableResidential(residential, func(string) bool { return true })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	svc.provisionStale(ctx)
+	if got, execs := fake.egressCalls(), fake.execCalls(); len(got) != 0 || len(execs) != 0 {
+		t.Errorf("a pass on an ended context routed %v and delivered %+v", got, execs)
 	}
 }
 

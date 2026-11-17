@@ -74,6 +74,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 	var g errgroup.Group
 	g.SetLimit(provisionFanout)
 	for _, m := range ms {
+		if ctx.Err() != nil {
+			break
+		}
 		if current[boxOfMachine(m.ID)].ID != m.ID {
 			s.dropStray(ctx, m)
 			continue
@@ -92,6 +95,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 		}
 	}
 	_ = g.Wait()
+	if ctx.Err() != nil {
+		return
+	}
 	s.reconcileVault(ctx, ms)
 	for _, k := range ended {
 		s.revokeMachineKey(ctx, k.Machine, k.ID)
