@@ -92,6 +92,10 @@ func Pending(ctx context.Context, dsn string, set Set) ([]string, error) {
 
 func apply(ctx context.Context, pool *pgxpool.Pool, set Set) error {
 	table := set.Table
+	names, err := migrations(set.FS)
+	if err != nil {
+		return err
+	}
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -109,10 +113,6 @@ func apply(ctx context.Context, pool *pgxpool.Pool, set Set) error {
 		if _, err = conn.Exec(ctx, "CREATE TABLE "+table+" (version integer PRIMARY KEY)"); err != nil {
 			return fmt.Errorf("create %s: %w", table, err)
 		}
-	}
-	names, err := migrations(set.FS)
-	if err != nil {
-		return err
 	}
 	for _, name := range names {
 		version, err := versionOf(name)
@@ -145,8 +145,22 @@ func apply(ctx context.Context, pool *pgxpool.Pool, set Set) error {
 
 func migrations(fsys fs.FS) ([]string, error) {
 	names, err := fs.Glob(fsys, "migrations/*.sql")
+	if err != nil {
+		return nil, err
+	}
 	slices.Sort(names)
-	return names, err
+	seen := map[int]string{}
+	for _, name := range names {
+		version, err := versionOf(name)
+		if err != nil {
+			return nil, err
+		}
+		if other, ok := seen[version]; ok {
+			return nil, fmt.Errorf("migrations %s and %s share version %d", other, name, version)
+		}
+		seen[version] = name
+	}
+	return names, nil
 }
 
 func versionOf(name string) (int, error) {
