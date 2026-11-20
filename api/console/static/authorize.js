@@ -47,7 +47,9 @@ async function load() {
   $("client-id").textContent = "Client id: " + c.client_id;
   $("client-trust").textContent = c.client_host
     ? "Its identity is verified by its metadata at " + c.client_host + "."
-    : "This client registered itself: its name is not verified. Allow it only if you just connected an agent to cocoonbox.";
+    : c.answers_only_to
+      ? "This client registered itself: its name is not verified, but its answers go only to " + c.answers_only_to + "."
+      : "This client registered itself: its name is not verified. Allow it only if you just connected an agent to cocoonbox.";
   $("redirect").textContent = c.loopback
     ? "The answer goes to " + c.redirect_host + " on this computer. Allow it only if you started this from an agent on this computer just now."
     : "The answer goes to " + c.redirect_host + ".";

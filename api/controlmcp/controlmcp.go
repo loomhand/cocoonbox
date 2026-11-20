@@ -406,8 +406,7 @@ func clientNameOf(sessionID string) string {
 }
 
 func clientName(name string) string {
-	clean := notClientNameChar.ReplaceAllString(name, "-")
-	return clean[:min(len(clean), maxClientNameLen)]
+	return notClientNameChar.ReplaceAllString(name[:min(len(name), maxClientNameLen)], "-")
 }
 
 func buildVersion(settings []debug.BuildSetting) string {

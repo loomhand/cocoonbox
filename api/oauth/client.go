@@ -47,11 +47,12 @@ var (
 	}
 )
 
-// client is a client as the server trusts it; host is its metadata document's verified host, or the host of the one callback a registered client's codes can reach.
+// client is a client as the server trusts it; host is its metadata document's verified host, empty for a registered client.
 type client struct {
 	id         string
 	name       string
 	host       string
+	answersTo  string
 	redirects  []string
 	firstParty bool
 }
@@ -190,7 +191,7 @@ func (s *Service) registered(id string) (client, error) {
 	if err := json.Unmarshal(payload, &reg); err != nil {
 		return client{}, errUnknownClient
 	}
-	return client{id: id, name: reg.Name, host: verifyRedirect(reg.Redirects), redirects: reg.Redirects}, nil
+	return client{id: id, name: reg.Name, answersTo: onlyAnswersTo(reg.Redirects), redirects: reg.Redirects}, nil
 }
 
 func (s *Service) mac(encoded string) []byte {
@@ -258,7 +259,7 @@ func isLoopback(host string) bool {
 	return slices.Contains(loopbackHosts, host)
 }
 
-func verifyRedirect(redirects []string) string {
+func onlyAnswersTo(redirects []string) string {
 	if slices.Equal(redirects, []string{chatGPTRedirect}) {
 		return chatGPTHost
 	}
