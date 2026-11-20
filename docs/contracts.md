@@ -409,8 +409,8 @@ Every tool but `box_list`, `box_create` and `usage` takes an optional `box`: a b
 | Tool | Input schema | `structuredContent` |
 |---|---|---|
 | `box_list` | `{}` | `{boxes: [{box_id, name, state, image, last_saved_at_ms}]}`, oldest first |
-| `box_status` | `{box}` | `{box_id, name, state, image, latest_image, upgrade_available, last_saved_at_ms, restarted_at_ms}`; `restarted_at_ms` is left out until the box's current machine restarts from its disk |
-| `box_ensure` | `{box, "wait": boolean, default true}` | `{box_id, state, operation_id, note}`. `operation_id` is `""` when the box was already running. With `wait` the result arrives when the operation is done, and `note` says when the box could not resume and restarted from its disk instead, losing what was only in memory. |
+| `box_status` | `{box}` | `{box_id, name, state, image, latest_image, upgrade_available, last_saved_at_ms, restarted_at_ms?}` |
+| `box_ensure` | `{box, "wait": boolean, default true}` | `{box_id, state, operation_id, note?}`. `operation_id` is `""` when the box was already running. With `wait` the result arrives when the operation is done. `note` is present only when the box could not resume and restarted from its disk instead, losing what was only in memory. |
 | `box_create` | `{"name": string, required; "image": string; "wait": boolean, default true}` | `{box_id, name, state, operation_id}` |
 | `box_hibernate` | `{box}` | `{box_id, state, operation_id}` after the operation is done |
 | `box_save` | `{box}` | `{box_id, last_saved_at_ms, operation_id, bytes}`; `bytes` is the last `total_bytes` of the saving phase |
@@ -418,7 +418,7 @@ Every tool but `box_list`, `box_create` and `usage` takes an optional `box`: a b
 | `box_delete` | `{box, required; "confirm": boolean, required}` | `{box_id, operation_id}` after the operation is done |
 | `usage` | `{}` | `{today, month, daily_cap_micros, default_cap, remaining_today_micros}`, as `Boxes.Usage` (Model usage below) |
 
-Field types: `box_id`, `name`, `state`, `image`, `latest_image` and `operation_id` are strings; `upgrade_available` is a boolean; `last_saved_at_ms`, `restarted_at_ms` and `bytes` are integers (0 means never, or nothing moved). For a user without a box, `box_status` returns `state: "absent"` with empty strings, and `box_ensure` creates the box.
+Field types: `box_id`, `name`, `state`, `image`, `latest_image` and `operation_id` are strings; `upgrade_available` is a boolean; `last_saved_at_ms` and `bytes` are integers (0 means never, or nothing moved). `restarted_at_ms` is an integer, left out rather than 0 while the box's current machine has never restarted from its disk. For a user without a box, `box_status` returns `state: "absent"` with empty strings, and `box_ensure` creates the box.
 
 Tool descriptions (model-facing; the api returns these exactly):
 - `box_status`: "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, when your files were last saved, and when it last restarted from its disk, losing what was only in memory."

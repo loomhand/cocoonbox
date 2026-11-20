@@ -70,7 +70,7 @@ type row struct {
 	EnvMissing  bool              `json:"env_missing,omitzero"`
 }
 
-// equal reports whether r and o are the same claim; ClaimedAt is compared as an instant, the only way it is read.
+// equal reports whether r and o are the same claim; ClaimedAt and RestartedAt are compared as instants, the only way they are read.
 func (r *row) equal(o *row) bool {
 	return r.ID == o.ID &&
 		r.Key == o.Key &&
