@@ -440,6 +440,17 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestABoxSaysWhenItLastRestartedFromItsDisk(t *testing.T) {
+	m := machines.Machine{ID: "cb-1", State: machines.StateRunning}
+	if got := toBox("cb-1", m).GetRestartedAtMs(); got != 0 {
+		t.Errorf("a box that never restarted: restarted_at_ms = %d, want 0", got)
+	}
+	m.RestartedAt = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	if got := toBox("cb-1", m).GetRestartedAtMs(); got != m.RestartedAt.UnixMilli() {
+		t.Errorf("restarted_at_ms = %d, want %d", got, m.RestartedAt.UnixMilli())
+	}
+}
+
 func newService(backend machines.Machines, defaults Defaults, registry Registry) *Service {
 	s := New(backend, defaults, registry)
 	s.EnableAccounts(&fakeAccounts{})

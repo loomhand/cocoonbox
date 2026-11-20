@@ -102,6 +102,8 @@ message Box {
   string latest_image = 8;
   // Unique among the user's boxes.
   string name = 9;
+  // Time of the latest boot anew from the box's disk, which lost what was only in memory; 0 when its current machine had none.
+  int64 restarted_at_ms = 10;
 }
 
 message Operation {

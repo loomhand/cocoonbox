@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -394,6 +395,30 @@ func TestEnsureStreamsProgress(t *testing.T) {
 	}
 }
 
+func TestAWakeThatRestartedTheBoxFromItsDiskSaysSo(t *testing.T) {
+	srv, fake := newTestServer(t)
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	if got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_ensure"}}`)); got["note"] != nil {
+		t.Fatalf("a wake that resumed = %v", got)
+	}
+	restartedAt := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	fake.mu.Lock()
+	fake.restartOnWake = restartedAt.UnixMilli()
+	fake.mu.Unlock()
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_ensure"}}`))
+	if note, _ := got["note"].(string); !strings.Contains(note, "restarted from its disk at 2026-11-19T09:00:00Z") {
+		t.Fatalf("a wake that restarted the box = %v", got)
+	}
+	status := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_status"}}`))
+	if status["restarted_at_ms"] != float64(restartedAt.UnixMilli()) {
+		t.Fatalf("box_status = %v", status)
+	}
+	if got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_ensure"}}`)); got["note"] != nil {
+		t.Fatalf("an ensure of the running box = %v", got)
+	}
+}
+
 func TestSaveReportsBytesAndRefusals(t *testing.T) {
 	srv, fake := newTestServer(t)
 
@@ -487,16 +512,18 @@ type fakeCall struct {
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
 
-	mu        sync.Mutex
-	calls     []fakeCall
-	states    map[string]controlv1.BoxState
-	images    map[string]string
-	saved     map[string]int64
-	ops       map[string]string
-	extra     map[string][]*controlv1.Box
-	gone      map[string]bool
-	failNext  bool
-	ensureErr error
+	mu            sync.Mutex
+	calls         []fakeCall
+	states        map[string]controlv1.BoxState
+	images        map[string]string
+	saved         map[string]int64
+	restarted     map[string]int64
+	ops           map[string]string
+	extra         map[string][]*controlv1.Box
+	gone          map[string]bool
+	failNext      bool
+	ensureErr     error
+	restartOnWake int64
 }
 
 func (f *fakeBoxes) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
@@ -570,6 +597,9 @@ func (f *fakeBoxes) WatchOperation(req *controlv1.WatchOperationRequest, stream 
 	owner, ok := f.ops[req.GetOperationId()]
 	fail := f.failNext
 	f.failNext = false
+	if ok && strings.HasPrefix(req.GetOperationId(), "wake") && f.restartOnWake != 0 {
+		f.restarted[owner] = f.restartOnWake
+	}
 	f.mu.Unlock()
 	if !ok || owner != user {
 		return status.Error(codes.NotFound, "operation not found")
@@ -630,7 +660,7 @@ func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1
 }
 
 func (f *fakeBoxes) boxLocked(user string) *controlv1.Box {
-	return &controlv1.Box{Id: boxes.BoxID(user), Name: "main", State: f.states[user], Image: f.images[user], LatestImage: latestImage, LastSavedAtMs: f.saved[user]}
+	return &controlv1.Box{Id: boxes.BoxID(user), Name: "main", State: f.states[user], Image: f.images[user], LatestImage: latestImage, LastSavedAtMs: f.saved[user], RestartedAtMs: f.restarted[user]}
 }
 
 func (f *fakeBoxes) startLocked(user, kind string) *controlv1.Operation {
@@ -666,12 +696,13 @@ func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
 	}
 	running := controlv1.BoxState_BOX_STATE_RUNNING
 	fake := &fakeBoxes{
-		states: map[string]controlv1.BoxState{"alice": running, "bob": running},
-		images: map[string]string{"alice": "img:1", "bob": "img:1"},
-		saved:  map[string]int64{},
-		ops:    map[string]string{},
-		extra:  map[string][]*controlv1.Box{},
-		gone:   map[string]bool{},
+		states:    map[string]controlv1.BoxState{"alice": running, "bob": running},
+		images:    map[string]string{"alice": "img:1", "bob": "img:1"},
+		saved:     map[string]int64{},
+		restarted: map[string]int64{},
+		ops:       map[string]string{},
+		extra:     map[string][]*controlv1.Box{},
+		gone:      map[string]bool{},
 	}
 	return New(fake, auth.New(users, nil)), fake
 }

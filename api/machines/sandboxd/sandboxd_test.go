@@ -388,6 +388,7 @@ func TestRowsAreEqualWhenEveryFieldMatches(t *testing.T) {
 		{"Hibernated", "hibernated", same, with(func(r *row) { r.Hibernated = true }), false},
 		{"Archived", "archived", same, with(func(r *row) { r.Archived = true }), false},
 		{"Restarts", "another restart", same, with(func(r *row) { r.Restarts++ }), false},
+		{"RestartedAt", "a later restart", same, with(func(r *row) { r.RestartedAt = at.Add(time.Second) }), false},
 		{"Failed", "another failure", same, with(func(r *row) { r.Failed = "" }), false},
 		{"EnvMissing", "env missing", same, with(func(r *row) { r.EnvMissing = true }), false},
 		{"ClaimedAt", "a later instant", same, with(func(r *row) { r.ClaimedAt = at.Add(time.Nanosecond) }), false},
@@ -886,9 +887,10 @@ func TestARestartOrFailureIsReportedFromTheRow(t *testing.T) {
 	b := newTestBackend(t, fake)
 	m := claimRunning(t, b)
 
-	fake.mutate(func(sb *fakeSandbox) { sb.row.Restarts++ })
-	if got, _ := b.Get(t.Context(), boxID); got.State != machines.StateStarting || got.Incarnation == m.Incarnation {
-		t.Errorf("after a restart = %+v", got)
+	restartedAt := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
+	fake.mutate(func(sb *fakeSandbox) { sb.row.Restarts, sb.row.RestartedAt = sb.row.Restarts+1, restartedAt })
+	if got, _ := b.Get(t.Context(), boxID); got.State != machines.StateStarting || got.Incarnation == m.Incarnation || !got.RestartedAt.Equal(restartedAt) {
+		t.Errorf("after a restart = %+v, want it starting anew, restarted at %v", got, restartedAt)
 	}
 	waitState(t, b, boxID, 0, machines.StateRunning)
 
