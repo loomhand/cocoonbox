@@ -354,6 +354,60 @@ func TestAStaleAnswerFromTheFormerNodeLeavesAMovedMachineMoved(t *testing.T) {
 	}
 }
 
+func TestRowsAreEqualWhenEveryFieldMatches(t *testing.T) {
+	at := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	with := func(change func(*row)) row {
+		r := row{
+			ID: "sb_1", Key: poolKey{Template: template, Net: "none", Size: "xlarge"}, Tenant: "t-alice",
+			Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner}, Restarts: 1, Failed: "boot", ClaimedAt: at,
+		}
+		change(&r)
+		return r
+	}
+	same := with(func(*row) {})
+	halfHour := func(r *row) {
+		if err := r.ClaimedAt.UnmarshalText([]byte("2026-11-12T15:30:00+05:30")); err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+	}
+	cases := []struct {
+		field, name string
+		a, b        row
+		want        bool
+	}{
+		{"ID", "another sandbox", same, with(func(r *row) { r.ID = "sb_2" }), false},
+		{"Key", "another template", same, with(func(r *row) { r.Key.Template = "cbdesk:v9" }), false},
+		{"Key", "another net", same, with(func(r *row) { r.Key.Net = "open" }), false},
+		{"Key", "another size", same, with(func(r *row) { r.Key.Size = "large" }), false},
+		{"Tenant", "another tenant", same, with(func(r *row) { r.Tenant = "t-bob" }), false},
+		{"Metadata", "equal maps that are not one map", same, with(func(*row) {}), true},
+		{"Metadata", "nil and empty, which the stored claim does not tell apart", with(func(r *row) { r.Metadata = nil }), with(func(r *row) { r.Metadata = map[string]string{} }), true},
+		{"Metadata", "another value", same, with(func(r *row) { r.Metadata["cb_owner"] = "bob" }), false},
+		{"Metadata", "another key of as many", same, with(func(r *row) { r.Metadata = map[string]string{"cb_machine": boxID, "cb_user": owner} }), false},
+		{"Metadata", "one more key", same, with(func(r *row) { r.Metadata["cb_meta_name"] = "desk" }), false},
+		{"Hibernated", "hibernated", same, with(func(r *row) { r.Hibernated = true }), false},
+		{"Archived", "archived", same, with(func(r *row) { r.Archived = true }), false},
+		{"Restarts", "another restart", same, with(func(r *row) { r.Restarts++ }), false},
+		{"Failed", "another failure", same, with(func(r *row) { r.Failed = "" }), false},
+		{"EnvMissing", "env missing", same, with(func(r *row) { r.EnvMissing = true }), false},
+		{"ClaimedAt", "a later instant", same, with(func(r *row) { r.ClaimedAt = at.Add(time.Nanosecond) }), false},
+		{"ClaimedAt", "the same instant in another zone", same, with(func(r *row) { r.ClaimedAt = at.In(time.FixedZone("", 8*60*60)) }), true},
+		{"ClaimedAt", "a half-hour zone parsed twice, as a claim read back from the store is", with(halfHour), with(halfHour), true},
+	}
+	covered := map[string]bool{}
+	for _, c := range cases {
+		covered[c.field] = true
+		if ab, ba := c.a.equal(&c.b), c.b.equal(&c.a); ab != c.want || ba != c.want {
+			t.Errorf("%s, %s: equal = %t one way and %t the other, want %t", c.field, c.name, ab, ba, c.want)
+		}
+	}
+	for f := range reflect.TypeFor[row]().Fields() {
+		if !covered[f.Name] {
+			t.Errorf("no case changes row.%s: compare it in row.equal and add its case", f.Name)
+		}
+	}
+}
+
 func TestARefreshKeepsAMachineWhoseNewNodesDisagree(t *testing.T) {
 	entry, peer, evil := newFakeSandboxd(t), newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer, evil}, []*fakeSandboxd{peer}

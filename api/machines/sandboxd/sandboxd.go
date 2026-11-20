@@ -13,7 +13,6 @@ import (
 	"maps"
 	"net"
 	"net/http"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1059,7 +1058,7 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row, known map[
 		if !placed(e, r) {
 			continue
 		}
-		if e.row != nil && reflect.DeepEqual(*e.row, r) && e.image == r.Key.Template && e.ownerAddr == addr {
+		if e.row != nil && e.row.equal(&r) && e.image == r.Key.Template && e.ownerAddr == addr {
 			continue
 		}
 		next, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {

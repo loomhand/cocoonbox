@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,7 +55,7 @@ type poolKey struct {
 	Size     string `json:"size"`
 }
 
-// row is one claim of the sandboxd index; Token is set only on the root by-id read.
+// row is one claim of the sandboxd index.
 type row struct {
 	ID         string            `json:"id"`
 	Key        poolKey           `json:"key"`
@@ -66,6 +67,20 @@ type row struct {
 	Failed     string            `json:"failed,omitempty"`
 	ClaimedAt  time.Time         `json:"claimed_at,omitzero"`
 	EnvMissing bool              `json:"env_missing,omitzero"`
+}
+
+// equal reports whether r and o are the same claim; ClaimedAt is compared as an instant, the only way it is read.
+func (r *row) equal(o *row) bool {
+	return r.ID == o.ID &&
+		r.Key == o.Key &&
+		r.Tenant == o.Tenant &&
+		maps.Equal(r.Metadata, o.Metadata) &&
+		r.Hibernated == o.Hibernated &&
+		r.Archived == o.Archived &&
+		r.Restarts == o.Restarts &&
+		r.Failed == o.Failed &&
+		r.ClaimedAt.Equal(o.ClaimedAt) &&
+		r.EnvMissing == o.EnvMissing
 }
 
 type envVar struct {
