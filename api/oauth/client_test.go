@@ -137,6 +137,22 @@ func TestRegisteredClientCarriesItsMetadataAndRefusesTampering(t *testing.T) {
 	}
 }
 
+func TestARegisteredClientIsVerifiedOnlyByWhereItsCodesGo(t *testing.T) {
+	s := &Service{key: []byte("k")}
+	for _, tt := range []struct {
+		redirects []string
+		want      string
+	}{
+		{[]string{chatGPTRedirect}, chatGPTHost},
+		{[]string{chatGPTRedirect, "https://evil.example/cb"}, ""},
+		{[]string{"https://evil.example/cb"}, ""},
+	} {
+		if c, err := s.client(t.Context(), s.register("ChatGPT", tt.redirects)); err != nil || c.host != tt.want {
+			t.Errorf("client of %v = host %q, %v; want %q", tt.redirects, c.host, err, tt.want)
+		}
+	}
+}
+
 func TestMetadataDocumentClient(t *testing.T) {
 	var body, contentType string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

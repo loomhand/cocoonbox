@@ -30,6 +30,9 @@ const (
 	maxCached      = 1000
 	documentTTL    = 5 * time.Minute
 	fetchTimeout   = 5 * time.Second
+
+	chatGPTRedirect = "https://chatgpt.com/connector_platform_oauth_redirect"
+	chatGPTHost     = "chatgpt.com"
 )
 
 var (
@@ -44,7 +47,7 @@ var (
 	}
 )
 
-// client is a client as the server trusts it; host is its metadata document's verified host, empty for a registered client.
+// client is a client as the server trusts it; host is its metadata document's verified host, or the host of the one callback a registered client's codes can reach.
 type client struct {
 	id         string
 	name       string
@@ -187,7 +190,7 @@ func (s *Service) registered(id string) (client, error) {
 	if err := json.Unmarshal(payload, &reg); err != nil {
 		return client{}, errUnknownClient
 	}
-	return client{id: id, name: reg.Name, redirects: reg.Redirects}, nil
+	return client{id: id, name: reg.Name, host: verifyRedirect(reg.Redirects), redirects: reg.Redirects}, nil
 }
 
 func (s *Service) mac(encoded string) []byte {
@@ -253,4 +256,11 @@ func redirectHost(uri string) (string, bool) {
 
 func isLoopback(host string) bool {
 	return slices.Contains(loopbackHosts, host)
+}
+
+func verifyRedirect(redirects []string) string {
+	if slices.Equal(redirects, []string{chatGPTRedirect}) {
+		return chatGPTHost
+	}
+	return ""
 }

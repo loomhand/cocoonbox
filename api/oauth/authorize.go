@@ -48,7 +48,7 @@ func ParseRequest(q url.Values) Request {
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
-	// ClientHost is the verified host of the client's metadata document, empty for a self-registered client.
+	// ClientHost is the verified host of the client, empty for a self-registered client whose codes can go anywhere.
 	ClientHost   string   `json:"client_host"`
 	RedirectHost string   `json:"redirect_host"`
 	Loopback     bool     `json:"loopback"`
