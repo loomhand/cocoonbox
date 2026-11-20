@@ -421,7 +421,7 @@ Every tool but `box_list`, `box_create` and `usage` takes an optional `box`: a b
 Field types: `box_id`, `name`, `state`, `image`, `latest_image` and `operation_id` are strings; `upgrade_available` is a boolean; `last_saved_at_ms`, `restarted_at_ms` and `bytes` are integers (0 means never, or nothing moved). For a user without a box, `box_status` returns `state: "absent"` with empty strings, and `box_ensure` creates the box.
 
 Tool descriptions (model-facing; the api returns these exactly):
-- `box_status`: "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved."
+- `box_status`: "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, when your files were last saved, and when it last restarted from its disk, losing what was only in memory."
 - `box_ensure`: "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer."
 - `box_hibernate`: "Hibernate your cocoonbox box. Running programs and memory are kept and come back on the next wake."
 - `box_save`: "Save your files, logins and agent history from the box to storage now. On a desktop box the browser closes during the save."
