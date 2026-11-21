@@ -61,7 +61,7 @@ linters:
     paths:
       - vendor
     rules:
-      - path: controlmcp/controlmcp.go
+      - path: ^controlmcp/controlmcp\.go$
         linters:
           - gosec
         text: "G705"
