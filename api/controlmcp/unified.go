@@ -398,7 +398,11 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	if err == nil || replyLost(box, err) {
 		return
 	}
-	reply := newResponse(id, failure(err), nil)
+	res := failure(err)
+	if note != "" {
+		res.Content = slices.Insert(res.Content, 0, textContent{Type: textType, Text: note})
+	}
+	reply := newResponse(id, res, nil)
 	if stream != nil {
 		stream.send(reply)
 		return
@@ -624,15 +628,20 @@ func (s *Server) defaultBox(ctx context.Context) (*controlv1.Box, string, error)
 
 // relay copies the agent's answer to the client as it arrives, with note first in the tool result; into stream, which carries the wake's progress, it goes as events.
 func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream, note string) error {
-	if stream != nil && !strings.HasPrefix(resp.Header.Get("Content-Type"), mcpwire.EventStream) {
+	var body io.Reader = resp.Body
+	if (stream != nil || note != "") && !strings.HasPrefix(resp.Header.Get("Content-Type"), mcpwire.EventStream) {
 		data, err := readAnswer(resp.Body)
 		if err != nil {
 			return err
 		}
-		if err := stream.write(mcpwire.Event(withNote(bytes.TrimSpace(data), note))); err != nil {
-			return fmt.Errorf("%w: %w", errReplyLost, err)
+		data = withNote(bytes.TrimSpace(data), note)
+		if stream != nil {
+			if err := stream.write(mcpwire.Event(data)); err != nil {
+				return fmt.Errorf("%w: %w", errReplyLost, err)
+			}
+			return nil
 		}
-		return nil
+		body, note = bytes.NewReader(data), ""
 	}
 	if stream == nil {
 		for _, h := range []string{"Content-Type", "Cache-Control"} {
@@ -653,22 +662,15 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream, note
 		return nil
 	}
 	if note != "" {
-		r := bufio.NewReader(resp.Body)
-		for {
-			line, err := r.ReadBytes('\n')
-			if len(line) > 0 {
-				if werr := write(withNote(line, note)); werr != nil {
-					return werr
-				}
-			}
-			if err != nil {
-				return nil
-			}
+		r := bufio.NewReader(body)
+		if done, err := copyNoted(r, note, write); done || err != nil {
+			return err
 		}
+		body = r
 	}
 	buf := make([]byte, 32<<10)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := body.Read(buf)
 		if n > 0 {
 			if werr := write(buf[:n]); werr != nil {
 				return werr
@@ -677,6 +679,28 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream, note
 		if err != nil {
 			return nil
 		}
+	}
+}
+
+func copyNoted(r *bufio.Reader, note string, write func([]byte) error) (bool, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		switch {
+		case len(line) > maxAnswer:
+			return false, write(line)
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case len(line) > 0:
+			if werr := write(withNote(line, note)); werr != nil {
+				return true, werr
+			}
+		}
+		if err != nil {
+			return true, nil
+		}
+		line = line[:0]
 	}
 }
 

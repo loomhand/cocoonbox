@@ -160,6 +160,22 @@ func TestRootWakePastTheBoundAsksForARetry(t *testing.T) {
 	})
 }
 
+func TestAWakePastTheBoundThatRestartedTheBoxSaysSoBeforeTheRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, fake, agents, _ := newUnifiedServer(t)
+		fake.mu.Lock()
+		fake.restartOnWake = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC).UnixMilli()
+		fake.mu.Unlock()
+		fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+		agents.set(func(a *fakeAgents) { a.deaf = true })
+		reply := decode(t, serveRoot(srv, http.MethodPost, aliceToken, "s1", callShell))
+		content, _ := reply.Result["content"].([]any)
+		if reply.Result["isError"] != true || len(content) != 2 || !strings.Contains(content[0].(map[string]any)["text"].(string), "restarted from its disk at 2026-11-19T09:00:00Z") || content[1].(map[string]any)["text"] != string(errStillStarting) {
+			t.Fatalf("reply = %v", reply.Result)
+		}
+	})
+}
+
 func TestRootCallOfAGrantWithoutABox(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
 	srv.EnableGrants(fakeGrants{})
@@ -823,6 +839,21 @@ func TestRelayPutsANoteOnlyIntoTheToolResultOfAnEventStream(t *testing.T) {
 	content, _ := got["content"].([]any)
 	if len(msgs) != 2 || msgs[1]["id"] != float64(7) || got["isError"] != true || len(content) != 2 || content[0].(map[string]any)["text"] != "restarted" || content[1].(map[string]any)["text"] != "ok" {
 		t.Fatalf("stream = %v", msgs)
+	}
+}
+
+func TestRelayWithANoteReadsNoAnswerPastTheCapWhole(t *testing.T) {
+	big := `{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"` + strings.Repeat("x", maxAnswer) + `"}]}}`
+	rec := httptest.NewRecorder()
+	if err := relay(rec, answer(http.StatusOK, "", big), nil, "restarted"); err == nil || !strings.Contains(err.Error(), "exceeds 32 MiB") || rec.Body.Len() != 0 {
+		t.Fatalf("relay of a JSON answer past the cap = %v, wrote %d bytes", err, rec.Body.Len())
+	}
+	events := "data: " + big + "\n\n"
+	resp := answer(http.StatusOK, "", events)
+	resp.Header.Set("Content-Type", mcpwire.EventStream)
+	rec = httptest.NewRecorder()
+	if err := relay(rec, resp, nil, "restarted"); err != nil || rec.Body.String() != events {
+		t.Fatalf("relay of an event past the cap = %v, changed: %t", err, rec.Body.String() != events)
 	}
 }
 
