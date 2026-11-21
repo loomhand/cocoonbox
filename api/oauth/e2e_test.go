@@ -758,6 +758,26 @@ func TestTheAllAccountsMigrationDropsTickedAccountsFencesOldCodesAndRunsAgain(t 
 	}
 }
 
+func TestTheConsentForAChatGPTOnlyRegistrationClaimsNoVerifiedIdentity(t *testing.T) {
+	e := newEnv(t)
+	const chatGPT = "https://chatgpt.com/connector_platform_oauth_redirect"
+	resp := e.post(t, oauth.RegisterPath, "application/json", fmt.Sprintf(`{"client_name":"cocoonbox support","redirect_uris":[%q],"token_endpoint_auth_method":"none"}`, chatGPT))
+	var reg struct {
+		ClientID string `json:"client_id"`
+	}
+	if resp.StatusCode != http.StatusCreated || json.UnmarshalRead(resp.Body, &reg) != nil || reg.ClientID == "" {
+		t.Fatalf("register: %d", resp.StatusCode)
+	}
+	q := authorizeQuery(reg.ClientID, rand.Text()+rand.Text(), "boxes")
+	q.Set("redirect_uri", chatGPT)
+	q.Set("resource", e.resource)
+	var consent oauth.Consent
+	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
+	if consent.ClientName != "cocoonbox support" || consent.ClientHost != "" || consent.AnswersOnlyTo != "chatgpt.com" || consent.RedirectHost != "chatgpt.com" {
+		t.Fatalf("consent = %+v", consent)
+	}
+}
+
 type env struct {
 	dsn       string
 	waking    *wakeGate

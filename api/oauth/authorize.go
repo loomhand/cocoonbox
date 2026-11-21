@@ -49,15 +49,16 @@ type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
 	// ClientHost is the verified host of the client's metadata document, empty for a self-registered client.
-	ClientHost   string   `json:"client_host"`
-	RedirectHost string   `json:"redirect_host"`
-	Loopback     bool     `json:"loopback"`
-	Existing     bool     `json:"existing"`
-	Chosen       []string `json:"chosen"`
-	Connect      bool     `json:"connect"`
-	Account      bool     `json:"account"`
-	DeviceName   string   `json:"device_name"`
-	Defaults     Caps     `json:"defaults"`
+	ClientHost    string   `json:"client_host"`
+	AnswersOnlyTo string   `json:"answers_only_to"`
+	RedirectHost  string   `json:"redirect_host"`
+	Loopback      bool     `json:"loopback"`
+	Existing      bool     `json:"existing"`
+	Chosen        []string `json:"chosen"`
+	Connect       bool     `json:"connect"`
+	Account       bool     `json:"account"`
+	DeviceName    string   `json:"device_name"`
+	Defaults      Caps     `json:"defaults"`
 }
 
 // AuthorizeError refuses an authorization request; an empty Redirect means the client or its redirect URI is not trusted, so the page shows the error.
@@ -90,7 +91,7 @@ func (s *Service) Check(ctx context.Context, user string, req Request, accounts 
 	host, loopback := redirectHost(req.RedirectURI)
 	connect, _ := agentScope(req.Scope)
 	return Consent{
-		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
+		ClientName: c.name, ClientID: c.id, ClientHost: c.host, AnswersOnlyTo: c.answersTo, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
 		Connect: connect && accounts && !c.firstParty, Account: c.firstParty, DeviceName: req.DeviceName,
 		Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil

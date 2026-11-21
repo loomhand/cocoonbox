@@ -11,7 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 
@@ -33,11 +35,14 @@ const (
 	RootPath = "/cocoonbox.mcp"
 
 	revisionLen      = 12
+	maxClientNameLen = 64
 	controlName      = "cocoonbox-control"
 	unifiedName      = "cocoonbox"
 	methodInitialize = "initialize"
 	toolsField       = "tools"
 )
+
+var notClientNameChar = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
 // Grants checks the OAuth access tokens of agents and keeps the boxes each grant created.
 type Grants interface {
@@ -212,16 +217,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rpcErr *mcpwire.Error
 	)
 	defer func() {
-		log.WithFunc("controlmcp.Server.ServeHTTP").Infof(ctx, "%s %s user=%s code=%d in %s",
-			req.Method, cmp.Or(call.Name, "-"), caller, mcpwire.CodeOf(rpcErr), time.Since(start).Round(time.Millisecond))
+		client := clientNameOf(cmp.Or(w.Header().Get(mcpwire.SessionHeader), r.Header.Get(mcpwire.SessionHeader)))
+		log.WithFunc("controlmcp.Server.ServeHTTP").Infof(ctx, "%s %s user=%s client=%s code=%d in %s",
+			req.Method, cmp.Or(call.Name, "-"), caller, cmp.Or(client, "-"), mcpwire.CodeOf(rpcErr), time.Since(start).Round(time.Millisecond))
 	}()
 	switch {
 	case req.Method == methodInitialize && unified:
-		id := rand.Text()
+		id := newSessionID(req.Params)
 		w.Header().Set(mcpwire.SessionHeader, id)
 		result = s.initializeUnified(ctx, user, s.openSession(ctx, caller, id, req.Params))
 	case req.Method == methodInitialize:
-		w.Header().Set(mcpwire.SessionHeader, rand.Text())
+		w.Header().Set(mcpwire.SessionHeader, newSessionID(req.Params))
 		result = initializeResult(req.Params, controlName)
 	case req.Method == "tools/list" && unified:
 		result, rpcErr = s.listTools(ctx)
@@ -377,6 +383,30 @@ func initializeResult(params jsontext.Value, name string) map[string]any {
 		"capabilities":    map[string]any{toolsField: map[string]any{}},
 		"serverInfo":      map[string]any{"name": name, "version": buildVersion(settings)},
 	}
+}
+
+// newSessionID appends the client's own name to the session id, so whichever api a later request reaches can log the client.
+func newSessionID(params jsontext.Value) string {
+	var req struct {
+		ClientInfo struct {
+			Name string `json:"name"`
+		} `json:"clientInfo"`
+	}
+	_ = json.Unmarshal(params, &req)
+	if name := clientName(req.ClientInfo.Name); name != "" {
+		return rand.Text() + "." + name
+	}
+	return rand.Text()
+}
+
+// clientNameOf cleans the name again because the client sends the session id back and may change it.
+func clientNameOf(sessionID string) string {
+	_, name, _ := strings.Cut(sessionID, ".")
+	return clientName(name)
+}
+
+func clientName(name string) string {
+	return notClientNameChar.ReplaceAllString(name[:min(len(name), maxClientNameLen)], "-")
 }
 
 func buildVersion(settings []debug.BuildSetting) string {

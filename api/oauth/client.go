@@ -30,6 +30,9 @@ const (
 	maxCached      = 1000
 	documentTTL    = 5 * time.Minute
 	fetchTimeout   = 5 * time.Second
+
+	chatGPTRedirect = "https://chatgpt.com/connector_platform_oauth_redirect"
+	chatGPTHost     = "chatgpt.com"
 )
 
 var (
@@ -49,6 +52,7 @@ type client struct {
 	id         string
 	name       string
 	host       string
+	answersTo  string
 	redirects  []string
 	firstParty bool
 }
@@ -187,7 +191,7 @@ func (s *Service) registered(id string) (client, error) {
 	if err := json.Unmarshal(payload, &reg); err != nil {
 		return client{}, errUnknownClient
 	}
-	return client{id: id, name: reg.Name, redirects: reg.Redirects}, nil
+	return client{id: id, name: reg.Name, answersTo: onlyAnswersTo(reg.Redirects), redirects: reg.Redirects}, nil
 }
 
 func (s *Service) mac(encoded string) []byte {
@@ -253,4 +257,11 @@ func redirectHost(uri string) (string, bool) {
 
 func isLoopback(host string) bool {
 	return slices.Contains(loopbackHosts, host)
+}
+
+func onlyAnswersTo(redirects []string) string {
+	if slices.Equal(redirects, []string{chatGPTRedirect}) {
+		return chatGPTHost
+	}
+	return ""
 }

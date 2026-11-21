@@ -71,6 +71,19 @@ func TestInitializeAndToolsList(t *testing.T) {
 	}
 }
 
+func TestTheSessionIDCarriesTheClientsName(t *testing.T) {
+	srv, _ := newTestServer(t)
+	for name, want := range map[string]string{"claude-code": "claude-code", "Visual Studio Code": "Visual-Studio-Code", "": "", strings.Repeat("a", 100): strings.Repeat("a", maxClientNameLen)} {
+		session := serve(srv, http.MethodPost, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"`+name+`"}}}`).Header().Get(mcpwire.SessionHeader)
+		if got := clientNameOf(session); got != want || session == "" {
+			t.Fatalf("client of %q = %q from session %q, want %q", name, got, session, want)
+		}
+	}
+	if got := clientNameOf("SESSION.a b\nc=d"); got != "a-b-c-d" {
+		t.Fatalf("client of a session id the client changed = %q", got)
+	}
+}
+
 func TestACallIsBoundToTheCredentialItsProviderNamed(t *testing.T) {
 	srv, _ := newTestServer(t)
 	ids := &boundIdentities{}
