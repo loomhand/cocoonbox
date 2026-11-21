@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
@@ -47,9 +48,9 @@ var toolSpecs = []toolSpec{
 	{
 		Name:         "box_status",
 		Title:        "Show box status",
-		Description:  "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.",
+		Description:  "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, when your files were last saved, and when it last restarted from its disk, losing what was only in memory.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"},"restarted_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
 		Annotations:  jsontext.Value(`{"title":"Show box status","readOnlyHint":true}`),
 	},
 	{
@@ -57,7 +58,7 @@ var toolSpecs = []toolSpec{
 		Title:        "Start or wake box",
 		Description:  "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
-		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"},"note":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
 		Annotations:  jsontext.Value(`{"title":"Start or wake box","destructiveHint":false}`),
 	},
 	{
@@ -148,6 +149,7 @@ type statusResult struct {
 	LatestImage      string `json:"latest_image"`
 	UpgradeAvailable bool   `json:"upgrade_available"`
 	LastSavedAtMs    int64  `json:"last_saved_at_ms"`
+	RestartedAtMs    int64  `json:"restarted_at_ms,omitzero"`
 }
 
 type boxArgs struct {
@@ -187,6 +189,7 @@ type operationResult struct {
 	BoxID       string `json:"box_id"`
 	State       string `json:"state"`
 	OperationID string `json:"operation_id"`
+	Note        string `json:"note,omitzero"`
 }
 
 type saveResult struct {
@@ -309,6 +312,7 @@ func (s *Server) status(ctx context.Context, ref string) (*statusResult, error) 
 		LatestImage:      box.GetLatestImage(),
 		UpgradeAvailable: box.GetImage() != "" && box.GetLatestImage() != "" && box.GetImage() != box.GetLatestImage(),
 		LastSavedAtMs:    box.GetLastSavedAtMs(),
+		RestartedAtMs:    box.GetRestartedAtMs(),
 	}, nil
 }
 
@@ -326,6 +330,9 @@ func (s *Server) ensure(ctx context.Context, ref string, wait bool, progress pro
 	}
 	box, err := s.box(ctx, res.BoxID)
 	res.State = stateName(box.GetState())
+	if box.GetRestartedAtMs() > resp.GetBox().GetRestartedAtMs() {
+		res.Note = restartedNote(box.GetRestartedAtMs())
+	}
 	return res, err
 }
 
@@ -675,4 +682,10 @@ func stateName(state controlv1.BoxState) string {
 		return stateAbsent
 	}
 	return strings.ToLower(strings.TrimPrefix(state.String(), "BOX_STATE_"))
+}
+
+func restartedNote(atMs int64) string {
+	at := time.UnixMilli(atMs).UTC().Format(time.RFC3339)
+	return "The box could not resume where it left off and restarted from its disk at " + at +
+		": files on disk are kept, but programs that were running and changes not yet saved to disk were lost."
 }

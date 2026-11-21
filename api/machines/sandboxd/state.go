@@ -164,6 +164,7 @@ func (e *entry) machine() machines.Machine {
 	m.Image = e.row.Key.Template
 	m.EnvMissing = e.row.EnvMissing
 	m.CreatedAt = e.row.ClaimedAt
+	m.RestartedAt = e.row.RestartedAt
 	m.Incarnation = fmt.Sprintf("%d.%d.%d", e.row.ClaimedAt.UnixMilli(), e.row.Restarts, e.wakes)
 	m.Detail = fmt.Sprintf("sandbox=%s hibernated=%t archived=%t restarts=%d ready=%t op=%s", e.row.ID,
 		e.row.Hibernated, e.row.Archived, e.row.Restarts, e.ready, e.op)

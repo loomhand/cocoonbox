@@ -87,11 +87,15 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 	if m.ID == "" {
 		return &controlv1.Box{Id: box}
 	}
-	return &controlv1.Box{
+	b := &controlv1.Box{
 		Id:    box,
 		State: boxStates[m.State],
 		Image: m.Image,
 	}
+	if !m.RestartedAt.IsZero() {
+		b.RestartedAtMs = m.RestartedAt.UnixMilli()
+	}
+	return b
 }
 
 func toObservation(m machines.Machine, phase controlv1.Phase) observation {

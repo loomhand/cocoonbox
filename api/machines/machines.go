@@ -71,6 +71,8 @@ type Machine struct {
 	// Detail summarizes the backend's raw status for logs; it may name internal hosts.
 	Detail    string
 	CreatedAt time.Time
+	// RestartedAt is the latest boot anew from the machine's disk, which lost what was only in memory; zero when none.
+	RestartedAt time.Time
 	// Revision increases with every lifecycle request; Watch judges state no older than it.
 	Revision int64
 	// Incarnation changes whenever the machine boots anew: first boot, wake, rebuild.

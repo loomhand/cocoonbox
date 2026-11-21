@@ -218,6 +218,9 @@ public nonisolated struct Cocoonbox_Control_V1_Box: Sendable {
   /// Unique among the user's boxes.
   public var name: String = String()
 
+  /// Time of the latest boot anew from the box's disk, which lost what was only in memory; 0 when its current machine had none.
+  public var restartedAtMs: Int64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -737,7 +740,7 @@ nonisolated extension Cocoonbox_Control_V1_BoxRef: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Box"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{4}\u{4}last_saved_at_ms\0\u{3}latest_image\0\u{1}name\0\u{b}flavor\0\u{b}failure_reason\0\u{b}created_at_ms\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}\u{c}\u{6}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{4}\u{4}last_saved_at_ms\0\u{3}latest_image\0\u{1}name\0\u{3}restarted_at_ms\0\u{b}flavor\0\u{b}failure_reason\0\u{b}created_at_ms\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}\u{c}\u{6}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -751,6 +754,7 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
       case 7: try { try decoder.decodeSingularInt64Field(value: &self.lastSavedAtMs) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.latestImage) }()
       case 9: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 10: try { try decoder.decodeSingularInt64Field(value: &self.restartedAtMs) }()
       default: break
       }
     }
@@ -775,6 +779,9 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if !self.name.isEmpty {
       try visitor.visitSingularStringField(value: self.name, fieldNumber: 9)
     }
+    if self.restartedAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.restartedAtMs, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -785,6 +792,7 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if lhs.lastSavedAtMs != rhs.lastSavedAtMs {return false}
     if lhs.latestImage != rhs.latestImage {return false}
     if lhs.name != rhs.name {return false}
+    if lhs.restartedAtMs != rhs.restartedAtMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

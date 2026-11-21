@@ -259,7 +259,9 @@ type Box struct {
 	// The default Rebase target: the user's own image of the box's family, else that family's newest offered image.
 	LatestImage string `protobuf:"bytes,8,opt,name=latest_image,json=latestImage,proto3" json:"latest_image,omitempty"`
 	// Unique among the user's boxes.
-	Name          string `protobuf:"bytes,9,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,9,opt,name=name,proto3" json:"name,omitempty"`
+	// Time of the latest boot anew from the box's disk, which lost what was only in memory; 0 when its current machine had none.
+	RestartedAtMs int64 `protobuf:"varint,10,opt,name=restarted_at_ms,json=restartedAtMs,proto3" json:"restarted_at_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -334,6 +336,13 @@ func (x *Box) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *Box) GetRestartedAtMs() int64 {
+	if x != nil {
+		return x.RestartedAtMs
+	}
+	return 0
 }
 
 type Operation struct {
@@ -1841,14 +1850,16 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\n" +
 	" cocoonbox/control/v1/boxes.proto\x12\x14cocoonbox.control.v1\"\x1f\n" +
 	"\x06BoxRef\x12\x15\n" +
-	"\x06box_id\x18\x01 \x01(\tR\x05boxId\"\xfa\x01\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\"\xa2\x02\n" +
 	"\x03Box\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1e.cocoonbox.control.v1.BoxStateR\x05state\x12\x14\n" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x12'\n" +
 	"\x10last_saved_at_ms\x18\a \x01(\x03R\rlastSavedAtMs\x12!\n" +
 	"\flatest_image\x18\b \x01(\tR\vlatestImage\x12\x12\n" +
-	"\x04name\x18\t \x01(\tR\x04nameJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\x06flavorR\x0efailure_reasonR\rcreated_at_ms\"2\n" +
+	"\x04name\x18\t \x01(\tR\x04name\x12&\n" +
+	"\x0frestarted_at_ms\x18\n" +
+	" \x01(\x03R\rrestartedAtMsJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\x06flavorR\x0efailure_reasonR\rcreated_at_ms\"2\n" +
 	"\tOperation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06box_id\x18\x02 \x01(\tR\x05boxId\"4\n" +

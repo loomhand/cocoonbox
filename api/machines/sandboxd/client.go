@@ -57,19 +57,20 @@ type poolKey struct {
 
 // row is one claim of the sandboxd index.
 type row struct {
-	ID         string            `json:"id"`
-	Key        poolKey           `json:"key"`
-	Tenant     string            `json:"tenant,omitempty"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
-	Hibernated bool              `json:"hibernated"`
-	Archived   bool              `json:"archived,omitzero"`
-	Restarts   int               `json:"restarts,omitzero"`
-	Failed     string            `json:"failed,omitempty"`
-	ClaimedAt  time.Time         `json:"claimed_at,omitzero"`
-	EnvMissing bool              `json:"env_missing,omitzero"`
+	ID          string            `json:"id"`
+	Key         poolKey           `json:"key"`
+	Tenant      string            `json:"tenant,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Hibernated  bool              `json:"hibernated"`
+	Archived    bool              `json:"archived,omitzero"`
+	Restarts    int               `json:"restarts,omitzero"`
+	RestartedAt time.Time         `json:"restarted_at,omitzero"`
+	Failed      string            `json:"failed,omitempty"`
+	ClaimedAt   time.Time         `json:"claimed_at,omitzero"`
+	EnvMissing  bool              `json:"env_missing,omitzero"`
 }
 
-// equal reports whether r and o are the same claim; ClaimedAt is compared as an instant, the only way it is read.
+// equal reports whether r and o are the same claim; ClaimedAt and RestartedAt are compared as instants, the only way they are read.
 func (r *row) equal(o *row) bool {
 	return r.ID == o.ID &&
 		r.Key == o.Key &&
@@ -78,6 +79,7 @@ func (r *row) equal(o *row) bool {
 		r.Hibernated == o.Hibernated &&
 		r.Archived == o.Archived &&
 		r.Restarts == o.Restarts &&
+		r.RestartedAt.Equal(o.RestartedAt) &&
 		r.Failed == o.Failed &&
 		r.ClaimedAt.Equal(o.ClaimedAt) &&
 		r.EnvMissing == o.EnvMissing
