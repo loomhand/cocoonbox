@@ -362,7 +362,7 @@ func (e *eventStream) keepalive() {
 func (e *eventStream) write(b []byte) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, err := e.w.Write(b); err != nil { //nolint:gosec // an event stream of JSON-RPC, never HTML
+	if _, err := e.w.Write(b); err != nil {
 		return err
 	}
 	return e.rc.Flush()
@@ -469,5 +469,5 @@ func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
-	_, _ = w.Write(data) //nolint:gosec // application/json, never HTML
+	_, _ = w.Write(data)
 }

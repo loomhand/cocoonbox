@@ -23,6 +23,7 @@ import (
 
 const (
 	stateAbsent       = "absent"
+	textType          = "text"
 	boxProperty       = `{"type":"string","description":"The box's name or id; without it, your first box."}`
 	usagePeriodSchema = `{"type":"object","properties":{"since_ms":{"type":"integer"},"requests":{"type":"integer"},"prompt_tokens":{"type":"integer"},"completion_tokens":{"type":"integer"},"total_tokens":{"type":"integer"},"cost_micros":{"type":"integer"},"models":{"type":"array","items":{"type":"object","properties":{"model":{"type":"string"},"requests":{"type":"integer"},"prompt_tokens":{"type":"integer"},"completion_tokens":{"type":"integer"},"total_tokens":{"type":"integer"},"cost_micros":{"type":"integer"}},"required":["model","requests","prompt_tokens","completion_tokens","total_tokens","cost_micros"]}}},"required":["since_ms","requests","prompt_tokens","completion_tokens","total_tokens","cost_micros","models"]}`
 
@@ -616,11 +617,11 @@ func withArguments(raw jsontext.Value, dst any, fn toolFunc) (*toolResult, *mcpw
 	if err != nil {
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "encode result"}
 	}
-	return &toolResult{Content: []textContent{{Type: "text", Text: string(data)}}, StructuredContent: out}, nil
+	return &toolResult{Content: []textContent{{Type: textType, Text: string(data)}}, StructuredContent: out}, nil
 }
 
 func errorText(text string) *toolResult {
-	return &toolResult{Content: []textContent{{Type: "text", Text: text}}, IsError: true}
+	return &toolResult{Content: []textContent{{Type: textType, Text: text}}, IsError: true}
 }
 
 // internal reports a Boxes failure the model cannot act on.

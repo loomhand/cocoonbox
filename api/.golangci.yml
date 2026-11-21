@@ -60,6 +60,11 @@ linters:
     generated: strict
     paths:
       - vendor
+    rules:
+      - path: controlmcp/controlmcp.go
+        linters:
+          - gosec
+        text: "G705"
 
 formatters:
   enable:

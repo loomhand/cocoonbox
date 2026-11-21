@@ -98,6 +98,33 @@ func TestRootCallWakesTheSleepingDefaultBox(t *testing.T) {
 	}
 }
 
+func TestACallThatWokeABoxRestartedFromItsDiskSaysSoFirst(t *testing.T) {
+	for name, call := range map[string]string{
+		"answer": callShell,
+		"stream": `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"},"_meta":{"progressToken":"tok"}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv, fake, _, _ := newUnifiedServer(t)
+			fake.mu.Lock()
+			fake.restartOnWake = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC).UnixMilli()
+			fake.mu.Unlock()
+			fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+			rec := serveRoot(srv, http.MethodPost, aliceToken, "s1", call)
+			var result any
+			if name == "stream" {
+				msgs := sseMessages(t, rec.Body.String())
+				result = msgs[len(msgs)-1]["result"]
+			} else {
+				result = decode(t, rec).Result
+			}
+			content, _ := result.(map[string]any)["content"].([]any)
+			if len(content) != 2 || !strings.Contains(content[0].(map[string]any)["text"].(string), "restarted from its disk at 2026-11-19T09:00:00Z") || content[1].(map[string]any)["text"] != shellAnswer+boxes.BoxID("alice") {
+				t.Fatalf("answer = %v", result)
+			}
+		})
+	}
+}
+
 func TestABoxAgentAnswerPastTheCapFailsTheCallInsteadOfBeingReadWhole(t *testing.T) {
 	for _, method := range []string{"initialize", "tools/list", "tools/call"} {
 		srv, fake, agents, _ := newUnifiedServer(t)
@@ -129,6 +156,22 @@ func TestRootWakePastTheBoundAsksForARetry(t *testing.T) {
 		}
 		if !slices.Contains(fake.recorded(), fakeCall{method: "Ensure", user: "alice", box: boxes.BoxID("alice")}) {
 			t.Errorf("calls = %v, want an Ensure", fake.recorded())
+		}
+	})
+}
+
+func TestAWakePastTheBoundThatRestartedTheBoxSaysSoBeforeTheRetry(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv, fake, agents, _ := newUnifiedServer(t)
+		fake.mu.Lock()
+		fake.restartOnWake = time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC).UnixMilli()
+		fake.mu.Unlock()
+		fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+		agents.set(func(a *fakeAgents) { a.deaf = true })
+		reply := decode(t, serveRoot(srv, http.MethodPost, aliceToken, "s1", callShell))
+		content, _ := reply.Result["content"].([]any)
+		if reply.Result["isError"] != true || len(content) != 2 || !strings.Contains(content[0].(map[string]any)["text"].(string), "restarted from its disk at 2026-11-19T09:00:00Z") || content[1].(map[string]any)["text"] != string(errStillStarting) {
+			t.Fatalf("reply = %v", reply.Result)
 		}
 	})
 }
@@ -365,10 +408,10 @@ func TestRootWakeDropsOnlyTheStaleAgentSession(t *testing.T) {
 	sess := srv.openSession(t.Context(), "alice", "s1", nil)
 	sess.agents.upstream[box] = "newer"
 	ctx := auth.WithUser(t.Context(), "alice")
-	if err := srv.wake(ctx, sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
+	if _, err := srv.wake(ctx, sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
 		t.Fatalf("a wake that saw an older agent session: %v, left %q, want the newer one kept", err, sess.agents.upstream[box])
 	}
-	if err := srv.wake(ctx, sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
+	if _, err := srv.wake(ctx, sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
 		t.Fatalf("a wake that saw the held agent session: %v, left %q, want it dropped", err, sess.agents.upstream[box])
 	}
 }
@@ -764,7 +807,7 @@ func TestAPinnedBoxGoneBeforeItsImageIsReadAgainFallsBackToTheDefaultBox(t *test
 }
 
 func TestRelayReportsAReplyTheClientDidNotTake(t *testing.T) {
-	err := relay(flushFails{httptest.NewRecorder()}, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), nil)
+	err := relay(flushFails{httptest.NewRecorder()}, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), nil, "")
 	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
 		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
 	}
@@ -773,9 +816,44 @@ func TestRelayReportsAReplyTheClientDidNotTake(t *testing.T) {
 func TestRelayIntoAStreamReportsAReplyTheClientDidNotTake(t *testing.T) {
 	stream := newEventStream(flushFails{httptest.NewRecorder()}, jsontext.Value(`1`))
 	stream.close()
-	err := relay(stream.w, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), stream)
+	err := relay(stream.w, answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{}}`), stream, "")
 	if !errors.Is(err, errReplyLost) || !strings.Contains(err.Error(), "client gone") {
 		t.Fatalf("relay = %v, want the lost reply with the flush error", err)
+	}
+}
+
+func TestRelayPutsANoteOnlyIntoTheToolResultOfAnEventStream(t *testing.T) {
+	progress := `{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1,"progressToken":"tok"}}`
+	result := `{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"ok"}],"isError":true}}`
+	resp := answer(http.StatusOK, "", string(mcpwire.Event([]byte(progress)))+string(mcpwire.Event([]byte(result))))
+	resp.Header.Set("Content-Type", mcpwire.EventStream)
+	rec := httptest.NewRecorder()
+	if err := relay(rec, resp, nil, "restarted"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rec.Body.String(), string(mcpwire.Event([]byte(progress)))) {
+		t.Fatalf("the progress event changed: %q", rec.Body)
+	}
+	msgs := sseMessages(t, rec.Body.String())
+	got, _ := msgs[len(msgs)-1]["result"].(map[string]any)
+	content, _ := got["content"].([]any)
+	if len(msgs) != 2 || msgs[1]["id"] != float64(7) || got["isError"] != true || len(content) != 2 || content[0].(map[string]any)["text"] != "restarted" || content[1].(map[string]any)["text"] != "ok" {
+		t.Fatalf("stream = %v", msgs)
+	}
+}
+
+func TestRelayWithANoteReadsNoAnswerPastTheCapWhole(t *testing.T) {
+	big := `{"jsonrpc":"2.0","id":7,"result":{"content":[{"type":"text","text":"` + strings.Repeat("x", maxAnswer) + `"}]}}`
+	rec := httptest.NewRecorder()
+	if err := relay(rec, answer(http.StatusOK, "", big), nil, "restarted"); err == nil || !strings.Contains(err.Error(), "exceeds 32 MiB") || rec.Body.Len() != 0 {
+		t.Fatalf("relay of a JSON answer past the cap = %v, wrote %d bytes", err, rec.Body.Len())
+	}
+	events := "data: " + big + "\n\n"
+	resp := answer(http.StatusOK, "", events)
+	resp.Header.Set("Content-Type", mcpwire.EventStream)
+	rec = httptest.NewRecorder()
+	if err := relay(rec, resp, nil, "restarted"); err != nil || rec.Body.String() != events {
+		t.Fatalf("relay of an event past the cap = %v, changed: %t", err, rec.Body.String() != events)
 	}
 }
 

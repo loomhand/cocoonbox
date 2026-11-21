@@ -1,6 +1,7 @@
 package controlmcp
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -363,7 +364,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 		log.WithFunc("controlmcp.Server.callBox").Warnf(ctx, "tool %s on box %s: %v", call.Name, box, err)
 		return true
 	}
-	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, nil) })
+	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, nil, "") })
 	if replyLost(box, err) {
 		return
 	}
@@ -381,7 +382,8 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, wakeBound)
 	defer cancel()
-	if err = s.wake(wakeCtx, sess, cmp.Or(box, ref), stale, progress); err == nil {
+	var note string
+	if note, err = s.wake(wakeCtx, sess, cmp.Or(box, ref), stale, progress); err == nil {
 		err = s.ready(wakeCtx, user, sess, ref)
 	}
 	if stream != nil {
@@ -389,14 +391,18 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	switch {
 	case err == nil:
-		box, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream) })
+		box, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { return relay(w, resp, stream, note) })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
 	if err == nil || replyLost(box, err) {
 		return
 	}
-	reply := newResponse(id, failure(err), nil)
+	res := failure(err)
+	if note != "" {
+		res.Content = slices.Insert(res.Content, 0, textContent{Type: textType, Text: note})
+	}
+	reply := newResponse(id, res, nil)
 	if stream != nil {
 		stream.send(reply)
 		return
@@ -404,13 +410,14 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	writeJSON(w, http.StatusOK, reply)
 }
 
-// wake starts or wakes box, the user's first box made anew when it is empty, waits for it within ctx, and drops its agent session while it is still stale.
-func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) error {
+// wake starts or wakes box, the user's first box made anew when it is empty, waits for it within ctx, drops its agent session while it is still stale, and returns the note of a restart from its disk.
+func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) (string, error) {
 	res, err := s.ensure(ctx, box, true, progress)
-	if err == nil {
-		sess.agents.drop(res.BoxID, stale)
+	if err != nil {
+		return "", err
 	}
-	return err
+	sess.agents.drop(res.BoxID, stale)
+	return res.Note, nil
 }
 
 // ready waits until the agent of the box ref names, else of the session's default box, answers an initialize, or ctx ends.
@@ -619,17 +626,22 @@ func (s *Server) defaultBox(ctx context.Context) (*controlv1.Box, string, error)
 	return box, cmp.Or(list.GetOfferedImages()...), nil
 }
 
-// relay copies the agent's answer to the client as it arrives; into stream, which carries the wake's progress, it goes as events.
-func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) error {
-	if stream != nil && !strings.HasPrefix(resp.Header.Get("Content-Type"), mcpwire.EventStream) {
+// relay copies the agent's answer to the client as it arrives, with note first in the tool result; into stream, which carries the wake's progress, it goes as events.
+func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream, note string) error {
+	var body io.Reader = resp.Body
+	if (stream != nil || note != "") && !strings.HasPrefix(resp.Header.Get("Content-Type"), mcpwire.EventStream) {
 		data, err := readAnswer(resp.Body)
 		if err != nil {
 			return err
 		}
-		if err := stream.write(mcpwire.Event(bytes.TrimSpace(data))); err != nil {
-			return fmt.Errorf("%w: %w", errReplyLost, err)
+		data = withNote(bytes.TrimSpace(data), note)
+		if stream != nil {
+			if err := stream.write(mcpwire.Event(data)); err != nil {
+				return fmt.Errorf("%w: %w", errReplyLost, err)
+			}
+			return nil
 		}
-		return nil
+		body, note = bytes.NewReader(data), ""
 	}
 	if stream == nil {
 		for _, h := range []string{"Content-Type", "Cache-Control"} {
@@ -640,21 +652,85 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) erro
 		w.WriteHeader(resp.StatusCode)
 	}
 	rc := http.NewResponseController(w)
+	write := func(b []byte) error {
+		if _, err := w.Write(b); err != nil {
+			return fmt.Errorf("%w: %w", errReplyLost, err)
+		}
+		if err := rc.Flush(); err != nil {
+			return fmt.Errorf("%w: %w", errReplyLost, err)
+		}
+		return nil
+	}
+	if note != "" {
+		r := bufio.NewReader(body)
+		if done, err := copyNoted(r, note, write); done || err != nil {
+			return err
+		}
+		body = r
+	}
 	buf := make([]byte, 32<<10)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, err := body.Read(buf)
 		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				return fmt.Errorf("%w: %w", errReplyLost, werr)
-			}
-			if ferr := rc.Flush(); ferr != nil {
-				return fmt.Errorf("%w: %w", errReplyLost, ferr)
+			if werr := write(buf[:n]); werr != nil {
+				return werr
 			}
 		}
 		if err != nil {
 			return nil
 		}
 	}
+}
+
+func copyNoted(r *bufio.Reader, note string, write func([]byte) error) (bool, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		switch {
+		case len(line) > maxAnswer:
+			return false, write(line)
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case len(line) > 0:
+			if werr := write(withNote(line, note)); werr != nil {
+				return true, werr
+			}
+		}
+		if err != nil {
+			return true, nil
+		}
+		line = line[:0]
+	}
+}
+
+// withNote puts note first in the content of the tool result that line carries, as a JSON answer or as an event's data; any other line goes as it is.
+func withNote(line []byte, note string) []byte {
+	head, data := []byte(nil), line
+	if rest, ok := bytes.CutPrefix(line, []byte("data:")); ok {
+		rest = bytes.TrimPrefix(rest, []byte(" "))
+		head, data = line[:len(line)-len(rest)], rest
+	}
+	var msg struct {
+		Result *struct {
+			Content []jsontext.Value `json:"content"`
+			Rest    jsontext.Value   `json:",embed"`
+		} `json:"result"`
+		Rest jsontext.Value `json:",embed"`
+	}
+	if note == "" || json.Unmarshal(data, &msg) != nil || msg.Result == nil || msg.Result.Content == nil {
+		return line
+	}
+	text, err := json.Marshal(textContent{Type: textType, Text: note})
+	if err != nil {
+		return line
+	}
+	msg.Result.Content = slices.Insert(msg.Result.Content, 0, jsontext.Value(text))
+	out, err := json.Marshal(&msg)
+	if err != nil {
+		return line
+	}
+	return slices.Concat(head, out, line[len(bytes.TrimRight(line, "\r\n")):])
 }
 
 func readAnswer(r io.Reader) ([]byte, error) {
