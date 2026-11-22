@@ -58,15 +58,11 @@ func (s *Service) reconcileVault(ctx context.Context, ms []machines.Machine) {
 
 // syncVault pushes the keys of machine's owner under the machine's provisioning lock.
 func (s *Service) syncVault(ctx context.Context, machine string) error {
-	unlock := s.provision.locks.Lock(machine)
-	defer unlock()
-	if s.userLocks != nil {
-		unlockShared, err := s.userLocks.LockProvision(ctx, "provision:"+machine)
-		if err != nil {
-			return err
-		}
-		defer unlockShared()
+	unlock, err := s.lockProvision(ctx, machine, false)
+	if err != nil {
+		return err
 	}
+	defer unlock()
 	m, err := s.machines.Get(ctx, machine)
 	if err != nil {
 		return err

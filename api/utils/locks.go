@@ -8,7 +8,22 @@ type Locks struct {
 }
 
 func (l *Locks) Lock(key string) func() {
+	m := l.mutex(key)
+	m.Lock()
+	return m.Unlock
+}
+
+func (l *Locks) TryLock(key string) (func(), bool) {
+	m := l.mutex(key)
+	if !m.TryLock() {
+		return nil, false
+	}
+	return m.Unlock, true
+}
+
+func (l *Locks) mutex(key string) *sync.Mutex {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	m := l.locks[key]
 	if m == nil {
 		if l.locks == nil {
@@ -17,7 +32,5 @@ func (l *Locks) Lock(key string) func() {
 		m = &sync.Mutex{}
 		l.locks[key] = m
 	}
-	l.mu.Unlock()
-	m.Lock()
-	return m.Unlock
+	return m
 }

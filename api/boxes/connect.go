@@ -136,15 +136,11 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 
 // rotateDoorKey pushes creds with a new door key under m's provisioning locks, so no provisioning runs between its re-read and the push.
 func (s *Service) rotateDoorKey(ctx context.Context, m machines.Machine, kind string, creds machines.Credentials) error {
-	unlock := s.provision.locks.Lock(m.ID)
-	defer unlock()
-	if s.userLocks != nil {
-		unlockShared, err := s.userLocks.LockProvision(ctx, "provision:"+m.ID)
-		if err != nil {
-			return err
-		}
-		defer unlockShared()
+	unlock, err := s.lockProvision(ctx, m.ID, false)
+	if err != nil {
+		return err
 	}
+	defer unlock()
 	cur, err := s.machines.Get(ctx, m.ID)
 	if err != nil || cur.State != machines.StateRunning || cur.Incarnation != m.Incarnation {
 		return err

@@ -1,10 +1,15 @@
 package dialer
 
 import (
+	"net"
+	"slices"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -80,4 +85,42 @@ func TestRebaseRestoreSurvivesAnEdgeCallToTheOldMachine(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Errorf("restore into the new machine failed after an edge call to the old one: %v", err)
 	}
+}
+
+func TestPoolReportsTheBoxWhoseAgentRefusesACallForWantOfItsIdentity(t *testing.T) {
+	var lost []string
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	pool.OnIdentityLost(func(box string) { lost = append(lost, box) })
+	d := New(pool)
+	rebooted := machines.TCPEndpoint(serveRefusal(t, status.Error(codes.Unavailable, "identity not provisioned")))
+	broken := machines.TCPEndpoint(serveRefusal(t, status.Error(codes.Unavailable, "identity invalid")))
+	stopping := machines.TCPEndpoint(serveRefusal(t, status.Error(codes.Unavailable, "the agent is stopping")))
+	denied := machines.TCPEndpoint(serveRefusal(t, status.Error(codes.Unauthenticated, "credential from another wake")))
+
+	if _, err := d.Busy(t.Context(), "cb-unary", rebooted); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Busy = %v, want the agent's refusal", err)
+	}
+	if _, err := d.Upload(t.Context(), "cb-stream", broken, &agentv1.UploadRequest{}, nil); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Upload = %v, want the agent's refusal", err)
+	}
+	_, _ = d.Busy(t.Context(), "cb-stopping", stopping)
+	_, _ = d.Busy(t.Context(), "cb-denied", denied)
+	_, _ = d.Busy(t.Context(), "cb-gone", machines.TCPEndpoint("127.0.0.1:1"))
+	if want := []string{"cb-unary", "cb-stream"}; !slices.Equal(lost, want) {
+		t.Errorf("reported %v, want %v", lost, want)
+	}
+}
+
+// serveRefusal serves an agent that ends every call with refusal.
+func serveRefusal(t *testing.T, refusal error) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	s := grpc.NewServer(grpc.UnknownServiceHandler(func(any, grpc.ServerStream) error { return refusal }))
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(s.Stop)
+	return lis.Addr().String()
 }

@@ -2,14 +2,19 @@ package dialer
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -32,9 +37,50 @@ type agentConn struct {
 	used time.Time
 }
 
+// identityWatch intercepts the calls of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file.
+type identityWatch struct {
+	box  string
+	lost func(box string)
+}
+
+func (w identityWatch) unary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	w.check(err)
+	return err
+}
+
+func (w identityWatch) stream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	s, err := streamer(ctx, desc, cc, method, opts...)
+	if err != nil {
+		w.check(err)
+		return nil, err
+	}
+	return watchedStream{ClientStream: s, watch: w}, nil
+}
+
+func (w identityWatch) check(err error) {
+	if status.Code(err) == codes.Unavailable && strings.HasPrefix(status.Convert(err).Message(), "identity ") {
+		w.lost(w.box)
+	}
+}
+
+type watchedStream struct {
+	grpc.ClientStream
+	watch identityWatch
+}
+
+func (s watchedStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.watch.check(err)
+	}
+	return err
+}
+
 // Pool keeps one connection per box and agent endpoint, for the edge and the control plane alike.
 type Pool struct {
-	now func() time.Time
+	now          func() time.Time
+	identityLost func(box string)
 
 	mu    sync.Mutex
 	conns map[string]map[string]*agentConn
@@ -42,7 +88,12 @@ type Pool struct {
 
 // NewPool returns an empty Pool.
 func NewPool() *Pool {
-	return &Pool{now: time.Now, conns: map[string]map[string]*agentConn{}}
+	return &Pool{now: time.Now, identityLost: func(string) {}, conns: map[string]map[string]*agentConn{}}
+}
+
+// OnIdentityLost calls fn with the box of each call its agent refuses for want of its identity file; set it before the first Conn.
+func (p *Pool) OnIdentityLost(fn func(box string)) {
+	p.identityLost = fn
 }
 
 // Conn returns box's connection to its agent at ep; it closes the box's connections to other endpoints that stay unused.
@@ -61,12 +112,15 @@ func (p *Pool) Conn(box string, ep machines.Endpoint) (*grpc.ClientConn, error) 
 			delete(conns, key)
 		}
 	}
+	watch := identityWatch{box: box, lost: p.identityLost}
 	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize), grpc.MaxCallSendMsgSize(MaxMessageSize)),
 		grpc.WithConnectParams(connectParams),
-		grpc.WithIdleTimeout(idleTimeout))
+		grpc.WithIdleTimeout(idleTimeout),
+		grpc.WithChainUnaryInterceptor(watch.unary),
+		grpc.WithChainStreamInterceptor(watch.stream))
 	if err != nil {
 		return nil, err
 	}
