@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -418,6 +419,64 @@ func TestEveryPushOfASecretIsRecordedWithItsNode(t *testing.T) {
 	}
 }
 
+func TestRedeliverIdentityWritesTheFileAgainWithTheWakeIDOfTheIncarnationOnceAPeriod(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := newFakeMachines()
+		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+		svc := New(fake, testDefaults, newFakeRegistry())
+		svc.EnableProvisioning(fakeSigner{})
+
+		svc.RedeliverIdentity(t.Context(), aliceBox)
+		svc.RedeliverIdentity(t.Context(), aliceBox)
+		synctest.Wait()
+		want := execCall{machine: aliceBox, identity: machines.Identity{BoxID: aliceBox, WakeID: "w1", KeyID: "k1", PublicKey: "pub1", Name: users.FirstBoxName}}
+		if execs := fake.execCalls(); len(execs) != 1 || execs[0] != want {
+			t.Fatalf("deliveries = %+v, want one of %+v", execs, want)
+		}
+		time.Sleep(redeliverEvery)
+		svc.RedeliverIdentity(t.Context(), aliceBox)
+		synctest.Wait()
+		if execs := fake.execCalls(); len(execs) != 2 || execs[1] != want {
+			t.Errorf("deliveries a period later = %+v, want a second of %+v", execs, want)
+		}
+	})
+}
+
+func TestRedeliverIdentityStopsWhenTheContextItWasGivenEnds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := newFakeMachines()
+		fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+		stopped := make(chan error, 1)
+		svc := New(hangingDelivery{fake, stopped}, testDefaults, newFakeRegistry())
+		svc.EnableProvisioning(fakeSigner{})
+		ctx, cancel := context.WithCancel(t.Context())
+
+		svc.RedeliverIdentity(ctx, aliceBox)
+		synctest.Wait()
+		cancel()
+		if err := <-stopped; !errors.Is(err, context.Canceled) {
+			t.Errorf("the delivery ended with %v, want it canceled with the context", err)
+		}
+	})
+}
+
+func TestRedeliverIdentityLeavesANewIncarnationToTheProvisionerAndABoxWithoutAMachineAlone(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableProvisioning(fakeSigner{})
+
+	if notRunning, ok := errors.AsType[*machines.NotRunningError](svc.redeliverIdentity(t.Context(), aliceBox)); !ok || notRunning.State != machines.StateStarting {
+		t.Errorf("redeliverIdentity of an incarnation without a wake id = %v, want starting", notRunning)
+	}
+	if err := svc.redeliverIdentity(t.Context(), "cb-none"); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("redeliverIdentity of a box without a machine = %v, want not found", err)
+	}
+	if execs := fake.execCalls(); len(execs) != 0 {
+		t.Errorf("deliveries = %+v, want none", execs)
+	}
+}
+
 func newProvisionEnv(accounts *fakeAccounts, ms ...machines.Machine) (*fakeMachines, *Service) {
 	fake := newFakeMachines()
 	for _, m := range ms {
@@ -437,6 +496,18 @@ func outgoingCredential(ctx context.Context) string {
 		return v[0]
 	}
 	return ""
+}
+
+// hangingDelivery delivers no identity: Deliver waits for its context to end and reports why it did.
+type hangingDelivery struct {
+	*fakeMachines
+	stopped chan<- error
+}
+
+func (h hangingDelivery) Deliver(ctx context.Context, _ string, _ machines.Identity) error {
+	<-ctx.Done()
+	h.stopped <- ctx.Err()
+	return ctx.Err()
 }
 
 type fakeSigner struct{}

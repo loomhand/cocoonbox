@@ -214,6 +214,36 @@ func TestMCPAgentUnreachable(t *testing.T) {
 	}
 }
 
+func TestMCPReportsTheBoxWhoseAgentAnswersWithoutItsIdentity(t *testing.T) {
+	env := newMCPEnv(t)
+	lost := make(chan string, 4)
+	env.mcp.OnIdentityLost(func(box string) { lost <- box })
+	box := boxes.BoxID("alice")
+	post := func() int {
+		resp := env.do(t, env.request(t, http.MethodPost, box, toolsListRPC))
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	answered := post()
+	env.resolver.addr = deadAddr(t)
+	if unreachable := post(); answered != http.StatusOK || unreachable != http.StatusServiceUnavailable || len(lost) != 0 {
+		t.Fatalf("an agent that answered %d and one that did not %d: %d reports, want none", answered, unreachable, len(lost))
+	}
+
+	env.resolver.addr = serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	if code := post(); code != http.StatusServiceUnavailable || len(lost) != 1 || <-lost != box {
+		t.Fatalf("a proxied exchange the agent answered %d: want 503 and a report of %s", code, box)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(toolsListRPC))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	if err = env.mcp.Exchange(req, "alice", box, func(*http.Response) error { return nil }); err != nil || len(lost) != 1 || <-lost != box {
+		t.Errorf("Exchange = %v, want a report of %s", err, box)
+	}
+}
+
 func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	env := newMCPEnv(t)
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(toolsListRPC))

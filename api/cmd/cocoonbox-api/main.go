@@ -132,6 +132,8 @@ func main() {
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)
+	redeliver := func(box string) { svc.RedeliverIdentity(ctx, box) }
+	pool.OnIdentityLost(redeliver)
 	svc.EnableUsage(accounts, cfg.Accounts.DefaultDailyCapMicros)
 	svc.EnableWake(accounts, boxes.WakeLimits{
 		MaxSchedules: cfg.Wake.MaxSchedules,
@@ -196,6 +198,7 @@ func main() {
 	}
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
+	boxMCP.OnIdentityLost(redeliver)
 	httpMux.Handle(edge.MCPPrefix, boxMCP)
 	control.EnableBoxTools(boxMCP, accounts)
 	httpMux.Handle(controlmcp.RootPath, control)

@@ -55,8 +55,18 @@ type route struct {
 }
 
 type boxTransport struct {
-	key       string
-	transport *http.Transport
+	key          string
+	transport    *http.Transport
+	identityLost func()
+}
+
+// RoundTrip reports the box when its agent answers 503, which it does only for want of a valid identity file.
+func (t *boxTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.transport.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusServiceUnavailable {
+		t.identityLost()
+	}
+	return resp, err
 }
 
 type jsonRPCError struct {
@@ -72,13 +82,20 @@ type MCP struct {
 	creds    Credentials
 	grants   Grants
 
+	identityLost func(box string)
+
 	mu         sync.Mutex
 	transports map[string]*boxTransport
 }
 
 // NewMCP builds the MCP proxy that authenticates to agents with box credentials from creds.
 func NewMCP(resolver Resolver, authn *auth.Authenticator, creds Credentials) *MCP {
-	return &MCP{resolver: resolver, authn: authn, creds: creds, transports: map[string]*boxTransport{}}
+	return &MCP{resolver: resolver, authn: authn, creds: creds, identityLost: func(string) {}, transports: map[string]*boxTransport{}}
+}
+
+// OnIdentityLost calls fn with the box of each exchange its agent refuses for want of its identity file.
+func (m *MCP) OnIdentityLost(fn func(box string)) {
+	m.identityLost = fn
 }
 
 // EnableGrants admits an agent's OAuth access token on the boxes its grant created or the user chose for it, and on nothing else.
@@ -215,18 +232,19 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 }
 
 // transportFor returns boxID's h2c transport, replacing it when the box's endpoint moved.
-func (m *MCP) transportFor(boxID string, ep machines.Endpoint) *http.Transport {
+func (m *MCP) transportFor(boxID string, ep machines.Endpoint) http.RoundTripper {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if bt := m.transports[boxID]; bt != nil {
 		if bt.key == ep.Key {
-			return bt.transport
+			return bt
 		}
 		bt.transport.CloseIdleConnections()
 	}
 	t := newH2CTransport(func(ctx context.Context, _, _ string) (net.Conn, error) { return ep.Dial(ctx) })
-	m.transports[boxID] = &boxTransport{key: ep.Key, transport: t}
-	return t
+	bt := &boxTransport{key: ep.Key, transport: t, identityLost: func() { m.identityLost(boxID) }}
+	m.transports[boxID] = bt
+	return bt
 }
 
 func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {

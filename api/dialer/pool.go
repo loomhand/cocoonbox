@@ -3,13 +3,17 @@ package dialer
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -32,9 +36,29 @@ type agentConn struct {
 	used time.Time
 }
 
+// identityWatch is the stats handler of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file, Unavailable "identity not provisioned" or "identity invalid".
+type identityWatch struct {
+	box  string
+	lost func(box string)
+}
+
+func (w identityWatch) HandleRPC(_ context.Context, s stats.RPCStats) {
+	end, ok := s.(*stats.End)
+	if ok && status.Code(end.Error) == codes.Unavailable && strings.HasPrefix(status.Convert(end.Error).Message(), "identity ") {
+		w.lost(w.box)
+	}
+}
+
+func (identityWatch) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
+
+func (identityWatch) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
+
+func (identityWatch) HandleConn(context.Context, stats.ConnStats) {}
+
 // Pool keeps one connection per box and agent endpoint, for the edge and the control plane alike.
 type Pool struct {
-	now func() time.Time
+	now          func() time.Time
+	identityLost func(box string)
 
 	mu    sync.Mutex
 	conns map[string]map[string]*agentConn
@@ -42,7 +66,12 @@ type Pool struct {
 
 // NewPool returns an empty Pool.
 func NewPool() *Pool {
-	return &Pool{now: time.Now, conns: map[string]map[string]*agentConn{}}
+	return &Pool{now: time.Now, identityLost: func(string) {}, conns: map[string]map[string]*agentConn{}}
+}
+
+// OnIdentityLost calls fn with the box of each call its agent refuses for want of its identity file; set it before the first Conn.
+func (p *Pool) OnIdentityLost(fn func(box string)) {
+	p.identityLost = fn
 }
 
 // Conn returns box's connection to its agent at ep; it closes the box's connections to other endpoints that stay unused.
@@ -66,7 +95,8 @@ func (p *Pool) Conn(box string, ep machines.Endpoint) (*grpc.ClientConn, error) 
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize), grpc.MaxCallSendMsgSize(MaxMessageSize)),
 		grpc.WithConnectParams(connectParams),
-		grpc.WithIdleTimeout(idleTimeout))
+		grpc.WithIdleTimeout(idleTimeout),
+		grpc.WithStatsHandler(identityWatch{box: box, lost: p.identityLost}))
 	if err != nil {
 		return nil, err
 	}

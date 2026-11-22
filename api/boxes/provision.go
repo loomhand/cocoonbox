@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -27,6 +29,9 @@ const (
 	provisionAttempts = 5
 	provisionBackoff  = 2 * time.Second
 	provisionFanout   = 8
+
+	redeliverEvery   = 30 * time.Second
+	redeliverTimeout = time.Minute
 )
 
 var errEnvMissing = errors.New("host-only entries stay missing after the push")
@@ -44,16 +49,48 @@ type provisioner struct {
 	backoff time.Duration
 
 	locks utils.Locks
+
+	mu          sync.Mutex
+	redelivered map[string]time.Time
+}
+
+// due reports whether box's identity may be written again now, and records that it is.
+func (p *provisioner) due(box string, now time.Time) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	maps.DeleteFunc(p.redelivered, func(_ string, at time.Time) bool { return now.Sub(at) >= redeliverEvery })
+	if _, recent := p.redelivered[box]; recent {
+		return false
+	}
+	p.redelivered[box] = now
+	return true
 }
 
 // EnableProvisioning gives every machine an identity file for signer and a gw key of its incarnation.
 func (s *Service) EnableProvisioning(signer Signer) {
-	s.provision = &provisioner{signer: signer, backoff: provisionBackoff}
+	s.provision = &provisioner{signer: signer, backoff: provisionBackoff, redelivered: map[string]time.Time{}}
 }
 
 // RunProvisioner provisions running machines that came up without an operation, until ctx ends.
 func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 	every(ctx, interval, func() { s.provisionStale(ctx) })
+}
+
+// RedeliverIdentity writes box's identity file again with the wake id its incarnation has, in the background until ctx ends and at most once per redeliverEvery: a reboot inside the box empties /run and leaves the incarnation as it was, so no provisioning pass would.
+func (s *Service) RedeliverIdentity(ctx context.Context, box string) {
+	if s.provision == nil || !s.provision.due(box, time.Now()) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, redeliverTimeout)
+	go func() {
+		defer cancel()
+		logger := log.WithFunc("boxes.Service.RedeliverIdentity").WithField("box", box)
+		if err := s.redeliverIdentity(ctx, box); err != nil {
+			logger.Warnf(ctx, "write the identity the agent lost: %v", err)
+			return
+		}
+		logger.Info(ctx, "wrote the identity the agent lost")
+	}()
 }
 
 func (s *Service) provisionStale(ctx context.Context) {
@@ -127,15 +164,11 @@ func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
 // provisionMachine provisions m unless its current incarnation has a wake id, the backend holds all its host-only entries and rekey is off.
 func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, rekey bool) error {
 	p := s.provision
-	unlock := p.locks.Lock(m.ID)
-	defer unlock()
-	if s.userLocks != nil {
-		unlockShared, err := s.userLocks.LockProvision(ctx, "provision:"+m.ID)
-		if err != nil {
-			return err
-		}
-		defer unlockShared()
+	unlock, err := s.lockProvision(ctx, m.ID)
+	if err != nil {
+		return err
 	}
+	defer unlock()
 	cur, err := s.machines.Get(ctx, m.ID)
 	if err != nil {
 		return err
@@ -205,7 +238,6 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 // provisionWith writes keys and m's other host-only entries and, unless the incarnation has a wake id, its identity; once every push succeeded it removes the entries the backend still lacks.
 func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys map[string]*machines.Secret) (string, error) {
 	logger := log.WithFunc("boxes.Service.provisionWith").WithField("machine", m.ID)
-	p := s.provision
 	if err := s.syncExit(ctx, m, m.EnvMissing); err != nil {
 		return "", fmt.Errorf("sync exit: %w", err)
 	}
@@ -237,7 +269,7 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 	}
 	var identity machines.Identity
 	if wake == "" {
-		identity = machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
+		identity = s.identity(m, utils.RandomHex(16))
 		if err := s.machines.Deliver(ctx, m.ID, identity); err != nil {
 			return "", err
 		}
@@ -273,6 +305,54 @@ func (s *Service) provisionWith(ctx context.Context, m machines.Machine, keys ma
 		return "", err
 	}
 	return identity.WakeID, nil
+}
+
+func (s *Service) redeliverIdentity(ctx context.Context, box string) error {
+	ms, err := s.machines.List(ctx, "")
+	if err != nil {
+		return err
+	}
+	m, ok := serving(ms)[box]
+	if !ok {
+		return machines.ErrNotFound
+	}
+	unlock, err := s.lockProvision(ctx, m.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	cur, err := s.machines.Get(ctx, m.ID)
+	if err != nil {
+		return err
+	}
+	wake := wakeOf(cur)
+	if wake == "" {
+		// a new incarnation: the provisioner writes its identity with a new wake id
+		return &machines.NotRunningError{State: machines.StateStarting}
+	}
+	return s.machines.Deliver(ctx, cur.ID, s.identity(cur, wake))
+}
+
+// lockProvision serializes the pushes into machine, in every api with a shared table.
+func (s *Service) lockProvision(ctx context.Context, machine string) (func(), error) {
+	release := s.provision.locks.Lock(machine)
+	if s.userLocks == nil {
+		return release, nil
+	}
+	unlock, err := s.userLocks.LockProvision(ctx, "provision:"+machine)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() {
+		unlock()
+		release()
+	}, nil
+}
+
+func (s *Service) identity(m machines.Machine, wake string) machines.Identity {
+	box := boxOfMachine(m.ID)
+	return machines.Identity{BoxID: box, WakeID: wake, KeyID: s.provision.signer.KeyID(), PublicKey: s.provision.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
 }
 
 // revokeMachineKeys revokes every gw key of machine; a failure is logged, and the provisioner retries.
