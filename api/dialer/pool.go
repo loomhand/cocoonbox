@@ -2,6 +2,8 @@ package dialer
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -12,7 +14,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -36,24 +37,45 @@ type agentConn struct {
 	used time.Time
 }
 
-// identityWatch is the stats handler of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file.
+// identityWatch intercepts the calls of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file.
 type identityWatch struct {
 	box  string
 	lost func(box string)
 }
 
-func (w identityWatch) HandleRPC(_ context.Context, s stats.RPCStats) {
-	end, ok := s.(*stats.End)
-	if ok && status.Code(end.Error) == codes.Unavailable && strings.HasPrefix(status.Convert(end.Error).Message(), "identity ") {
+func (w identityWatch) unary(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+	err := invoker(ctx, method, req, reply, cc, opts...)
+	w.check(err)
+	return err
+}
+
+func (w identityWatch) stream(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	s, err := streamer(ctx, desc, cc, method, opts...)
+	if err != nil {
+		w.check(err)
+		return nil, err
+	}
+	return watchedStream{ClientStream: s, watch: w}, nil
+}
+
+func (w identityWatch) check(err error) {
+	if status.Code(err) == codes.Unavailable && strings.HasPrefix(status.Convert(err).Message(), "identity ") {
 		w.lost(w.box)
 	}
 }
 
-func (identityWatch) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
+type watchedStream struct {
+	grpc.ClientStream
+	watch identityWatch
+}
 
-func (identityWatch) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context { return ctx }
-
-func (identityWatch) HandleConn(context.Context, stats.ConnStats) {}
+func (s watchedStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err != nil && !errors.Is(err, io.EOF) {
+		s.watch.check(err)
+	}
+	return err
+}
 
 // Pool keeps one connection per box and agent endpoint, for the edge and the control plane alike.
 type Pool struct {
@@ -90,13 +112,15 @@ func (p *Pool) Conn(box string, ep machines.Endpoint) (*grpc.ClientConn, error) 
 			delete(conns, key)
 		}
 	}
+	watch := identityWatch{box: box, lost: p.identityLost}
 	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize), grpc.MaxCallSendMsgSize(MaxMessageSize)),
 		grpc.WithConnectParams(connectParams),
 		grpc.WithIdleTimeout(idleTimeout),
-		grpc.WithStatsHandler(identityWatch{box: box, lost: p.identityLost}))
+		grpc.WithChainUnaryInterceptor(watch.unary),
+		grpc.WithChainStreamInterceptor(watch.stream))
 	if err != nil {
 		return nil, err
 	}

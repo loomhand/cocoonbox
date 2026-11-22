@@ -466,10 +466,11 @@ func TestRedeliverIdentityLeavesANewIncarnationToTheProvisionerAndABoxWithoutAMa
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
 
-	if notRunning, ok := errors.AsType[*machines.NotRunningError](svc.redeliverIdentity(t.Context(), aliceBox)); !ok || notRunning.State != machines.StateStarting {
-		t.Errorf("redeliverIdentity of an incarnation without a wake id = %v, want starting", notRunning)
+	err := svc.redeliverIdentity(t.Context(), aliceBox)
+	if notRunning, ok := errors.AsType[*machines.NotRunningError](err); !ok || notRunning.State != machines.StateStarting {
+		t.Errorf("redeliverIdentity of an incarnation without a wake id = %v, want starting", err)
 	}
-	if err := svc.redeliverIdentity(t.Context(), "cb-none"); !errors.Is(err, machines.ErrNotFound) {
+	if err = svc.redeliverIdentity(t.Context(), "cb-none"); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("redeliverIdentity of a box without a machine = %v, want not found", err)
 	}
 	if execs := fake.execCalls(); len(execs) != 0 {
