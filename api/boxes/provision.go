@@ -76,7 +76,7 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 	every(ctx, interval, func() { s.provisionStale(ctx) })
 }
 
-// RedeliverIdentity writes box's identity file again with the wake id its incarnation has, in the background until ctx ends and at most once per redeliverEvery: a reboot inside the box empties /run and leaves the incarnation as it was, so no provisioning pass would.
+// RedeliverIdentity writes box's identity file again with the wake id its incarnation has, in the background until ctx ends and at most once per redeliverEvery in this process: a reboot inside the box empties /run and leaves the incarnation as it was, so no provisioning pass would.
 func (s *Service) RedeliverIdentity(ctx context.Context, box string) {
 	if s.provision == nil || !s.provision.due(box, time.Now()) {
 		return
