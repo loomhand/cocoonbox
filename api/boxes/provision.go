@@ -34,7 +34,10 @@ const (
 	redeliverTimeout = time.Minute
 )
 
-var errEnvMissing = errors.New("host-only entries stay missing after the push")
+var (
+	errEnvMissing    = errors.New("host-only entries stay missing after the push")
+	errProvisionBusy = errors.New("another push into the machine is under way")
+)
 
 // Signer issues the credentials box agents verify with the key named in their identity file.
 type Signer interface {
@@ -76,7 +79,7 @@ func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
 	every(ctx, interval, func() { s.provisionStale(ctx) })
 }
 
-// RedeliverIdentity writes box's identity file again with the wake id its incarnation has, in the background until ctx ends and at most once per redeliverEvery in this process: a reboot inside the box empties /run and leaves the incarnation as it was, so no provisioning pass would.
+// RedeliverIdentity writes box's identity file again with its incarnation's wake id, in the background until ctx ends, at most once per redeliverEvery in this process.
 func (s *Service) RedeliverIdentity(ctx context.Context, box string) {
 	if s.provision == nil || !s.provision.due(box, time.Now()) {
 		return
@@ -164,7 +167,7 @@ func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
 // provisionMachine provisions m unless its current incarnation has a wake id, the backend holds all its host-only entries and rekey is off.
 func (s *Service) provisionMachine(ctx context.Context, m machines.Machine, rekey bool) error {
 	p := s.provision
-	unlock, err := s.lockProvision(ctx, m.ID)
+	unlock, err := s.lockProvision(ctx, m.ID, false)
 	if err != nil {
 		return err
 	}
@@ -316,7 +319,7 @@ func (s *Service) redeliverIdentity(ctx context.Context, box string) error {
 	if !ok {
 		return machines.ErrNotFound
 	}
-	unlock, err := s.lockProvision(ctx, m.ID)
+	unlock, err := s.lockProvision(ctx, m.ID, true)
 	if err != nil {
 		return err
 	}
@@ -333,9 +336,15 @@ func (s *Service) redeliverIdentity(ctx context.Context, box string) error {
 	return s.machines.Deliver(ctx, cur.ID, s.identity(cur, wake))
 }
 
-// lockProvision serializes the pushes into machine, in every api with a shared table.
-func (s *Service) lockProvision(ctx context.Context, machine string) (func(), error) {
-	release := s.provision.locks.Lock(machine)
+// lockProvision serializes the pushes into machine, in every api with a shared table; with try it fails at once while this process pushes into machine.
+func (s *Service) lockProvision(ctx context.Context, machine string, try bool) (func(), error) {
+	release, ok := s.provision.locks.TryLock(machine)
+	if !ok && try {
+		return nil, errProvisionBusy
+	}
+	if !ok {
+		release = s.provision.locks.Lock(machine)
+	}
 	if s.userLocks == nil {
 		return release, nil
 	}

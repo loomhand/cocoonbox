@@ -477,6 +477,29 @@ func TestRedeliverIdentityLeavesANewIncarnationToTheProvisionerAndABoxWithoutAMa
 	}
 }
 
+func TestRedeliverIdentityGivesUpAtOnceWhileAnotherPushHoldsTheMachine(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableProvisioning(fakeSigner{})
+	release := svc.provision.locks.Lock(aliceBox)
+
+	done := make(chan error, 1)
+	go func() { done <- svc.redeliverIdentity(t.Context(), aliceBox) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errProvisionBusy) || len(fake.execCalls()) != 0 {
+			t.Fatalf("redeliverIdentity while a push holds the machine = %v with %d deliveries, want busy and none", err, len(fake.execCalls()))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("redeliverIdentity waited for the push that holds the machine")
+	}
+	release()
+	if err := svc.redeliverIdentity(t.Context(), aliceBox); err != nil || len(fake.execCalls()) != 1 {
+		t.Errorf("redeliverIdentity once the push ended = %v with %d deliveries, want one", err, len(fake.execCalls()))
+	}
+}
+
 func newProvisionEnv(accounts *fakeAccounts, ms ...machines.Machine) (*fakeMachines, *Service) {
 	fake := newFakeMachines()
 	for _, m := range ms {

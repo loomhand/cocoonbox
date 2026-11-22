@@ -36,7 +36,7 @@ type agentConn struct {
 	used time.Time
 }
 
-// identityWatch is the stats handler of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file, Unavailable "identity not provisioned" or "identity invalid".
+// identityWatch is the stats handler of box's connection: it reports the box when a call ends with the agent's refusal for want of a valid identity file.
 type identityWatch struct {
 	box  string
 	lost func(box string)
