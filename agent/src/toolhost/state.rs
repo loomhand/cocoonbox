@@ -323,7 +323,7 @@ async fn send_blocks<W: AsyncWrite + Unpin>(
     rpc::write_data(w, &[]).await
 }
 
-/// An online-backup copy of the SQLite database at `path`; `None` when it is no SQLite database, is locked or keeps restarting.
+/// An online-backup copy of the SQLite database at `path`; `None` when it is no SQLite database or is locked.
 async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
     let mut head = [0u8; 16];
     let mut f = tokio::fs::File::open(path).await.ok()?;
@@ -339,7 +339,7 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(&src, flags)?;
         conn.busy_timeout(Duration::from_millis(500))?;
-        backup_unless_restarting(&conn, &copy)
+        run_backup(&conn, &copy)
     })
     .await
     .ok()?;
@@ -352,7 +352,7 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
     }
 }
 
-fn backup_unless_restarting(src: &rusqlite::Connection, dst: &Path) -> rusqlite::Result<bool> {
+fn run_backup(src: &rusqlite::Connection, dst: &Path) -> rusqlite::Result<bool> {
     let mut dst = rusqlite::Connection::open(dst)?;
     let backup = Backup::new(src, &mut dst)?;
     let (mut remaining, mut restarts) = (i32::MAX, 0);
@@ -363,7 +363,7 @@ fn backup_unless_restarting(src: &rusqlite::Connection, dst: &Path) -> rusqlite:
                 let left = backup.progress().remaining;
                 restarts += u32::from(left >= remaining);
                 if restarts > BACKUP_RESTARTS {
-                    return Ok(false);
+                    return Ok(backup.step(-1)? == StepResult::Done);
                 }
                 remaining = left;
             }
@@ -605,7 +605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_backup_that_keeps_restarting_is_given_up() {
+    async fn a_backup_that_keeps_restarting_copies_the_rest_in_one_step() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("big.db");
         rusqlite::Connection::open(&db)
@@ -626,7 +626,12 @@ mod tests {
         )
         .unwrap();
         let copy = dir.path().join("copy.db");
-        assert!(!backup_unless_restarting(&conn, &copy).unwrap());
+        assert!(run_backup(&conn, &copy).unwrap());
+        let rows: i64 = rusqlite::Connection::open(&copy)
+            .unwrap()
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 300);
         let healthy = sqlite_backup(&db).await.unwrap();
         fs::remove_file(healthy).unwrap();
     }
