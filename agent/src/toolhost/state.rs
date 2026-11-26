@@ -5,6 +5,7 @@ use std::fs::{self, FileTimes};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use rusqlite::backup::{Backup, StepResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -17,6 +18,8 @@ pub(crate) const TRASH_PREFIX: &str = ".cb-trash-";
 
 const READ_BLOCK: usize = 1 << 20;
 const PLACE_TRIES: u32 = 100;
+const BACKUP_STEP_PAGES: i32 = 100;
+const BACKUP_RESTARTS: u32 = 10;
 
 /// A tree to walk, named in the manifest.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -336,19 +339,35 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(&src, flags)?;
         conn.busy_timeout(Duration::from_millis(500))?;
-        conn.backup(
-            rusqlite::MAIN_DB,
-            &copy,
-            None::<fn(rusqlite::backup::Progress)>,
-        )
+        run_backup(&conn, &copy)
     })
     .await
     .ok()?;
     match done {
-        Ok(()) => Some(dst),
-        Err(_) => {
+        Ok(true) => Some(dst),
+        _ => {
             let _ = tokio::fs::remove_file(&dst).await;
             None
+        }
+    }
+}
+
+fn run_backup(src: &rusqlite::Connection, dst: &Path) -> rusqlite::Result<bool> {
+    let mut dst = rusqlite::Connection::open(dst)?;
+    let backup = Backup::new(src, &mut dst)?;
+    let (mut remaining, mut restarts) = (i32::MAX, 0);
+    loop {
+        match backup.step(BACKUP_STEP_PAGES)? {
+            StepResult::Done => return Ok(true),
+            StepResult::More => {
+                let left = backup.progress().remaining;
+                restarts += u32::from(left >= remaining);
+                if restarts > BACKUP_RESTARTS {
+                    return Ok(backup.step(-1)? == StepResult::Done);
+                }
+                remaining = left;
+            }
+            _ => return Ok(false),
         }
     }
 }
@@ -583,6 +602,49 @@ mod tests {
         assert!(e.matches(".config/chrome/SingletonLock"));
         assert!(!e.matches(".config/chrome/Default/Cookies"));
         assert!(e.matches(".config/chrome/Default/Cookies-shm"));
+    }
+
+    #[tokio::test]
+    async fn a_backup_that_keeps_restarting_copies_the_rest_in_one_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("big.db");
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; CREATE TABLE t(v);
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 300)
+                 INSERT INTO t SELECT zeroblob(4000) FROM n;",
+            )
+            .unwrap();
+        let stuck = dir.path().join("stuck.db");
+        fs::copy(&db, &stuck).unwrap();
+        fs::write(dir.path().join("stuck.db-wal"), b"").unwrap();
+        fs::write(dir.path().join("stuck.db-shm"), [0u8; 32768]).unwrap();
+        let conn = rusqlite::Connection::open_with_flags(
+            format!("file:{}?readonly_shm=1", stuck.display()),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+        )
+        .unwrap();
+        let copy = dir.path().join("copy.db");
+        assert!(run_backup(&conn, &copy).unwrap());
+        let rows: i64 = rusqlite::Connection::open(&copy)
+            .unwrap()
+            .query_row("SELECT count(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 300);
+        let healthy = sqlite_backup(&db).await.unwrap();
+        fs::remove_file(healthy).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_locked_database_is_not_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("locked.db");
+        let writer = rusqlite::Connection::open(&db).unwrap();
+        writer
+            .execute_batch("CREATE TABLE t(v); BEGIN EXCLUSIVE; INSERT INTO t VALUES (1);")
+            .unwrap();
+        assert!(sqlite_backup(&db).await.is_none());
     }
 
     #[tokio::test]
