@@ -20,7 +20,7 @@ Windows and elements come from Windows UI Automation (UIA), roles named as in AR
 | Call | Does |
 |---|---|
 | `windows()` | top-level windows `{id, title, role, pid, active, app}`, `app` being the executable; `focused()` the active one |
-| `wait(since, timeout_ms)` | waits until the window list differs from `since` (a `windows()` result), at most `timeout_ms`: `{changed, windows}` |
+| `wait(since, timeout_ms)` | waits until the window list differs from `since` (a `windows()` result): a window opens, closes, moves or changes size, at most `timeout_ms`: `{changed, windows}` |
 | `snapshot(window?, {pid?, keys?})` | the elements of one window (default: the focused one) in tree order: `{ref, id, parent, depth, role, name, states, value?, bounds?}`; `states` holds `checked`, `disabled`, `focused`, `showing`, `selected`, `expanded` … |
 | `outline(window?)` | the same tree as text, one `- role "name" [checked] [id=ID]: "value"` line per element |
 | `find(name, {role?, window?})` | the elements named `name` (else containing it), ignoring case and punctuation |
