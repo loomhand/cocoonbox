@@ -407,18 +407,37 @@ fn swap_moves(a: &SwapArgs, trash: &Path) -> Result<usize, String> {
         if special || unwalked || a.keep.contains(&name) || a.names.contains(&name) {
             continue;
         }
-        fs::rename(entry.path(), trash.join(&name))
+        move_entry(&entry.path(), &trash.join(&name))
             .map_err(|e| format!("move aside {name}: {e}"))?;
         removed += 1;
     }
     for name in a.names.iter().filter(|n| !n.starts_with(TRASH_PREFIX)) {
         let target = a.root.join(name);
         if fs::symlink_metadata(&target).is_ok() {
-            fs::rename(&target, trash.join(name)).map_err(|e| format!("move aside {name}: {e}"))?;
+            move_entry(&target, &trash.join(name))
+                .map_err(|e| format!("move aside {name}: {e}"))?;
         }
-        fs::rename(a.staging.join(name), &target).map_err(|e| format!("swap in {name}: {e}"))?;
+        move_entry(&a.staging.join(name), &target).map_err(|e| format!("swap in {name}: {e}"))?;
     }
     Ok(removed)
+}
+
+fn move_entry(from: &Path, to: &Path) -> std::io::Result<()> {
+    let err = match fs::rename(from, to) {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => e,
+        other => return other,
+    };
+    let meta = fs::symlink_metadata(from)?;
+    let mode = sys::mode(&meta);
+    if !meta.is_dir() || mode & 0o200 != 0 {
+        return Err(err);
+    }
+    sys::set_mode(from, mode | 0o200)?;
+    if let Err(e) = fs::rename(from, to) {
+        let _ = sys::set_mode(from, mode);
+        return Err(e);
+    }
+    sys::set_mode(to, mode)
 }
 
 /// Removes the tree at `path`; directories without owner write, such as a Go module cache, get it first.
@@ -798,6 +817,41 @@ mod tests {
             .collect();
         assert_eq!(names, ["go"]);
         assert!(root.join("go/new").exists());
+    }
+
+    #[tokio::test]
+    async fn swap_moves_top_level_dirs_without_owner_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let staging = root.join(".cb-restore");
+        for d in ["gone", "lib"] {
+            fs::create_dir_all(root.join(d)).unwrap();
+            sys::set_mode(&root.join(d), 0o555).unwrap();
+        }
+        for d in ["lib", "handoff"] {
+            fs::create_dir_all(staging.join(d)).unwrap();
+            fs::write(staging.join(d).join("new"), b"n").unwrap();
+            sys::set_mode(&staging.join(d), 0o555).unwrap();
+        }
+        let args = serde_json::json!({
+            "root": root, "staging": staging, "names": ["lib", "handoff"], "keep": [],
+        });
+        swap(args).await.unwrap();
+        let mut names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["handoff", "lib"]);
+        for d in ["lib", "handoff"] {
+            assert!(root.join(d).join("new").exists(), "{d}");
+            assert_eq!(
+                sys::mode(&fs::metadata(root.join(d)).unwrap()) & 0o777,
+                0o555,
+                "{d}"
+            );
+            sys::set_mode(&root.join(d), 0o755).unwrap();
+        }
     }
 
     #[tokio::test]
